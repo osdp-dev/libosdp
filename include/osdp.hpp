@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2025 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
+ * Copyright (c) 2021-2026 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -10,7 +10,8 @@
 #include <osdp.h>
 
 /**
- * @file: LibOSDP classical wrapper. See osdp.h for documentation.
+ * @file osdp.hpp
+ * @brief LibOSDP classical wrapper. See osdp.h for documentation.
  */
 
 namespace OSDP {
@@ -19,10 +20,17 @@ class OSDP_EXPORT Common {
 public:
 	Common() : _ctx(nullptr) {}
 
+#ifndef OPT_OSDP_LOG_MINIMAL
 	void logger_init(const char *name, int log_level,
 			 osdp_log_puts_fn_t puts_fn)
 	{
 		osdp_logger_init(name, log_level, puts_fn);
+	}
+#endif
+
+	void set_log_callback(osdp_log_callback_fn_t cb)
+	{
+		osdp_set_log_callback(cb);
 	}
 
 	const char *get_version()
@@ -55,6 +63,11 @@ public:
 		return osdp_get_file_tx_status(_ctx, pd, size, offset);
 	}
 
+	int get_metrics(int pd, struct osdp_metrics *metrics)
+	{
+		return osdp_get_metrics(_ctx, pd, metrics);
+	}
+
 protected:
 	osdp_t *_ctx;
 };
@@ -70,18 +83,26 @@ public:
 		}
 	}
 
-	bool setup(int num_pd, osdp_pd_info_t *info)
+	void teardown()
 	{
-		_ctx = osdp_cp_setup(num_pd, info);
+		if (_ctx) {
+			osdp_cp_teardown(_ctx);
+			_ctx = nullptr;
+		}
+	}
+
+	bool setup(const struct osdp_channel *channel, int num_pd, const osdp_pd_info_t *info)
+	{
+		_ctx = osdp_cp_setup(channel, num_pd, info);
 		return _ctx != nullptr;
 	}
 
 	bool setup()
 	{
-		return setup(0, nullptr);
+		return false;
 	}
 
-	int add_pd(int num_pd, osdp_pd_info_t *info)
+	int add_pd(int num_pd, const osdp_pd_info_t *info)
 	{
 		return osdp_cp_add_pd(_ctx, num_pd, info);
 	}
@@ -92,19 +113,30 @@ public:
 	}
 
 	[[deprecated]]
-	int send_command(int pd, struct osdp_cmd *cmd)
+	int send_command(int pd, const struct osdp_cmd *cmd)
 	{
 		return osdp_cp_submit_command(_ctx, pd, cmd);
 	}
 
-	int submit_command(int pd, struct osdp_cmd *cmd)
+	int submit_command(int pd, const struct osdp_cmd *cmd)
 	{
 		return osdp_cp_submit_command(_ctx, pd, cmd);
+	}
+
+	int flush_commands(int pd)
+	{
+		return osdp_cp_flush_commands(_ctx, pd);
 	}
 
 	void set_event_callback(cp_event_callback_t cb, void *arg)
 	{
 		osdp_cp_set_event_callback(_ctx, cb, arg);
+	}
+
+	void set_command_completion_callback(cp_command_completion_callback_t cb,
+					     void *arg)
+	{
+		osdp_cp_set_command_completion_callback(_ctx, cb, arg);
 	}
 
 	int get_pd_id(int pd, struct osdp_pd_id *id)
@@ -115,6 +147,26 @@ public:
 	int get_capability(int pd, struct osdp_pd_cap *cap)
 	{
 		return osdp_cp_get_capability(_ctx, pd, cap);
+	}
+
+	int modify_flag(int pd, uint32_t flags, bool do_set)
+	{
+		return osdp_cp_modify_flag(_ctx, pd, flags, do_set);
+	}
+
+	int disable_pd(int pd)
+	{
+		return osdp_cp_disable_pd(_ctx, pd);
+	}
+
+	int enable_pd(int pd)
+	{
+		return osdp_cp_enable_pd(_ctx, pd);
+	}
+
+	bool is_pd_enabled(int pd)
+	{
+		return osdp_cp_is_pd_enabled(_ctx, pd);
 	}
 
 };
@@ -130,9 +182,17 @@ public:
 		}
 	}
 
-	bool setup(osdp_pd_info_t *info)
+	void teardown()
 	{
-		_ctx = osdp_pd_setup(info);
+		if (_ctx) {
+			osdp_pd_teardown(_ctx);
+			_ctx = nullptr;
+		}
+	}
+
+	bool setup(struct osdp_channel *channel, const osdp_pd_info_t *info)
+	{
+		_ctx = osdp_pd_setup(channel, info);
 		return _ctx != nullptr;
 	}
 
@@ -141,9 +201,20 @@ public:
 		osdp_pd_refresh(_ctx);
 	}
 
+	void set_capabilities(const struct osdp_pd_cap *cap)
+	{
+		osdp_pd_set_capabilities(_ctx, cap);
+	}
+
 	void set_command_callback(pd_command_callback_t cb, void* args)
 	{
 		osdp_pd_set_command_callback(_ctx, cb, args);
+	}
+
+	void set_event_completion_callback(pd_event_completion_callback_t cb,
+					   void *arg)
+	{
+		osdp_pd_set_event_completion_callback(_ctx, cb, arg);
 	}
 
 	[[deprecated]]

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2025 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
+ * Copyright (c) 2019-2026 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -50,6 +50,16 @@ static int async_command_callback(void *data, struct osdp_cmd *cmd)
 
 /* Declare external variables from test.c */
 extern work_t *g_test_works[];
+
+static bool wait_for_cmd_received(struct async_test_data *data, int timeout_sec)
+{
+	for (int i = 0; i < timeout_sec * 10; i++) {
+		if (data->cmd_received)
+			return true;
+		usleep(100 * 1000);
+	}
+	return false;
+}
 
 /* Helper function to wait for all work slots to be freed */
 static void wait_for_all_work_cleanup(void)
@@ -179,11 +189,7 @@ static bool test_async_startup_order(enum async_order order)
 		goto cleanup;
 	}
 
-	/* Wait for command processing */
-	usleep(2000 * 1000); /* 2 seconds */
-
-	/* Check result */
-	if (data.cmd_received) {
+	if (wait_for_cmd_received(&data, 5)) {
 		printf(SUB_2 "Order %d: SUCCESS\n", order);
 		result = true;
 	} else {
@@ -229,12 +235,12 @@ static bool test_async_recovery(void)
 	struct async_test_data data = {0};
 	int retry_count = 0;
 	const int max_retries = 2; /* Allow 2 retries for this challenging scenario */
+	struct test dummy_test = { .loglevel = OSDP_LOG_INFO };
 
 	printf(SUB_2 "Testing CP restart recovery\n");
 
 retry_recovery:
 	/* Setup devices with dummy test structure */
-	struct test dummy_test = { .loglevel = OSDP_LOG_INFO };
 	if (test_setup_devices(&dummy_test, &cp_ctx, &pd_ctx)) {
 		printf(SUB_2 "Failed to setup devices\n");
 		return false;
@@ -288,11 +294,7 @@ retry_recovery:
 		goto cleanup;
 	}
 
-	/* Wait for command processing */
-	usleep(2000 * 1000); /* 2 seconds */
-
-	/* Check result */
-	if (data.cmd_received) {
+	if (wait_for_cmd_received(&data, 5)) {
 		printf(SUB_2 "Recovery: SUCCESS\n");
 		result = true;
 	} else {

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
+ * Copyright (c) 2025-2026 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -357,6 +357,8 @@ void run_event_tests(struct test *t)
 	/* Run all event tests */
 	overall_result &= test_cardread_event();
 	overall_result &= test_keypress_event();
+	overall_result &= test_input_status_event();
+	overall_result &= test_output_status_event();
 	overall_result &= test_mfgrep_event();
 
 	/* Teardown test environment */

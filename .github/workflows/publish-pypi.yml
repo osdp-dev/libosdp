@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2020-2025 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
+# Copyright (c) 2020-2026 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -40,11 +40,17 @@ jobs:
             image: musllinux
             archs: aarch64
 
-          # macOS (multi-arch)
-          - os: macos-13
+          # macOS Intel (for x86_64 and universal2 builds)
+          - os: macos-15-intel
             platform: macos
             image: macosx
-            archs: "x86_64 arm64 universal2"
+            archs: "x86_64 universal2"
+
+          # macOS ARM64 (Apple Silicon)
+          - os: macos-latest
+            platform: macos
+            image: macosx
+            archs: "arm64"
 
           # Windows (multi-arch)
           - os: windows-2022
@@ -58,29 +64,29 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           submodules: recursive
 
       - name: Set up QEMU (Linux cross-arch userspace for aarch64)
         if: matrix.platform == 'linux'
-        uses: docker/setup-qemu-action@v2
+        uses: docker/setup-qemu-action@v4
         with:
           platforms: all
 
       - name: Set up Docker Buildx
         if: matrix.platform == 'linux'
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v4
 
       - name: Set up Python (for macOS/Windows runners cibuildwheel uses local Pythons)
         if: matrix.platform != 'linux'
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
       - name: Build wheels with cibuildwheel
-        uses: pypa/cibuildwheel@v3.0.0
+        uses: pypa/cibuildwheel@v4.1.0
         with:
           output-dir: ${{ env.CIBW_OUTPUT_DIR }}
           package-dir: python/
@@ -90,6 +96,9 @@ jobs:
           CIBW_ARCHS_WINDOWS: ${{ matrix.archs }}
           # Only build for the selected image type
           CIBW_BUILD: "*-${{ matrix.image }}_*"
+          # Python 3.8 is EOL and unbuildable: the PEP 639 license_expression
+          # in setup.py needs setuptools>=77, which dropped Python 3.8.
+          CIBW_SKIP: "cp38-*"
 
       - name: List produced wheels
         shell: bash
@@ -98,7 +107,7 @@ jobs:
           ls -la ${{ env.CIBW_OUTPUT_DIR }} || true
 
       - name: Upload wheelhouse artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cibw-wheelhouse-${{ matrix.os }}-${{ matrix.image }}-${{ matrix.archs }}
           path: ${{ env.CIBW_OUTPUT_DIR }}
@@ -107,7 +116,7 @@ jobs:
     name: Build source distribution
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
       - name: Build sdist
@@ -116,7 +125,7 @@ jobs:
           pushd python
           python -m build --sdist
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: cibw-sdist
           path: python/dist/*.tar.gz
@@ -129,7 +138,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: cibw-*
           path: python/dist

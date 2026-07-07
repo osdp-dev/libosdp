@@ -1,12 +1,13 @@
 /*
- * Copyright (c) 2024-2025 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
+ * Copyright (c) 2024-2026 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
  *
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <Arduino.h>
+#include <utils/utils.h>
 
-int64_t osdp_millis_now()
+extern "C" tick_t osdp_millis_now()
 {
-  return (int64_t)millis();
+  return (tick_t)millis();
 }

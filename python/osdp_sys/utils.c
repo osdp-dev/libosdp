@@ -1,10 +1,33 @@
 /*
- * Copyright (c) 2020-2025 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
+ * Copyright (c) 2020-2026 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
  *
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <stdarg.h>
 #include "module.h"
+
+#if PY_VERSION_HEX < 0x030c0000
+static PyObject *PyErr_GetRaisedException(void)
+{
+	PyObject *type, *value, *tb;
+	PyErr_Fetch(&type, &value, &tb);
+	PyErr_NormalizeException(&type, &value, &tb);
+	if (tb != NULL) {
+		PyException_SetTraceback(value, tb);
+		Py_DECREF(tb);
+	}
+	Py_XDECREF(type);
+	return value;
+}
+
+static void PyErr_SetRaisedException(PyObject *exc)
+{
+	PyObject *type = (PyObject *)Py_TYPE(exc);
+	Py_INCREF(type);
+	PyErr_Restore(type, exc, NULL);
+}
+#endif
 
 int pyosdp_dict_add_bool(PyObject *dict, const char *key, bool val)
 {
@@ -312,18 +335,33 @@ static void channel_flush_callback(void *data)
 
 void pyosdp_get_channel(PyObject *channel, struct osdp_channel *ops)
 {
-	int id = 0;
-	PyObject *id_obj;
-
-	id_obj = PyObject_GetAttrString(channel, "id");
-	if (id_obj && PyLong_Check(id_obj)) {
-		id = (int)PyLong_AsLong(id_obj);
-	}
-
-	ops->id = id;
-	ops->recv = channel_read_callback;
 	ops->send = channel_write_callback;
 	ops->flush = channel_flush_callback;
 	ops->data = channel;
+	ops->recv = channel_read_callback;
+
 	Py_INCREF(channel);
+}
+
+void pyosdp_add_error_context(PyObject *exc_type, const char *format, ...)
+{
+	PyObject *cause_exc, *new_exc;
+	va_list args;
+	char message[512];
+
+	va_start(args, format);
+	vsnprintf(message, sizeof(message), format, args);
+	va_end(args);
+
+	cause_exc = PyErr_GetRaisedException();
+	if (cause_exc != NULL) {
+		PyErr_SetString(exc_type, message);
+		new_exc = PyErr_GetRaisedException();
+		if (new_exc != NULL) {
+			PyException_SetCause(new_exc, cause_exc);
+			PyErr_SetRaisedException(new_exc);
+		}
+	} else {
+		PyErr_SetString(exc_type, message);
+	}
 }

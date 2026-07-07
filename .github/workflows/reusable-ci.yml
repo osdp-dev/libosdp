@@ -1,0 +1,159 @@
+#
+# Copyright (c) 2020-2026 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+
+name: Reusable CI
+
+on:
+  workflow_call:
+
+jobs:
+  Changelog:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        submodules: recursive
+    - name: Validate changelog files
+      run: python3 scripts/changelog_tool.py validate --dir CHANGELOG --quiet
+
+  CmakeBuild:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        submodules: recursive
+    - name: Configure
+      run: cmake -DCMAKE_BUILD_TYPE=Debug .
+    - name: Build
+      run: cmake --build . --parallel 7 --target all --target cpp_cp_sample --target cpp_pd_sample
+    - name: Package
+      run: cmake --build . --target package --target package_source
+    - uses: actions/upload-artifact@v7
+      with:
+        name: libosdp-ubuntu-latest-binaries.zip
+        path: artifacts/
+
+  MakeBuild:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        submodules: recursive
+    - name: configure
+      run: ./configure.sh
+    - name: make
+      run: make V=1
+    - name: make check
+      run: make V=1 check
+
+  DoxygenCheck:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        submodules: recursive
+    - name: Install Doxygen
+      run: |
+        sudo apt update
+        sudo apt install -y doxygen
+    - name: Configure
+      run: cmake -DCMAKE_BUILD_TYPE=Debug .
+    - name: Generate Doxygen XML
+      run: cmake --build . --parallel 7 --target doxygen_xml
+
+  Test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        submodules: recursive
+    - name: Configure
+      run: cmake -DCMAKE_BUILD_TYPE=Debug .
+    - name: Run unit-tests
+      run: cmake --build . --parallel 7 --target check
+
+  CheckPatch:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        submodules: recursive
+    - name: ClangFormatCheck
+      run: ./scripts/clang-format-check.sh
+
+  Python:
+    name: Python
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - name: Install pypa/build
+        run: python3 -m pip install build --user
+      - name: Build a binary wheel and a source tarball
+        run: python3 -m build python
+      - name: Store the distribution packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: python-package-distributions
+          path: python/dist/
+
+  PyTest:
+    name: PyTest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - name: Run pytest suite
+        run: ./scripts/run_pytests.sh
+
+  PlatformIO:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        examples:
+          - examples/platformio/cp.ino
+          - examples/platformio/pd.ino
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.platformio/.cache
+          key: ${{ runner.os }}-pio
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - name: Install PlatformIO Core
+        run: pip install --upgrade platformio
+      - name: Build PlatformIO examples
+        run: pio ci --verbose --lib . --board=megaatmega2560 ${{ matrix.examples }}
+
+  # MSVC covers the libosdp core (src/) only — CMakeLists.txt gates utils/,
+  # unit-tests, and examples behind `NOT MSVC` because utils/ relies on POSIX
+  # APIs and GNU C extensions that MSVC does not provide. The MSYS2 GCC/Clang
+  # toolchains exercise the same core library on non-MSVC Windows backends and
+  # live in the Cross Platform Build workflow (run out-of-band, not on every
+  # push/PR).
+  WindowsMSVC:
+    name: Windows MSVC
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Debug .
+      - name: Build
+        run: cmake --build build --config Debug --parallel

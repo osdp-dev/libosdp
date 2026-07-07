@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020-2025 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
+ * Copyright (c) 2020-2026 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -20,24 +20,87 @@
 #define REPO_ROOT                      "@REPO_ROOT@"
 
 /**
- * @brief Other OSDP constants
+ * @brief OSDP configuration parameters
+ *
+ * These values can be overridden by build system (Kconfig for Zephyr,
+ * CMake options for other platforms). The values below are defaults
+ * used when not overridden.
  */
-#define OSDP_PD_SC_RETRY_MS                     (600 * 1000)
+
+/* Protocol Timings */
+#ifndef OSDP_PD_SC_RETRY_MS
+#define OSDP_PD_SC_RETRY_MS                     (600 * 1000u)
+#endif
+
+#ifndef OSDP_PD_POLL_TIMEOUT_MS
 #define OSDP_PD_POLL_TIMEOUT_MS                 (50)
-#define OSDP_PD_SC_TIMEOUT_MS                   (8 * 1000)
-#define OSDP_PD_ONLINE_TOUT_MS                  (8 * 1000)
+#endif
+
+#ifndef OSDP_PD_SC_TIMEOUT_MS
+#define OSDP_PD_SC_TIMEOUT_MS                   (8 * 1000u)
+#endif
+
+#ifndef OSDP_PD_ONLINE_TOUT_MS
+#define OSDP_PD_ONLINE_TOUT_MS                  (8 * 1000u)
+#endif
+
+#ifndef OSDP_RESP_TOUT_MS
 #define OSDP_RESP_TOUT_MS                       (200)
-#define OSDP_CMD_MAX_RETRIES                    (8)
-#define OSDP_ONLINE_RETRY_WAIT_MAX_MS           (300 * 1000)
+#endif
+
+#ifndef OSDP_CMD_RETRY_WAIT_MS
 #define OSDP_CMD_RETRY_WAIT_MS                  (800)
-#define OSDP_PACKET_BUF_SIZE                    (256)
-#define OSDP_RX_RB_SIZE                         (512)
-#define OSDP_CP_CMD_POOL_SIZE                   (4)
+#endif
+
+#ifndef OSDP_ONLINE_RETRY_WAIT_MAX_MS
+#define OSDP_ONLINE_RETRY_WAIT_MAX_MS           (300 * 1000u)
+#endif
+
+/* Protocol Limits */
+#ifndef OSDP_CMD_MAX_RETRIES
+#define OSDP_CMD_MAX_RETRIES                    (8)
+#endif
+
+#ifndef OSDP_FILE_ERROR_RETRY_MAX
 #define OSDP_FILE_ERROR_RETRY_MAX               (10)
+#endif
+
+#ifndef OSDP_PD_MAX
 #define OSDP_PD_MAX                             (126)
-#define OSDP_CMD_ID_OFFSET                      (5)
-#define OSDP_PCAP_LINK_TYPE                     (162)
+#endif
+
+#ifndef OSDP_PD_NAME_MAXLEN
 #define OSDP_PD_NAME_MAXLEN                     (16)
-#define OSDP_MINIMUM_PACKET_SIZE		(128)
+#endif
+
+/* Memory Configuration */
+#ifndef OSDP_PACKET_BUF_SIZE
+#define OSDP_PACKET_BUF_SIZE                    (256)
+#endif
+
+#ifndef OSDP_MINIMUM_PACKET_SIZE
+#define OSDP_MINIMUM_PACKET_SIZE                (128)
+#endif
+
+#ifndef OSDP_RX_RB_SIZE
+#define OSDP_RX_RB_SIZE                         (512)
+#endif
+
+#ifndef OSDP_CP_CMD_POOL_SIZE
+#define OSDP_CP_CMD_POOL_SIZE                   (4)
+#endif
+
+#ifndef OSDP_CP_MAX_PDS
+#define OSDP_CP_MAX_PDS                         (8)
+#endif
+
+/* Internal Constants */
+#ifndef OSDP_CMD_ID_OFFSET
+#define OSDP_CMD_ID_OFFSET                      (5)
+#endif
+
+#ifndef OSDP_PCAP_LINK_TYPE
+#define OSDP_PCAP_LINK_TYPE                     (162)
+#endif
 
 #endif /* _OSDP_CONFIG_H_ */

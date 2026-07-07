@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020-2025 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
+ * Copyright (c) 2020-2026 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -138,6 +138,46 @@ static PyObject *pyosdp_get_file_tx_status(pyosdp_base_t *self, PyObject *args)
 	return dict;
 }
 
+#define pyosdp_get_metrics_doc                                                    \
+	"Get and reset link/protocol metrics for a PD slot\n"                     \
+	"\n"                                                                      \
+	"@return dictionary with metric counters or None on invalid PD index.\n"
+static PyObject *pyosdp_get_metrics(pyosdp_base_t *self, PyObject *args)
+{
+	int pd_idx;
+	osdp_t *ctx;
+	struct osdp_metrics metrics;
+	PyObject *dict;
+	pyosdp_cp_t *cp = (pyosdp_cp_t *)self;
+	pyosdp_pd_t *pd = (pyosdp_pd_t *)self;
+
+	ctx = self->is_cp ? cp->ctx : pd->ctx;
+
+	if (!PyArg_ParseTuple(args, "I", &pd_idx))
+		Py_RETURN_NONE;
+
+	if (osdp_get_metrics(ctx, pd_idx, &metrics))
+		Py_RETURN_NONE;
+
+	dict = PyDict_New();
+	if (dict == NULL)
+		Py_RETURN_NONE;
+
+	if (pyosdp_dict_add_int(dict, "packets_sent", metrics.packets_sent) ||
+	    pyosdp_dict_add_int(dict, "packets_received", metrics.packets_received) ||
+	    pyosdp_dict_add_int(dict, "packet_check_errors", metrics.packet_check_errors) ||
+	    pyosdp_dict_add_int(dict, "nak_count", metrics.nak_count) ||
+	    pyosdp_dict_add_int(dict, "sc_handshake_count", metrics.sc_handshake_count) ||
+	    pyosdp_dict_add_int(dict, "sc_failure_count", metrics.sc_failure_count) ||
+	    pyosdp_dict_add_int(dict, "command_count", metrics.command_count) ||
+	    pyosdp_dict_add_int(dict, "event_count", metrics.event_count)) {
+		Py_DECREF(dict);
+		Py_RETURN_NONE;
+	}
+
+	return dict;
+}
+
 #define pyosdp_file_register_ops_doc                                           \
 	"Register file OPs handler\n"                                          \
 	"\n"                                                                   \
@@ -153,30 +193,41 @@ static PyObject *pyosdp_file_register_ops(pyosdp_base_t *self, PyObject *args)
 	pyosdp_pd_t *pd = (pyosdp_pd_t *)self;
 
 	if (!PyArg_ParseTuple(args, "IO!", &pd_idx, &PyDict_Type, &fops_dict))
-		Py_RETURN_FALSE;
+		return NULL;
 
 	if (self->is_cp) {
 		if (pd_idx < 0 || pd_idx >= cp->num_pd) {
 			PyErr_SetString(PyExc_ValueError, "Invalid PD offset");
-			Py_RETURN_FALSE;
+			return NULL;
 		}
 		ctx = cp->ctx;
 	} else {
 		if (pd_idx != 0) {
 			PyErr_SetString(PyExc_ValueError, "Invalid PD offset");
-			Py_RETURN_FALSE;
+			return NULL;
 		}
 		ctx = pd->ctx;
 	}
 
-	rc = 0;
-	rc |= pyosdp_dict_get_object(fops_dict, "open", &self->fops.open_cb);
-	rc |= pyosdp_dict_get_object(fops_dict, "read", &self->fops.read_cb);
-	rc |= pyosdp_dict_get_object(fops_dict, "write", &self->fops.write_cb);
-	rc |= pyosdp_dict_get_object(fops_dict, "close", &self->fops.close_cb);
-	if (rc != 0) {
-		PyErr_SetString(PyExc_ValueError, "fops dict parse error");
-		Py_RETURN_FALSE;
+	if (pyosdp_dict_get_object(fops_dict, "open", &self->fops.open_cb)) {
+		pyosdp_add_error_context(PyExc_ValueError,
+			"Missing 'open' callback in fops dict");
+		return NULL;
+	}
+	if (pyosdp_dict_get_object(fops_dict, "read", &self->fops.read_cb)) {
+		pyosdp_add_error_context(PyExc_ValueError,
+			"Missing 'read' callback in fops dict");
+		return NULL;
+	}
+	if (pyosdp_dict_get_object(fops_dict, "write", &self->fops.write_cb)) {
+		pyosdp_add_error_context(PyExc_ValueError,
+			"Missing 'write' callback in fops dict");
+		return NULL;
+	}
+	if (pyosdp_dict_get_object(fops_dict, "close", &self->fops.close_cb)) {
+		pyosdp_add_error_context(PyExc_ValueError,
+			"Missing 'close' callback in fops dict");
+		return NULL;
 	}
 
 	Py_INCREF(self->fops.open_cb);
@@ -194,7 +245,7 @@ static PyObject *pyosdp_file_register_ops(pyosdp_base_t *self, PyObject *args)
 
 	if (osdp_file_register_ops(ctx, pd_idx, &pyosdp_fops)) {
 		PyErr_SetString(PyExc_ValueError, "fops registration failed");
-		Py_RETURN_FALSE;
+		return NULL;
 	}
 
 	Py_RETURN_TRUE;
@@ -250,6 +301,8 @@ static PyMethodDef pyosdp_base_methods[] = {
 	  pyosdp_file_register_ops_doc },
 	{ "get_file_tx_status", (PyCFunction)pyosdp_get_file_tx_status, METH_VARARGS,
 	  pyosdp_file_tx_status_doc },
+	{ "get_metrics", (PyCFunction)pyosdp_get_metrics, METH_VARARGS,
+	  pyosdp_get_metrics_doc },
 	{ NULL } /* Sentinel */
 };
 

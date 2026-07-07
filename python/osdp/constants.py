@@ -1,5 +1,5 @@
 #
-#  Copyright (c) 2021-2025 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
+#  Copyright (c) 2021-2026 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
 #
 #  SPDX-License-Identifier: Apache-2.0
 #
@@ -41,6 +41,7 @@ class Command:
     Keyset = osdp_sys.CMD_KEYSET
     FileTransfer = osdp_sys.CMD_FILE_TX
     Status = osdp_sys.CMD_STATUS
+    Notification = osdp_sys.CMD_NOTIFICATION
 
 class CommandLEDColor:
     Black = osdp_sys.LED_COLOR_NONE
@@ -55,10 +56,24 @@ class CommandLEDColor:
 class CommandFileTxFlags:
     Cancel = osdp_sys.CMD_FILE_TX_FLAG_CANCEL
 
-class EventNotification:
-    Command = osdp_sys.EVENT_NOTIFICATION_COMMAND
-    SecureChannelStatus = osdp_sys.EVENT_NOTIFICATION_SC_STATUS
-    PeripheralDeviceStatus = osdp_sys.EVENT_NOTIFICATION_PD_STATUS
+class Notification:
+    Command = osdp_sys.NOTIFICATION_COMMAND
+    SecureChannelStatus = osdp_sys.NOTIFICATION_SC_STATUS
+    PeripheralDeviceStatus = osdp_sys.NOTIFICATION_PD_STATUS
+    FileTransferDone = osdp_sys.NOTIFICATION_FILE_TX_DONE
+
+class FileTxOutcome:
+    Ok = osdp_sys.FILE_TX_OUTCOME_OK
+    OkRebooting = osdp_sys.FILE_TX_OUTCOME_OK_REBOOTING
+    Aborted = osdp_sys.FILE_TX_OUTCOME_ABORTED
+    Unrecognized = osdp_sys.FILE_TX_OUTCOME_UNRECOGNIZED
+    Invalid = osdp_sys.FILE_TX_OUTCOME_INVALID
+
+class CompletionStatus:
+    Ok = getattr(osdp_sys, "COMPLETION_OK", 0)
+    Failed = getattr(osdp_sys, "COMPLETION_FAILED", 1)
+    Flushed = getattr(osdp_sys, "COMPLETION_FLUSHED", 2)
+    Aborted = getattr(osdp_sys, "COMPLETION_ABORTED", 3)
 
 class Event:
     CardRead = osdp_sys.EVENT_CARDREAD

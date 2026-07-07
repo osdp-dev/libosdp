@@ -8,13 +8,14 @@ m="pre-commit error"
 
 echo "\${changes}" | while read status file; do
 	# Release checks
-	if [[ "\$file" == "CHANGELOG" ]] ; then
-		git diff --cached CHANGELOG | grep -q '## TODO' && \\
-			echo "\$m release-check: CHANGELOG has TODOs" && exit 1
+	if [[ "\$file" =~ ^CHANGELOG/RELEASE-v.+\.md$ ]] ; then
+		if ! git show ":\$file" | python3 scripts/changelog_tool.py validate --stdin --expected-version "\$(basename "\$file" .md | sed 's/^RELEASE-//')" --quiet; then
+			echo "\$m release-check: invalid release file \$file" && exit 1
+		fi
 		echo "\${changes}" | ( ! grep -q -e '^M\\sCMakeLists.txt' ) && \\
 			echo "\$m release-check: Version in CMakeLists.txt not modified!" && exit 1
-		clv="\$(git diff --cached CHANGELOG | perl -ne 'if (s/^\+v(\d+\.\d+\.\d+)/\$1/) {print;last}')"
-		cmv="\$(git diff --cached CMakeLists.txt | perl -ne 'if (s/^\+project\(libosdp VERSION (\d+\.\d+\.\d+)\)/\$1/) {print;last}')"
+		clv="\$(basename "\$file" .md | sed 's/^RELEASE-//')"
+		cmv="v\$(git diff --cached CMakeLists.txt | perl -ne 'if (s/^\+project\(libosdp VERSION (\d+\.\d+\.\d+)\)/\$1/) {print;last}')"
 		if [[ \$clv != "\$cmv" ]]; then
 			echo "\$m release-check: Version mismatch! (\$clv/\$cmv)" && exit 1
 		fi

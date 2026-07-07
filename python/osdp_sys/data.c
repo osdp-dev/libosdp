@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020-2025 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
+ * Copyright (c) 2020-2026 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -37,7 +37,7 @@ static int pyosdp_make_struct_cmd_output(struct osdp_cmd *p, PyObject *dict)
 
 	cmd->output_no = (uint8_t)output_no;
 	cmd->control_code = (uint8_t)control_code;
-	cmd->timer_count = (uint8_t)timer_count;
+	cmd->timer_count = (uint16_t)timer_count;
 	return 0;
 }
 
@@ -352,29 +352,47 @@ static int pyosdp_make_dict_cmd_status(PyObject *obj, struct osdp_cmd *cmd)
 {
 	if (pyosdp_dict_add_int(obj, "type", cmd->status.type))
 		return -1;
-	if (pyosdp_dict_add_bytes(obj, "report", cmd->status.report, cmd->status.nr_entries))
-		return -1;
 	return 0;
 }
 
 static int pyosdp_make_struct_cmd_status(struct osdp_cmd *p, PyObject *dict)
 {
-	int type, nr_entries;
-	uint8_t *report;
+	int type;
 	struct osdp_status_report *cmd = &p->status;
 
 	if (pyosdp_dict_get_int(dict, "type", &type))
 		return -1;
 
-	if (pyosdp_dict_get_bytes_allow_empty(dict, "report", &report, &nr_entries))
-		return -1;
+	cmd->type = type;
+	return 0;
+}
 
-	if (nr_entries > OSDP_STATUS_REPORT_MAX_LEN)
+static int pyosdp_make_dict_cmd_notif(PyObject *obj, struct osdp_cmd *cmd)
+{
+	if (pyosdp_dict_add_int(obj, "type", cmd->notif.type))
+		return -1;
+	if (pyosdp_dict_add_int(obj, "arg0", cmd->notif.arg0))
+		return -1;
+	if (pyosdp_dict_add_int(obj, "arg1", cmd->notif.arg1))
+		return -1;
+	return 0;
+}
+
+static int pyosdp_make_struct_cmd_notif(struct osdp_cmd *p, PyObject *dict)
+{
+	int type, arg0, arg1;
+	struct osdp_notification *cmd = &p->notif;
+
+	if (pyosdp_dict_get_int(dict, "type", &type))
+		return -1;
+	if (pyosdp_dict_get_int(dict, "arg0", &arg0))
+		return -1;
+	if (pyosdp_dict_get_int(dict, "arg1", &arg1))
 		return -1;
 
 	cmd->type = type;
-	cmd->nr_entries = nr_entries;
-	memcpy(cmd->report, report, nr_entries);
+	cmd->arg0 = arg0;
+	cmd->arg1 = arg1;
 	return 0;
 }
 
@@ -551,7 +569,7 @@ static int pyosdp_make_dict_event_notif(PyObject *obj, struct osdp_event *event)
 static int pyosdp_make_struct_event_notif(struct osdp_event *p, PyObject *dict)
 {
 	int type, arg0, arg1;
-	struct osdp_event_notification *ev = &p->notif;
+	struct osdp_notification *ev = &p->notif;
 
 	if (pyosdp_dict_get_int(dict, "type", &type))
 		return -1;
@@ -611,6 +629,10 @@ static struct {
 	[OSDP_CMD_STATUS] = {
 		.dict_to_struct = pyosdp_make_struct_cmd_status,
 		.struct_to_dict = pyosdp_make_dict_cmd_status,
+	},
+	[OSDP_CMD_NOTIFICATION] = {
+		.dict_to_struct = pyosdp_make_struct_cmd_notif,
+		.struct_to_dict = pyosdp_make_dict_cmd_notif,
 	},
 };
 

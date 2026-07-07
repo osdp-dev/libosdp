@@ -1,5 +1,5 @@
 #
-#  Copyright (c) 2021-2025 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
+#  Copyright (c) 2021-2026 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
 #
 #  SPDX-License-Identifier: Apache-2.0
 #
@@ -17,7 +17,8 @@ class ControlPanel():
             self,
             pd_info_list: list[PDInfo],
             log_level: LogLevel=LogLevel.Info,
-            event_handler: Callable[[int, dict], int]=None
+            event_handler: Callable[[int, dict], int]=None,
+            command_completion_handler: Callable[[int, dict, int], None]=None
         ) -> None:
         self.pd_addr = []
         info_list = []
@@ -27,11 +28,17 @@ class ControlPanel():
             info_list.append(pd_info.get())
         self.event_queue = [ queue.Queue() for i in self.pd_addr ]
         self.user_event_handler = None
+        self.user_command_completion_handler = None
         osdp_sys.set_loglevel(log_level)
         self.ctx = osdp_sys.ControlPanel(info_list)
         # Always use our internal handler to ensure queue functionality
         self.ctx.set_event_callback(self._internal_event_handler)
+        if hasattr(self.ctx, "set_command_completion_callback"):
+            self.ctx.set_command_completion_callback(
+                self._internal_command_completion_handler
+            )
         self.set_event_handler(event_handler)
+        self.set_command_completion_handler(command_completion_handler)
         self.event = None
         self.lock = None
         self.thread = None
@@ -39,14 +46,17 @@ class ControlPanel():
     @staticmethod
     def refresh(event, lock, ctx):
         while not event.is_set():
-            lock.acquire()
-            ctx.refresh()
-            lock.release()
+            with lock:
+                ctx.refresh()
             time.sleep(0.020) #sleep for 20ms
 
     def set_event_handler(self, handler: Callable[[int, dict], int]):
         """Set user event handler while maintaining queue functionality"""
         self.user_event_handler = handler
+
+    def set_command_completion_handler(
+            self, handler: Callable[[int, dict, int], None]):
+        self.user_command_completion_handler = handler
 
     def _internal_event_handler(self, pd, event) -> int:
         """Internal handler that manages both queue and user callback"""
@@ -63,6 +73,15 @@ class ControlPanel():
 
         return 0
 
+    def _internal_command_completion_handler(self, pd, command, status) -> None:
+        if self.user_command_completion_handler:
+            try:
+                self.user_command_completion_handler(
+                    self.pd_addr[pd], command, status
+                )
+            except Exception as e:
+                print(f"Error in user command completion handler: {e}")
+
     def get_event(self, address, timeout: int=5):
         pd = self.pd_addr.index(address)
         block = timeout >= 0
@@ -73,10 +92,8 @@ class ControlPanel():
         return event
 
     def status(self):
-        self.lock.acquire()
-        bitmask = self.ctx.status()
-        self.lock.release()
-        return bitmask
+        with self.lock:
+            return self.ctx.status()
 
     def is_online(self, address):
         pd = self.pd_addr.index(address)
@@ -84,9 +101,8 @@ class ControlPanel():
 
     def get_pd_id(self, address: int) -> PdId:
         pd = self.pd_addr.index(address)
-        self.lock.acquire()
-        pd_id_dict = self.ctx.get_pd_id(pd)
-        self.lock.release()
+        with self.lock:
+            pd_id_dict = self.ctx.get_pd_id(pd)
         if pd_id_dict:
             # version: int, model: int, vendor_code: int, serial_number: int, firmware_version: int
             pd_id = PdId(
@@ -100,9 +116,8 @@ class ControlPanel():
 
     def check_capability(self, address: int, cap: Capability) -> Tuple[int, int]:
         pd = self.pd_addr.index(address)
-        self.lock.acquire()
-        compliance_level, num_items = self.ctx.check_capability(pd, cap)
-        self.lock.release()
+        with self.lock:
+            compliance_level, num_items = self.ctx.check_capability(pd, cap)
         return (compliance_level, num_items)
 
     def get_num_online(self):
@@ -114,10 +129,8 @@ class ControlPanel():
         return online
 
     def sc_status(self):
-        self.lock.acquire()
-        bitmask = self.ctx.sc_status()
-        self.lock.release()
-        return bitmask
+        with self.lock:
+            return self.ctx.sc_status()
 
     def is_sc_active(self, address):
         pd = self.pd_addr.index(address)
@@ -133,10 +146,13 @@ class ControlPanel():
 
     def submit_command(self, address, cmd):
         pd = self.pd_addr.index(address)
-        self.lock.acquire()
-        ret = self.ctx.submit_command(pd, cmd)
-        self.lock.release()
-        return ret
+        with self.lock:
+            return self.ctx.submit_command(pd, cmd)
+
+    def flush_commands(self, address):
+        pd = self.pd_addr.index(address)
+        with self.lock:
+            return self.ctx.flush_commands(pd)
 
     def send_command(self, address, cmd):
         from warnings import warn
@@ -145,52 +161,43 @@ class ControlPanel():
 
     def set_flag(self, address, flag: LibFlag):
         pd = self.pd_addr.index(address)
-        self.lock.acquire()
-        ret = self.ctx.set_flag(pd, flag)
-        self.lock.release()
-        return ret
+        with self.lock:
+            return self.ctx.set_flag(pd, flag)
 
     def clear_flag(self, address, flag: LibFlag):
         pd = self.pd_addr.index(address)
-        self.lock.acquire()
-        ret = self.ctx.clear_flag(pd, flag)
-        self.lock.release()
-        return ret
+        with self.lock:
+            return self.ctx.clear_flag(pd, flag)
 
     def disable_pd(self, address: int) -> bool:
         pd = self.pd_addr.index(address)
-        self.lock.acquire()
-        ret = self.ctx.disable_pd(pd)
-        self.lock.release()
-        return ret
+        with self.lock:
+            return self.ctx.disable_pd(pd)
 
     def enable_pd(self, address: int) -> bool:
         pd = self.pd_addr.index(address)
-        self.lock.acquire()
-        ret = self.ctx.enable_pd(pd)
-        self.lock.release()
-        return ret
+        with self.lock:
+            return self.ctx.enable_pd(pd)
 
     def is_pd_enabled(self, address: int) -> bool:
         pd = self.pd_addr.index(address)
-        self.lock.acquire()
-        ret = self.ctx.is_pd_enabled(pd)
-        self.lock.release()
-        return ret
+        with self.lock:
+            return self.ctx.is_pd_enabled(pd)
 
     def register_file_ops(self, address, fops):
         pd = self.pd_addr.index(address)
-        self.lock.acquire()
-        ret = self.ctx.register_file_ops(pd, fops)
-        self.lock.release()
-        return ret
+        with self.lock:
+            return self.ctx.register_file_ops(pd, fops)
 
     def get_file_tx_status(self, address):
         pd = self.pd_addr.index(address)
-        self.lock.acquire()
-        ret = self.ctx.get_file_tx_status(pd)
-        self.lock.release()
-        return ret
+        with self.lock:
+            return self.ctx.get_file_tx_status(pd)
+
+    def get_metrics(self, address):
+        pd = self.pd_addr.index(address)
+        with self.lock:
+            return self.ctx.get_metrics(pd)
 
     def start(self):
         if self.thread:

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2025 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
+ * Copyright (c) 2019-2026 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -38,16 +38,16 @@ osdp_pd_info_t pd_info[] = {
 		.flags = 0,
 		.id = {},
 		.cap = nullptr,
-		.channel = {
-			.data = nullptr,
-			.id = 0,
-			.recv = sample_cp_recv_func,
-			.send = sample_cp_send_func,
-			.flush = nullptr,
-			.close = nullptr,
-		},
 		.scbk = nullptr,
 	}
+};
+
+static struct osdp_channel cp_channel = {
+	.data = nullptr,
+	.recv = sample_cp_recv_func,
+	.send = sample_cp_send_func,
+	.flush = nullptr,
+	.close = nullptr,
 };
 
 int event_handler(void *data, int pd, struct osdp_event *event) {
@@ -63,7 +63,7 @@ int main()
 
 	cp.logger_init("osdp::cp", OSDP_LOG_DEBUG, NULL);
 
-	cp.setup(1, pd_info);
+	cp.setup(&cp_channel, 1, pd_info);
 
 	cp.set_event_callback(event_handler, nullptr);
 

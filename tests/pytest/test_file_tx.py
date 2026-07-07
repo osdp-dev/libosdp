@@ -1,5 +1,5 @@
 #
-#  Copyright (c) 2021-2025 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
+#  Copyright (c) 2021-2026 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
 #
 #  SPDX-License-Identifier: Apache-2.0
 #
@@ -75,10 +75,53 @@ pd = PeripheralDevice(
     log_level=LogLevel.Debug
 )
 cp = ControlPanel([
-        PDInfo(101, f2, scbk=key, flags=[ LibFlag.EnforceSecure ]),
+        PDInfo(101, f2, scbk=key,
+               flags=[ LibFlag.EnforceSecure, LibFlag.EnableNotification ]),
     ],
     log_level=LogLevel.Debug
 )
+
+def drain_events(address):
+    while cp.get_event(address, timeout=0) is not None:
+        pass
+
+def wait_for_file_tx_done(address, expected_outcome, timeout=10.0,
+                          dupe_window=0.3):
+    """Wait for a FileTransferDone notification, then briefly check for dupes.
+
+    The short post-receipt window (`dupe_window`) pins the "notification fires
+    exactly once" guarantee from the refactor without stretching the test's
+    wall-clock by the full `timeout`.
+    """
+    deadline = time.monotonic() + timeout
+    notif = None
+    while time.monotonic() < deadline:
+        remaining = deadline - time.monotonic()
+        e = cp.get_event(address, timeout=max(0.05, remaining))
+        if e is None:
+            continue
+        if e.get('event') != Event.Notification:
+            continue
+        if e.get('type') != Notification.FileTransferDone:
+            continue
+        notif = e
+        break
+    assert notif is not None, "FileTransferDone notification not received"
+    assert notif['arg0'] == 13, \
+        f"unexpected file_id in notification: {notif['arg0']}"
+    assert notif['arg1'] == expected_outcome, \
+        f"unexpected outcome: got {notif['arg1']}, want {expected_outcome}"
+
+    # Pin "fires exactly once" — drain for a short window and fail on any dupe
+    dupe_deadline = time.monotonic() + dupe_window
+    while time.monotonic() < dupe_deadline:
+        e = cp.get_event(address, timeout=0.05)
+        if e is None:
+            continue
+        if e.get('event') == Event.Notification and \
+           e.get('type') == Notification.FileTransferDone:
+            raise AssertionError("FileTransferDone fired more than once")
+    return notif
 
 @pytest.fixture(scope='module', autouse=True)
 def setup_test():
@@ -94,6 +137,9 @@ def teardown_test():
     cleanup_fifo_pair("file")
 
 def test_file_transfer(utils):
+    # Drain any notifications from prior tests / SC setup
+    drain_events(101)
+
     # Register file OPs and kick off a transfer
     assert cp.register_file_ops(101, sender_fops)
     assert pd.register_file_ops(receiver_fops)
@@ -105,26 +151,19 @@ def test_file_transfer(utils):
     assert cp.submit_command(101, file_tx_cmd)
     assert pd.get_command() == file_tx_cmd
 
-    # Monitor transfer status
-    file_tx_status = False
-    tries = 0
-    while tries < 10:
-        time.sleep(0.5)
-        status = cp.get_file_tx_status(101)
-        if not status or 'size' not in status or 'offset' not in status:
-            break
-        if status['size'] <= 0:
-            break
-        if status['size'] == status['offset']:
-            file_tx_status = True
-            break
-        tries += 1
-    assert file_tx_status
+    # Wait for the CP-side completion notification (the new canonical signal)
+    wait_for_file_tx_done(101, FileTxOutcome.Ok)
+
+    # Poll API must report "not in progress" after completion
+    assert cp.get_file_tx_status(101) is None
 
     # Check if the data was sent properly
     assert sender_data == receiver_data
 
 def test_file_tx_abort(utils):
+    # Drain any notifications from prior tests / SC setup
+    drain_events(101)
+
     # Register file OPs and kick off a transfer
     assert cp.register_file_ops(101, sender_fops)
     assert pd.register_file_ops(receiver_fops)
@@ -146,8 +185,8 @@ def test_file_tx_abort(utils):
     }
     assert cp.submit_command(101, file_tx_abort)
 
-    # Allow some time for CP to send the abort to PD
-    time.sleep(0.2)
+    # Wait for the abort completion notification
+    wait_for_file_tx_done(101, FileTxOutcome.Aborted)
 
-    assert cp.get_file_tx_status(101) == None
-    assert pd.get_file_tx_status() == None
+    assert cp.get_file_tx_status(101) is None
+    assert pd.get_file_tx_status() is None

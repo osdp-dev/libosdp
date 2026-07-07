@@ -2,7 +2,7 @@ import abc
 
 class Channel(abc.ABC):
     def __init__(self) -> None:
-        self.id = 0 # TODO
+        pass
 
     @abc.abstractmethod
     def read(self, max_bytes: int) -> bytes:

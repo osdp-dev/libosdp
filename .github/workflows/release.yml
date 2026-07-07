@@ -1,0 +1,309 @@
+#
+# Copyright (c) 2020-2026 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  preflight:
+    name: Validate tag and release metadata
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref }}
+          submodules: recursive
+      - name: Validate tag matches project versions
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          if [[ "${tag}" == "${version}" ]]; then
+            echo "Tag must start with v: ${tag}" >&2
+            exit 1
+          fi
+
+          cmake_version="$(perl -ne 'print $1 if (/project\(libosdp VERSION (\d+\.\d+\.\d+)\)/)' CMakeLists.txt)"
+          py_version="$(perl -ne 'print $1 if (/^project_version = "(\d+\.\d+\.\d+)"/)' python/setup.py)"
+          platformio_version="$(perl -ne 'print $1 if (/^  "version": "(\d+\.\d+\.\d+)",$/)' library.json)"
+          config_version="$(perl -ne 'print $1 if (/^#define PROJECT_VERSION\s+"(\d+\.\d+\.\d+)"/)' platformio/osdp_config.h)"
+          release_file="CHANGELOG/RELEASE-${tag}.md"
+
+          for declared in "${cmake_version}" "${py_version}" "${platformio_version}" "${config_version}"; do
+            if [[ "${declared}" != "${version}" ]]; then
+              echo "Version mismatch for tag ${tag}: expected ${version}, found ${declared}" >&2
+              exit 1
+            fi
+          done
+
+          if [[ ! -f "${release_file}" ]]; then
+            echo "CHANGELOG is missing ${release_file} for ${tag}" >&2
+            exit 1
+          fi
+
+          python3 scripts/changelog_tool.py validate --file "${release_file}" --expected-version "${tag}" --quiet
+          python3 scripts/changelog_tool.py notes --file "${release_file}" --output RELEASE.txt
+          if [[ ! -s RELEASE.txt ]]; then
+            echo "Failed to extract release notes from ${release_file}" >&2
+            exit 1
+          fi
+
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-notes
+          path: RELEASE.txt
+
+  ci:
+    needs: preflight
+    uses: ./.github/workflows/reusable-ci.yml
+
+  cross_platform_build:
+    name: Build on ${{ matrix.os }}
+    needs: preflight
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15-intel, macos-14, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.ref }}
+          submodules: recursive
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Debug -DOPT_OSDP_LIB_ONLY=on .
+      - name: Build
+        run: cmake --build build --parallel 8
+      - name: Run unit-tests
+        run: cmake --build build --parallel 8 --target check
+      - name: Pack built binaries
+        run: cmake --build build --target package
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: libosdp-${{ matrix.os }}-binaries
+          path: build/artifacts/
+
+  build_pypi:
+    name: Build PyPI distributions
+    needs: [preflight, ci]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            platform: linux
+            image: manylinux
+            archs: x86_64
+          - os: ubuntu-22.04
+            platform: linux
+            image: manylinux
+            archs: aarch64
+          - os: ubuntu-22.04
+            platform: linux
+            image: musllinux
+            archs: x86_64
+          - os: ubuntu-22.04
+            platform: linux
+            image: musllinux
+            archs: aarch64
+          - os: macos-15-intel
+            platform: macos
+            image: macosx
+            archs: "x86_64 universal2"
+          - os: macos-latest
+            platform: macos
+            image: macosx
+            archs: "arm64"
+          - os: windows-2022
+            platform: windows
+            image: win
+            archs: "AMD64 ARM64"
+    env:
+      CIBW_OUTPUT_DIR: wheelhouse
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref }}
+          submodules: recursive
+      - name: Set up QEMU
+        if: matrix.platform == 'linux'
+        uses: docker/setup-qemu-action@v4
+        with:
+          platforms: all
+      - name: Set up Docker Buildx
+        if: matrix.platform == 'linux'
+        uses: docker/setup-buildx-action@v4
+      - name: Set up Python
+        if: matrix.platform != 'linux'
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Build wheels with cibuildwheel
+        uses: pypa/cibuildwheel@v4.1.0
+        with:
+          output-dir: ${{ env.CIBW_OUTPUT_DIR }}
+          package-dir: python/
+        env:
+          CIBW_ARCHS_LINUX: ${{ matrix.archs }}
+          CIBW_ARCHS_MACOS: ${{ matrix.archs }}
+          CIBW_ARCHS_WINDOWS: ${{ matrix.archs }}
+          CIBW_BUILD: "*-${{ matrix.image }}_*"
+          # Python 3.8 is EOL and unbuildable: the PEP 639 license_expression
+          # in setup.py needs setuptools>=77, which dropped Python 3.8.
+          CIBW_SKIP: "cp38-*"
+      - name: Upload wheelhouse artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: cibw-wheelhouse-${{ matrix.os }}-${{ matrix.image }}-${{ matrix.archs }}
+          path: ${{ env.CIBW_OUTPUT_DIR }}
+
+  build_sdist:
+    name: Build source distribution
+    needs: [preflight, ci]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.ref }}
+          submodules: recursive
+      - name: Build sdist
+        run: |
+          python -m pip install --upgrade pip setuptools wheel build
+          pushd python
+          python -m build --sdist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: cibw-sdist
+          path: python/dist/*.tar.gz
+
+  package_platformio:
+    name: Prepare PlatformIO package
+    needs: [preflight, ci]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.ref }}
+          submodules: recursive
+      - name: Archive PlatformIO package source
+        run: git archive --format tar.gz --prefix "libosdp-${GITHUB_REF_NAME}/" -o libosdp-platformio-${GITHUB_REF_NAME}.tar.gz "${GITHUB_SHA}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: platformio-package
+          path: libosdp-platformio-${{ github.ref_name }}.tar.gz
+
+  publish_platformio:
+    name: Publish PlatformIO
+    needs: [preflight, ci, cross_platform_build, package_platformio, build_pypi, build_sdist]
+    runs-on: ubuntu-latest
+    env:
+      PLATFORMIO_AUTH_TOKEN: ${{ secrets.PLATFORMIO_AUTH_TOKEN }}
+    steps:
+      - name: Checkout the repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.ref }}
+          submodules: recursive
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - name: Install PlatformIO CLI
+        run: |
+          python -m pip install --upgrade pip
+          pip install platformio
+      - name: Publish to PlatformIO Registry
+        id: publish
+        shell: bash
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          pio package publish --type library --no-interactive --owner sidcha 2>&1 | tee publish-platformio.log
+      - name: Accept existing PlatformIO version on rerun
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ steps.publish.outcome }}" == "success" ]]; then
+            exit 0
+          fi
+
+          if grep -Eqi 'already exists|already published|version.+exists' publish-platformio.log; then
+            echo "PlatformIO version already exists; treating rerun as satisfied."
+            exit 0
+          fi
+
+          echo "PlatformIO publish failed" >&2
+          exit 1
+
+  publish_pypi:
+    name: Upload to PyPI
+    needs: [preflight, ci, cross_platform_build, build_pypi, build_sdist, publish_platformio]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: cibw-*
+          path: python/dist
+          merge-multiple: true
+      - name: Publish package distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: python/dist/
+          skip-existing: true
+
+  create_release:
+    name: Create GitHub release
+    needs: [preflight, cross_platform_build, publish_pypi]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: libosdp-*-binaries
+          path: release-assets
+          merge-multiple: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-notes
+          path: release-notes
+      - name: Collect release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-files
+          find release-assets -type f -exec cp {} release-files/ \;
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v3
+        with:
+          name: Release ${{ github.ref_name }}
+          body_path: release-notes/RELEASE.txt
+          files: release-files/*
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true

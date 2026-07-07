@@ -1,1 +1,1 @@
-See: https://github.com/goToMain/libosdp-rs/tree/master/libosdp/examples
+See: https://github.com/osdp-dev/libosdp-rs/tree/master/libosdp/examples

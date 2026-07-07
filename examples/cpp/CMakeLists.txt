@@ -1,5 +1,5 @@
 #
-#  Copyright (c) 2020-2025 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
+#  Copyright (c) 2020-2026 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
 #
 #  SPDX-License-Identifier: Apache-2.0
 #
@@ -10,7 +10,7 @@ project(osdp_cpp_sample)
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 	# This sample is built individually so try to locate an installed
 	# version of libosdp.
-	find_package(libosdp NO_MODULE REQUIRED)
+	find_package(libosdp CONFIG REQUIRED)
 endif()
 
 set(CMAKE_CXX_STANDARD 11)
@@ -25,5 +25,5 @@ add_executable(${PD_SAMPLE} pd_app.cpp)
 set_target_properties(${CP_SAMPLE} PROPERTIES EXCLUDE_FROM_ALL TRUE)
 set_target_properties(${PD_SAMPLE} PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
-target_link_libraries(${CP_SAMPLE} PRIVATE $<IF:$<TARGET_EXISTS:osdp>,osdp,osdpstatic>)
-target_link_libraries(${PD_SAMPLE} PRIVATE $<IF:$<TARGET_EXISTS:osdp>,osdp,osdpstatic>)
+target_link_libraries(${CP_SAMPLE} PRIVATE libosdp::libosdp)
+target_link_libraries(${PD_SAMPLE} PRIVATE libosdp::libosdp)

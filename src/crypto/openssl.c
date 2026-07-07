@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2025 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
+ * Copyright (c) 2021-2026 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -105,6 +105,11 @@ void osdp_fill_random(uint8_t *buf, int len)
 	if (RAND_bytes(buf, len) != 1) {
 		osdp_openssl_fatal();
 	}
+}
+
+void osdp_fill_zeros(void *buf, int len)
+{
+	OPENSSL_cleanse(buf, (size_t)len);
 }
 
 void osdp_crypt_teardown()

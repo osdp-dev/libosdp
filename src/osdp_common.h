@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2025 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
+ * Copyright (c) 2019-2026 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -10,6 +10,7 @@
 #include <assert.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -32,26 +33,105 @@
 #define NULL ((void *)0)
 #endif
 
-#define OSDP_CTX_MAGIC 0xDEADBEAF
+#define OSDP_CTX_MAGIC 0xDEADBEEF
 
 #define ARG_UNUSED(x) (void)(x)
 
-#define LOG_EM(...)    __logger_log(&pd->logger, LOG_EMERG,  __FILE__, __LINE__, __VA_ARGS__)
-#define LOG_ALERT(...) __logger_log(&pd->logger, LOG_ALERT,  __FILE__, __LINE__, __VA_ARGS__)
-#define LOG_CRIT(...)  __logger_log(&pd->logger, LOG_CRIT,   __FILE__, __LINE__, __VA_ARGS__)
-#define LOG_ERR(...)   __logger_log(&pd->logger, LOG_ERR,    __FILE__, __LINE__, __VA_ARGS__)
-#define LOG_INF(...)   __logger_log(&pd->logger, LOG_INFO,   __FILE__, __LINE__, __VA_ARGS__)
-#define LOG_WRN(...)   __logger_log(&pd->logger, LOG_WARNING,__FILE__, __LINE__, __VA_ARGS__)
+/*
+ * OSDP_TEST_ALIAS(fn) exposes an internal function to an out-of-module driver
+ * without touching its definition. Under UNIT_TESTING (the in-tree tests) or
+ * OSDP_UNIT_TESTABLE (an embedder opting in to drive libosdp internals) it
+ * emits a test_<fn> alias of fn -- which may be static -- so a caller in
+ * another translation unit reaches it by forward-declaring test_<fn>. It must
+ * appear after fn's definition and in the same translation unit. In a normal
+ * build it expands to a harmless forward declaration: no test_* symbols reach
+ * shipping images and every function keeps its original linkage.
+ *
+ * This replaces the older idiom of a hand-written test_<fn> function pointer:
+ * the alias binds to fn by name (no signature can drift), costs no .data slot,
+ * and adds no indirection at the call site.
+ */
+#if defined(UNIT_TESTING) || defined(OSDP_UNIT_TESTABLE)
+#define OSDP_TEST_ALIAS(fn) \
+	extern __typeof__(fn) test_##fn __attribute__((alias(#fn)))
+#else
+#define OSDP_TEST_ALIAS(fn) struct osdp_test_alias_##fn /* swallow the ';' */
+#endif
+
+#ifdef OPT_OSDP_LOG_MINIMAL
+
+__format_printf(4, 5)
+int osdp_log_emit_sys(int log_level, const char *file, unsigned long line,
+		      const char *fmt, ...);
+__format_printf(6, 7)
+int osdp_log_emit(bool is_cp, int pd_address, int log_level,
+		  const char *file, unsigned long line,
+		  const char *fmt, ...);
+
+#define OSDP_PD_LOG(_level, ...)                                               \
+	do {                                                                   \
+		osdp_log_emit(is_cp_mode(pd), pd->address, _level,             \
+			      __FILE__, __LINE__, __VA_ARGS__);                \
+	} while (0)
+
+#undef LOG_PRINT
+#define LOG_PRINT(...)                                                         \
+	do {                                                                   \
+		osdp_log_emit(false, -1, LOG_INFO, __FILE__,                   \
+			      __LINE__, __VA_ARGS__);                          \
+	} while (0)
+
+#else
+
+__format_printf(6, 7)
+int osdp_log_cb_emit(bool is_cp, int pd_address, int log_level,
+		     const char *file, unsigned long line,
+		     const char *fmt, ...);
+
+#define OSDP_PD_LOG(_level, ...)                                               \
+	do {                                                                   \
+		struct osdp *__ctx = pd_to_osdp(pd);                           \
+		if (!__ctx->logger.cb &&                                       \
+		    ((_level) < LOG_EMERG || (_level) >= LOG_MAX_LEVEL ||      \
+		     (_level) > __ctx->logger.log_level)) {                    \
+			break;                                                 \
+		}                                                              \
+		logger_t __log_ctx = __ctx->logger;                            \
+		char __name[LOGGER_NAME_MAXLEN];                               \
+		if (is_cp_mode(pd)) {                                          \
+			snprintf(__name, sizeof(__name), "OSDP: CP: PD-%d",    \
+				 pd->address);                                 \
+		} else {                                                       \
+			snprintf(__name, sizeof(__name), "OSDP: PD-%d", pd->address);\
+		}                                                              \
+			logger_set_name(&__log_ctx, __name);                   \
+			if (__ctx->logger.cb) {                                \
+				osdp_log_cb_emit(is_cp_mode(pd), pd->address,  \
+						 _level, __FILE__, __LINE__,   \
+						 __VA_ARGS__);                 \
+				break;                                         \
+			}                                                      \
+			__logger_log(&__log_ctx, _level, __FILE__, __LINE__, __VA_ARGS__);\
+	} while (0)
+
+#endif /* OPT_OSDP_LOG_MINIMAL */
+
+#define LOG_EM(...)    OSDP_PD_LOG(LOG_EMERG, __VA_ARGS__)
+#define LOG_ALERT(...) OSDP_PD_LOG(LOG_ALERT, __VA_ARGS__)
+#define LOG_CRIT(...)  OSDP_PD_LOG(LOG_CRIT, __VA_ARGS__)
+#define LOG_ERR(...)   OSDP_PD_LOG(LOG_ERR, __VA_ARGS__)
+#define LOG_INF(...)   OSDP_PD_LOG(LOG_INFO, __VA_ARGS__)
+#define LOG_WRN(...)   OSDP_PD_LOG(LOG_WARNING, __VA_ARGS__)
 #define LOG_WRN_ONCE(...) \
 do {\
   static int warned = 0; \
   if(!warned) { \
-    __logger_log(&pd->logger, LOG_WARNING,__FILE__, __LINE__, __VA_ARGS__);\
+    OSDP_PD_LOG(LOG_WARNING, __VA_ARGS__); \
     warned = 1;\
   }\
 }while(0)
-#define LOG_NOT(...)   __logger_log(&pd->logger, LOG_NOTICE, __FILE__, __LINE__, __VA_ARGS__)
-#define LOG_DBG(...)   __logger_log(&pd->logger, LOG_DEBUG,  __FILE__, __LINE__, __VA_ARGS__)
+#define LOG_NOT(...)   OSDP_PD_LOG(LOG_NOTICE, __VA_ARGS__)
+#define LOG_DBG(...)   OSDP_PD_LOG(LOG_DEBUG, __VA_ARGS__)
 
 #define ISSET_FLAG(p, f)       (((p)->flags & (f)) == (f))
 #define SET_FLAG(p, f)          ((p)->flags |= (f))
@@ -62,46 +142,6 @@ do {\
 #define BYTE_1(x) (uint8_t)(((x) >> 8) & 0xFF)
 #define BYTE_2(x) (uint8_t)(((x) >> 16) & 0xFF)
 #define BYTE_3(x) (uint8_t)(((x) >> 24) & 0xFF)
-
-/**
- * Shorthands for unsigned type (u8, u16, u24, u32) to little indian bytes and
- * vice-versa.
- *
- * Note: Use with caution. These are simple macros that are intended to improve
- * code maintainability by moving repeated patterns into one place. They do not
- * consider side effects.
- */
-#define U8_TO_BYTES_LE(val, buf, len) \
-	buf[len++] = BYTE_0(val)
-#define U16_TO_BYTES_LE(val, buf, len) \
-	buf[len++] = BYTE_0(val); \
-	buf[len++] = BYTE_1(val);
-#define U24_TO_BYTES_LE(val, buf, len) \
-	buf[len++] = BYTE_0(val); \
-	buf[len++] = BYTE_1(val); \
-	buf[len++] = BYTE_2(val);
-#define U32_TO_BYTES_LE(val, buf, len) \
-	buf[len++] = BYTE_0(val); \
-	buf[len++] = BYTE_1(val); \
-	buf[len++] = BYTE_2(val); \
-	buf[len++] = BYTE_3(val);
-#define BYTES_TO_U8_LE(buf, len, val) \
-	val = buf[len++];
-#define BYTES_TO_U16_LE(buf, len, val) \
-	val = ((buf[len + 1] << 8) | \
-	       (buf[len + 0] << 0)); \
-	len += 2;
-#define BYTES_TO_U24_LE(buf, len, val) \
-	val = ((buf[len + 2] << 16) | \
-	       (buf[len + 1] << 8) | \
-	       (buf[len + 0] << 0)); \
-	len += 3;
-#define BYTES_TO_U32_LE(buf, len, val) \
-	val = ((buf[len + 3] << 24) | \
-	       (buf[len + 2] << 16) | \
-	       (buf[len + 1] << 8) | \
-	       (buf[len + 0] << 0)); \
-	len += 4;
 
 /* casting helpers */
 #define TO_OSDP(ctx)  ((struct osdp *)ctx)
@@ -123,8 +163,12 @@ do {\
 
 static inline __noreturn void die()
 {
+#ifdef __BARE_METAL__
+	for (;;) { }
+#else
 	exit(EXIT_FAILURE);
 	__unreachable();
+#endif
 }
 
 #define BUG() \
@@ -140,13 +184,6 @@ static inline __noreturn void die()
 			BUG(); \
 		} \
 	} while (0)
-
-/* Unused type only to estimate ephemeral_data size */
-union osdp_ephemeral_data {
-	struct osdp_cmd cmd;
-	struct osdp_event event;
-};
-#define OSDP_EPHEMERAL_DATA_MAX_LEN sizeof(union osdp_ephemeral_data)
 
 /**
  * OSDP application exposed method arg checker.
@@ -267,14 +304,14 @@ union osdp_ephemeral_data {
 #define PD_FLAG_SC_USE_SCBKD   BIT(6)  /* in this SC attempt, use SCBKD */
 #define PD_FLAG_SC_ACTIVE      BIT(7)  /* secure channel is active */
 #define PD_FLAG_PD_MODE        BIT(8)  /* device is setup as PD */
-#define PD_FLAG_CHN_SHARED     BIT(9)  /* PD's channel is shared */
 #define PD_FLAG_PKT_SKIP_MARK  BIT(10) /* OPT_OSDP_SKIP_MARK_BYTE */
 #define PD_FLAG_PKT_HAS_MARK   BIT(11) /* Packet has mark byte */
 #define PD_FLAG_SC_DISABLED    BIT(12) /* master_key=NULL && scbk=NULL */
 #define PD_FLAG_PKT_BROADCAST  BIT(13) /* this packet was addressed to 0x7F */
 #define PD_FLAG_CP_USE_CRC     BIT(14) /* CP uses CRC-16 instead of checksum */
-#define PD_FLAG_TRS_CAPABLE    BIT(15) /* TRS - capability */
-#define PD_FLAG_TRS_ACTIVE     BIT(16) /* TRS - status */
+#define PD_FLAG_ONLINE         BIT(15) /* PD mode: CP link is active */
+#define PD_FLAG_TRS_CAPABLE    BIT(16) /* TRS - capability */
+#define PD_FLAG_TRS_ACTIVE     BIT(17) /* TRS - status */
 
 /* PD Init flags */
 #define PD_FLAG_ENFORCE_SECURE  BIT(24) /* See: OSDP_FLAG_ENFORCE_SECURE */
@@ -300,8 +337,10 @@ union osdp_ephemeral_data {
 enum osdp_cp_phy_state_e {
 	OSDP_CP_PHY_STATE_IDLE,
 	OSDP_CP_PHY_STATE_SEND_CMD,
+	OSDP_CP_PHY_STATE_SEND_CMD_WAIT,
 	OSDP_CP_PHY_STATE_REPLY_WAIT,
 	OSDP_CP_PHY_STATE_WAIT,
+	OSDP_CP_PHY_STATE_RETRY_CMD,
 	OSDP_CP_PHY_STATE_DONE,
 	OSDP_CP_PHY_STATE_ERR,
 };
@@ -368,6 +407,14 @@ enum osdp_pkt_errors_e {
 	 * No data received (do not confuse with OSDP_ERR_PKT_WAIT)
 	 */
 	OSDP_ERR_PKT_NO_DATA = -8,
+	/**
+	 * Channel send returned 0 (EAGAIN): transport is momentarily not
+	 * ready to queue the finalized bytes (half-duplex turnaround,
+	 * previous TX draining, etc.). The caller must yield and re-send
+	 * the same finalized buffer on the next refresh — no rebuild, no
+	 * SC/seq state advance.
+	 */
+	OSDP_ERR_PKT_WAIT_TX = -9,
 };
 
 struct osdp_slab {
@@ -392,18 +439,15 @@ struct osdp_secure_channel {
 };
 
 struct osdp_rb {
-    size_t head;
-    size_t tail;
-    uint8_t buffer[OSDP_RX_RB_SIZE];
+	size_t head;
+	size_t tail;
+	uint8_t buffer[OSDP_RX_RB_SIZE];
 };
 
-#define OSDP_APP_DATA_QUEUE_SIZE \
-	(OSDP_CP_CMD_POOL_SIZE * \
-	 (sizeof(union osdp_ephemeral_data) + sizeof(queue_node_t)))
-
-struct osdp_app_data_pool {
-	slab_t slab;
-	uint8_t slab_blob[OSDP_APP_DATA_QUEUE_SIZE];
+struct osdp_rx_pkt {
+	const uint8_t *buf;
+	unsigned long len;
+	unsigned long max_len;
 };
 
 struct osdp_pd {
@@ -423,47 +467,73 @@ struct osdp_pd {
 	int state;             /* FSM state (CP mode only) */
 	int phy_state;         /* phy layer FSM state (CP mode only) */
 	int phy_retry_count;   /* command retry counter */
+	int phy_tx_seq;        /* seq number embedded in last TX packet */
 	uint32_t wait_ms;      /* wait time in MS to retry communication */
-	int64_t tstamp;        /* Last POLL command issued time in ticks */
-	int64_t sc_tstamp;     /* Last received secure reply time in ticks */
-	int64_t phy_tstamp;    /* Time in ticks since command was sent */
+	tick_t tstamp;         /* Last POLL command issued time in ticks */
+	tick_t sc_tstamp;      /* Last received secure reply time in ticks */
+	tick_t phy_tstamp;     /* Time in ticks since command was sent */
+	tick_t resp_expected;  /* Time in ticks when the response is expected */
 	uint32_t request;      /* Event loop requests */
 
 	uint16_t peer_rx_size; /* Receive buffer size of the peer PD/CP */
 
 	/* Raw bytes received from the serial line for this PD */
-	struct osdp_rb rx_rb;
-	uint8_t packet_buf[OSDP_PACKET_BUF_SIZE];
+#ifdef OPT_OSDP_RX_ZERO_COPY
+	struct osdp_rx_pkt *rx_pkt;
+#else /* OPT_OSDP_RX_ZERO_COPY */
+	struct osdp_rb *rx_rb;
+#endif /* OPT_OSDP_RX_ZERO_COPY */
+
+	uint8_t *packet_buf;
 	unsigned long packet_len;
 	unsigned long packet_buf_len;
 	uint32_t packet_scan_skip;
+	/* A finalized packet is parked in packet_buf awaiting channel-send.
+	 * Set by the build step (fresh reply, prebuilt status reply, or
+	 * EAGAIN retry promotion); cleared after the send completes. While
+	 * set, the update loop skips RX and only retries the send — a new
+	 * RX would advance seq and stale the cached bytes. */
+	bool reply_prebuilt;
+
+	/* Retransmit cache: last successfully-sent reply bytes live in the
+	 * shared tx_buf as long as nothing overwrites them. On a sequence
+	 * repeat we re-emit those bytes verbatim (see phy_check_packet). */
+	uint16_t last_tx_len; /* 0 = cache empty */
+	uint8_t last_cmd_id;
 
 	int cmd_id;            /* Currently processing command ID */
 	int reply_id;          /* Currently processing reply ID */
-
-	/* Data bytes of the current command/reply ID */
-	uint8_t ephemeral_data[OSDP_EPHEMERAL_DATA_MAX_LEN];
+	union {
+		uint8_t nak_code;
+		uint8_t keyset_pending[16];
+		struct {
+			uint8_t address;
+			uint32_t baud_rate;
+		} comset_pending;
+	};
 
 	union {
 		queue_t cmd_queue;
 		queue_t event_queue;
 	};
-	struct osdp_app_data_pool app_data; /* alloc osdp_event / osdp_cmd */
+	const struct osdp_cmd *active_cmd;      /* in-flight cmd (app-owned mode) */
+	const struct osdp_event *active_event;  /* in-flight event (app-owned mode) */
 
-	struct osdp_channel channel;     /* PD's serial channel */
 	struct osdp_secure_channel sc;   /* Secure Channel session context */
 	struct osdp_file *file;          /* File transfer context */
+	struct osdp_metrics metrics;     /* link/protocol health counters */
 	struct osdp_trs *trs;            /* TRS mode context */
 
 	/* PD command callback to app with opaque arg pointer as passed by app */
 	void *command_callback_arg;
 	pd_command_callback_t command_callback;
+	void *event_completion_callback_arg;
+	pd_event_completion_callback_t event_completion_callback;
 
-	/* logger context (from utils/logger.h) */
-	logger_t logger;
-
+#ifndef __BARE_METAL__
 	/* Opaque packet capture pointer (see osdp_pcap.c) */
 	void *packet_capture_ctx;
+#endif
 };
 
 struct osdp {
@@ -471,30 +541,39 @@ struct osdp {
 	int _num_pd;           /* Number of PDs attached to this context */
 	struct osdp_pd *_current_pd; /* current operational pd's pointer */
 	struct osdp_pd *pd;    /* base of PD list (must be at lest one) */
-	int num_channels;      /* Number of distinct channels */
-	int *channel_lock;     /* array of length NUM_PD() to lock a channel */
+	struct osdp_channel channel; /* OSDP channel */
+	uint8_t tx_buf[OSDP_PACKET_BUF_SIZE];
+	uint8_t *rx_buf; /* RX landing buffer: aliased to tx_buf in CP; distinct in PD */
 
 	/* CP event callback to app with opaque arg pointer as passed by app */
 	void *event_callback_arg;
 	cp_event_callback_t event_callback;
+	void *command_completion_callback_arg;
+	cp_command_completion_callback_t command_completion_callback;
+
+#ifndef OPT_OSDP_LOG_MINIMAL
+	logger_t logger;      /* logger context (from utils/logger.h) */
+#endif
 };
 
 void osdp_keyset_complete(struct osdp_pd *pd);
 
-/* from osdp_phy.c */
+/* --- from osdp_phy.c --- */
 int osdp_phy_packet_init(struct osdp_pd *p, uint8_t *buf, int max_len);
 int osdp_phy_check_packet(struct osdp_pd *pd);
 int osdp_phy_decode_packet(struct osdp_pd *p, uint8_t **pkt_start);
 void osdp_phy_state_reset(struct osdp_pd *pd, bool is_error);
 int osdp_phy_packet_get_data_offset(struct osdp_pd *p, const uint8_t *buf);
 uint8_t *osdp_phy_packet_get_smb(struct osdp_pd *p, const uint8_t *buf);
-int osdp_phy_send_packet(struct osdp_pd *pd, uint8_t *buf,
-			 int len, int max_len);
+int osdp_phy_finalize_packet(struct osdp_pd *pd, uint8_t *buf,
+                             int len, int max_len);
+int osdp_phy_send_packet(struct osdp_pd *pd, uint8_t *buf, int len);
 void osdp_phy_progress_sequence(struct osdp_pd *pd);
+void osdp_phy_release_packet(struct osdp_pd *pd);
 
-/* from osdp_common.c */
-__weak int64_t osdp_millis_now(void);
-int64_t osdp_millis_since(int64_t last);
+/* --- from osdp_common.c --- */
+__weak tick_t osdp_millis_now(void);
+tick_t osdp_millis_since(tick_t last);
 uint16_t osdp_compute_crc16(const uint8_t *buf, size_t len);
 
 const char *osdp_cmd_name(int cmd_id);
@@ -504,14 +583,16 @@ int osdp_rb_push(struct osdp_rb *p, uint8_t data);
 int osdp_rb_push_buf(struct osdp_rb *p, uint8_t *buf, int len);
 int osdp_rb_pop(struct osdp_rb *p, uint8_t *data);
 int osdp_rb_pop_buf(struct osdp_rb *p, uint8_t *buf, int max_len);
+void osdp_rb_reset(struct osdp_rb *p);
 
 void osdp_crypt_setup();
 void osdp_encrypt(uint8_t *key, uint8_t *iv, uint8_t *data, int len);
 void osdp_decrypt(uint8_t *key, uint8_t *iv, uint8_t *data, int len);
 void osdp_fill_random(uint8_t *buf, int len);
+void osdp_fill_zeros(void *buf, int len);
 void osdp_crypt_teardown();
 
-/* from osdp_sc.c */
+/* --- from osdp_sc.c --- */
 void osdp_compute_scbk(struct osdp_pd *pd, uint8_t *master_key, uint8_t *scbk);
 void osdp_compute_session_keys(struct osdp_pd *pd);
 void osdp_compute_cp_cryptogram(struct osdp_pd *pd);
@@ -526,9 +607,114 @@ int osdp_compute_mac(struct osdp_pd *pd, int is_cmd,
 void osdp_sc_setup(struct osdp_pd *pd);
 void osdp_sc_teardown(struct osdp_pd *pd);
 
+/* --- Little-endian readers --- */
+
+static inline uint16_t bread_u16_le(const uint8_t *buf, int *pos)
+{
+    uint16_t v = buf[(*pos)++];
+    v |= (uint16_t)buf[(*pos)++] << 8;
+    return v;
+}
+
+static inline uint32_t bread_u24_le(const uint8_t *buf, int *pos)
+{
+    uint32_t v = buf[(*pos)++];
+    v |= (uint32_t)buf[(*pos)++] << 8;
+    v |= (uint32_t)buf[(*pos)++] << 16;
+    return v;
+}
+
+static inline uint32_t bread_u32_le(const uint8_t *buf, int *pos)
+{
+    uint32_t v = buf[(*pos)++];
+    v |= (uint32_t)buf[(*pos)++] << 8;
+    v |= (uint32_t)buf[(*pos)++] << 16;
+    v |= (uint32_t)buf[(*pos)++] << 24;
+    return v;
+}
+
+/* --- Little-endian writers --- */
+
+static inline void bwrite_u8(uint8_t val, uint8_t *buf, int *len)
+{
+    buf[(*len)++] = val;
+}
+
+static inline void bwrite_u16_le(uint16_t val, uint8_t *buf, int *len)
+{
+    buf[(*len)++] = BYTE_0(val);
+    buf[(*len)++] = BYTE_1(val);
+}
+
+static inline void bwrite_u24_le(uint32_t val, uint8_t *buf, int *len)
+{
+    buf[(*len)++] = BYTE_0(val);
+    buf[(*len)++] = BYTE_1(val);
+    buf[(*len)++] = BYTE_2(val);
+}
+
+static inline void bwrite_u32_le(uint32_t val, uint8_t *buf, int *len)
+{
+    buf[(*len)++] = BYTE_0(val);
+    buf[(*len)++] = BYTE_1(val);
+    buf[(*len)++] = BYTE_2(val);
+    buf[(*len)++] = BYTE_3(val);
+}
+
+/* --- Big-endian readers --- */
+
+static inline uint16_t bread_u16_be(const uint8_t *buf, int *pos)
+{
+    uint16_t v = (uint16_t)buf[(*pos)++] << 8;
+    v |= buf[(*pos)++];
+    return v;
+}
+
+static inline uint32_t bread_u24_be(const uint8_t *buf, int *pos)
+{
+    uint32_t v = (uint32_t)buf[(*pos)++] << 16;
+    v |= (uint32_t)buf[(*pos)++] << 8;
+    v |= buf[(*pos)++];
+    return v;
+}
+
+static inline uint32_t bread_u32_be(const uint8_t *buf, int *pos)
+{
+    uint32_t v = (uint32_t)buf[(*pos)++] << 24;
+    v |= (uint32_t)buf[(*pos)++] << 16;
+    v |= (uint32_t)buf[(*pos)++] << 8;
+    v |= buf[(*pos)++];
+    return v;
+}
+
+/* --- Big-endian writers --- */
+
+static inline void bwrite_u16_be(uint16_t val, uint8_t *buf, int *len)
+{
+    buf[(*len)++] = BYTE_1(val);
+    buf[(*len)++] = BYTE_0(val);
+}
+
+static inline void bwrite_u24_be(uint32_t val, uint8_t *buf, int *len)
+{
+    buf[(*len)++] = BYTE_2(val);
+    buf[(*len)++] = BYTE_1(val);
+    buf[(*len)++] = BYTE_0(val);
+}
+
+static inline void bwrite_u32_be(uint32_t val, uint8_t *buf, int *len)
+{
+    buf[(*len)++] = BYTE_3(val);
+    buf[(*len)++] = BYTE_2(val);
+    buf[(*len)++] = BYTE_1(val);
+    buf[(*len)++] = BYTE_0(val);
+}
+
+/* --- Other Helpers --- */
+
 static inline int get_tx_buf_size(struct osdp_pd *pd)
 {
-	int packet_buf_size = sizeof(pd->packet_buf);
+	int packet_buf_size = OSDP_PACKET_BUF_SIZE;
 
 	if (pd->peer_rx_size) {
 		if (packet_buf_size > (int)pd->peer_rx_size)
@@ -557,8 +743,9 @@ static inline bool is_cp_mode(struct osdp_pd *pd)
 	return !ISSET_FLAG(pd, PD_FLAG_PD_MODE);
 }
 
-static inline bool is_channel_shared(struct osdp_pd *pd) {
-	return ISSET_FLAG(pd, PD_FLAG_CHN_SHARED);
+static inline uint8_t *osdp_tx_staging_buf(struct osdp_pd *pd)
+{
+	return pd_to_osdp(pd)->tx_buf;
 }
 
 static inline bool sc_use_scbkd(struct osdp_pd *pd) {
@@ -587,6 +774,23 @@ static inline void sc_deactivate(struct osdp_pd *pd)
 		osdp_sc_teardown(pd);
 	}
 	CLEAR_FLAG(pd, PD_FLAG_SC_ACTIVE);
+	/* Cached retransmit reply is no longer meaningful without SC. */
+	pd->last_tx_len = 0;
+}
+
+static inline bool is_pd_online(struct osdp_pd *pd)
+{
+	return ISSET_FLAG(pd, PD_FLAG_ONLINE);
+}
+
+static inline void pd_set_online(struct osdp_pd *pd)
+{
+	SET_FLAG(pd, PD_FLAG_ONLINE);
+}
+
+static inline void pd_set_offline(struct osdp_pd *pd)
+{
+	CLEAR_FLAG(pd, PD_FLAG_ONLINE);
 }
 
 static inline void make_request(struct osdp_pd *pd, uint32_t req) {
@@ -650,5 +854,269 @@ static inline bool is_ignore_unsolicited_messages(struct osdp_pd *pd) {
 static inline bool is_install_mode(struct osdp_pd *pd) {
 	return ISSET_FLAG(pd, PD_FLAG_INSTALL_MODE);
 }
+
+/* --- CP Alloc Helpers --- */
+
+#ifdef OPT_OSDP_STATIC
+
+#ifdef OPT_OSDP_EXCLUSIVE_ROLE
+/*
+ * Exclusive-role arena: a context is either CP or PD. When a build only ever runs
+ * one role at a time, the inactive role's pool sits idle for the lifetime of
+ * the active one, so overlaying the CP and PD static pools in a union reclaims
+ * the smaller (PD) pool's worth of BSS.
+ *
+ * Opt-in only: leaving OPT_OSDP_EXCLUSIVE_ROLE undefined keeps the CP and PD
+ * pools as independent storage, which is required when a CP and a PD context
+ * are instantiated at the same time. One external instance (defined in
+ * osdp_common.c) is shared across the osdp_cp.c / osdp_pd.c TUs.
+ */
+union osdp_role_arena {
+	struct {
+		struct osdp        ctx;
+		struct osdp_pd     pd[OSDP_CP_MAX_PDS];
+#ifdef OPT_OSDP_RX_ZERO_COPY
+		struct osdp_rx_pkt rx_pkt[OSDP_CP_MAX_PDS];
+#else
+		struct osdp_rb     rb[OSDP_CP_MAX_PDS];
+#endif
+	} cp;
+	struct {
+		struct osdp        ctx;
+		struct osdp_pd     pd;
+		uint8_t            rx_buf[OSDP_PACKET_BUF_SIZE];
+#ifdef OPT_OSDP_RX_ZERO_COPY
+		struct osdp_rx_pkt rx_pkt;
+#else
+		struct osdp_rb     rb;
+#endif
+	} pd;
+};
+extern union osdp_role_arena g_osdp_role_arena;
+#endif /* OPT_OSDP_EXCLUSIVE_ROLE */
+
+static inline struct osdp *cp_static_ctx_get(void)
+{
+#ifdef OPT_OSDP_EXCLUSIVE_ROLE
+	return &g_osdp_role_arena.cp.ctx;
+#else
+	static struct osdp g_osdp_ctx;
+	return &g_osdp_ctx;
+#endif
+}
+
+static inline struct osdp_pd *cp_static_pd_array_get(void)
+{
+#ifdef OPT_OSDP_EXCLUSIVE_ROLE
+	return g_osdp_role_arena.cp.pd;
+#else
+	static struct osdp_pd g_cp_pd_ctx[OSDP_CP_MAX_PDS];
+	return g_cp_pd_ctx;
+#endif
+}
+
+#ifdef OPT_OSDP_RX_ZERO_COPY
+static inline struct osdp_rx_pkt *cp_static_rx_pkt_array_get(void)
+{
+#ifdef OPT_OSDP_EXCLUSIVE_ROLE
+	return g_osdp_role_arena.cp.rx_pkt;
+#else
+	static struct osdp_rx_pkt g_cp_rx_pkt[OSDP_CP_MAX_PDS];
+	return g_cp_rx_pkt;
+#endif
+}
+#else /* OPT_OSDP_RX_ZERO_COPY */
+static inline struct osdp_rb *cp_static_rx_rb_array_get(void)
+{
+#ifdef OPT_OSDP_EXCLUSIVE_ROLE
+	return g_osdp_role_arena.cp.rb;
+#else
+	static struct osdp_rb g_cp_rb[OSDP_CP_MAX_PDS];
+	return g_cp_rb;
+#endif
+}
+#endif /* OPT_OSDP_RX_ZERO_COPY */
+#endif /* OPT_OSDP_STATIC */
+
+static inline struct osdp *cp_ctx_alloc(void)
+{
+	struct osdp *ctx;
+#ifdef OPT_OSDP_STATIC
+	ctx = cp_static_ctx_get();
+	memset(ctx, 0, sizeof(struct osdp));
+#else
+	ctx = calloc(1, sizeof(struct osdp));
+	if (!ctx) {
+		return NULL;
+	}
+#endif /* OPT_OSDP_STATIC */
+	/* CP mode does not cache retransmit replies; alias rx_buf to tx_buf
+	 * to preserve the legacy shared-buffer behavior with zero cost. */
+	ctx->rx_buf = ctx->tx_buf;
+	return ctx;
+}
+
+static inline struct osdp_pd *cp_pd_array_alloc(int old_num_pd, int num_pd)
+{
+#ifdef OPT_OSDP_STATIC
+	struct osdp_pd *pd = cp_static_pd_array_get();
+
+	if (old_num_pd + num_pd > OSDP_CP_MAX_PDS) {
+		return NULL;
+	}
+	memset(pd + old_num_pd, 0, sizeof(struct osdp_pd) * num_pd);
+	return pd;
+#else
+	return calloc(old_num_pd + num_pd, sizeof(struct osdp_pd));
+#endif
+}
+
+#ifdef OPT_OSDP_RX_ZERO_COPY
+
+static inline struct osdp_rx_pkt *cp_rx_pkt_alloc(int pd_idx)
+{
+#ifdef OPT_OSDP_STATIC
+	struct osdp_rx_pkt *rx_pkt = cp_static_rx_pkt_array_get();
+	memset(&rx_pkt[pd_idx], 0, sizeof(struct osdp_rx_pkt));
+	return &rx_pkt[pd_idx];
+#else
+	ARG_UNUSED(pd_idx);
+	return calloc(1, sizeof(struct osdp_rx_pkt));
+#endif
+}
+
+#else /* OPT_OSDP_RX_ZERO_COPY */
+
+static inline struct osdp_rb *cp_rx_rb_alloc(int pd_idx)
+{
+#ifdef OPT_OSDP_STATIC
+	struct osdp_rb *rx_rb = cp_static_rx_rb_array_get();
+	memset(&rx_rb[pd_idx], 0, sizeof(struct osdp_rb));
+	return &rx_rb[pd_idx];
+#else
+	ARG_UNUSED(pd_idx);
+	return calloc(1, sizeof(struct osdp_rb));
+#endif
+}
+
+#endif /* OPT_OSDP_RX_ZERO_COPY */
+
+/* --- PD Alloc Helpers --- */
+
+#ifdef OPT_OSDP_STATIC
+
+static inline struct osdp *pd_static_ctx_get(void)
+{
+#ifdef OPT_OSDP_EXCLUSIVE_ROLE
+	return &g_osdp_role_arena.pd.ctx;
+#else
+	static struct osdp g_osdp_ctx;
+	return &g_osdp_ctx;
+#endif
+}
+
+static inline struct osdp_pd *pd_static_ctx_pd_get(void)
+{
+#ifdef OPT_OSDP_EXCLUSIVE_ROLE
+	return &g_osdp_role_arena.pd.pd;
+#else
+	static struct osdp_pd g_osdp_pd_ctx;
+	return &g_osdp_pd_ctx;
+#endif
+}
+
+static inline uint8_t *pd_static_rx_buf_get(void)
+{
+#ifdef OPT_OSDP_EXCLUSIVE_ROLE
+	return g_osdp_role_arena.pd.rx_buf;
+#else
+	static uint8_t g_osdp_pd_rx_buf[OSDP_PACKET_BUF_SIZE];
+	return g_osdp_pd_rx_buf;
+#endif
+}
+
+#ifdef OPT_OSDP_RX_ZERO_COPY
+
+static inline struct osdp_rx_pkt *pd_static_rx_pkt_get(void)
+{
+#ifdef OPT_OSDP_EXCLUSIVE_ROLE
+	return &g_osdp_role_arena.pd.rx_pkt;
+#else
+	static struct osdp_rx_pkt g_osdp_rx_pkt;
+	return &g_osdp_rx_pkt;
+#endif
+}
+
+#else /* OPT_OSDP_RX_ZERO_COPY */
+
+static inline struct osdp_rb *pd_static_rx_rb_get(void)
+{
+#ifdef OPT_OSDP_EXCLUSIVE_ROLE
+	return &g_osdp_role_arena.pd.rb;
+#else
+	static struct osdp_rb g_osdp_rb;
+	return &g_osdp_rb;
+#endif
+}
+
+#endif /* OPT_OSDP_RX_ZERO_COPY */
+
+#endif /* OPT_OSDP_STATIC */
+
+static inline struct osdp *pd_ctx_alloc(void)
+{
+	struct osdp *ctx;
+#ifdef OPT_OSDP_STATIC
+	ctx = pd_static_ctx_get();
+	memset(ctx, 0, sizeof(struct osdp));
+	ctx->rx_buf = pd_static_rx_buf_get();
+#else
+	ctx = calloc(1, sizeof(struct osdp));
+	if (!ctx) {
+		return NULL;
+	}
+	ctx->rx_buf = calloc(1, OSDP_PACKET_BUF_SIZE);
+	if (!ctx->rx_buf) {
+		free(ctx);
+		return NULL;
+	}
+#endif /* OPT_OSDP_STATIC */
+	return ctx;
+}
+
+static inline struct osdp_pd *pd_instance_alloc(void)
+{
+#ifdef OPT_OSDP_STATIC
+	struct osdp_pd *pd = pd_static_ctx_pd_get();
+	memset(pd, 0, sizeof(struct osdp_pd));
+	return pd;
+#else
+	return calloc(1, sizeof(struct osdp_pd));
+#endif /* OPT_OSDP_STATIC */
+}
+
+#ifdef OPT_OSDP_RX_ZERO_COPY
+static inline struct osdp_rx_pkt *pd_rx_pkt_alloc(void)
+{
+#ifdef OPT_OSDP_STATIC
+	struct osdp_rx_pkt *rx_pkt = pd_static_rx_pkt_get();
+	memset(rx_pkt, 0, sizeof(struct osdp_rx_pkt));
+	return rx_pkt;
+#else
+	return calloc(1, sizeof(struct osdp_rx_pkt));
+#endif /* OPT_OSDP_STATIC */
+}
+#else /* OPT_OSDP_RX_ZERO_COPY */
+static inline struct osdp_rb *pd_rx_rb_alloc(void)
+{
+#ifdef OPT_OSDP_STATIC
+	struct osdp_rb *rx_rb = pd_static_rx_rb_get();
+	memset(rx_rb, 0, sizeof(struct osdp_rb));
+	return rx_rb;
+#else
+	return calloc(1, sizeof(struct osdp_rb));
+#endif /* OPT_OSDP_STATIC */
+}
+#endif /* OPT_OSDP_RX_ZERO_COPY */
 
 #endif	/* _OSDP_COMMON_H_ */

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2025 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
+ * Copyright (c) 2021-2026 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -42,7 +42,7 @@ osdp_pd_info_t info_pd = {
 		.serial_number = 0x01020304,
 		.firmware_version = 0x0A0B0C0D,
 	},
-	.cap = (struct osdp_pd_cap []) {
+		.cap = (struct osdp_pd_cap []) {
 		{
 			.function_code = OSDP_PD_CAP_READER_LED_CONTROL,
 			.compliance_level = 1,
@@ -53,17 +53,17 @@ osdp_pd_info_t info_pd = {
 			.compliance_level = 1,
 			.num_items = 1
 		},
-		{ static_cast<uint8_t>(-1), 0, 0 } /* Sentinel */
-	},
-	.channel = {
-		.data = nullptr,
-		.id = 0,
-		.recv = sample_pd_recv_func,
-		.send = sample_pd_send_func,
-		.flush = nullptr,
-		.close = nullptr,
-	},
-	.scbk = nullptr,
+			{ static_cast<uint8_t>(-1), 0, 0 } /* Sentinel */
+		},
+		.scbk = nullptr,
+};
+
+static struct osdp_channel pd_channel = {
+	.data = nullptr,
+	.recv = sample_pd_recv_func,
+	.send = sample_pd_send_func,
+	.flush = nullptr,
+	.close = nullptr,
 };
 
 int pd_command_handler(void *data, struct osdp_cmd *cmd)
@@ -80,7 +80,7 @@ int main()
 
 	pd.logger_init("osdp::pd", OSDP_LOG_DEBUG, NULL);
 
-	pd.setup(&info_pd);
+	pd.setup(&pd_channel, &info_pd);
 
 	pd.set_command_callback(pd_command_handler, nullptr);
 

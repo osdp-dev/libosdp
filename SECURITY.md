@@ -1,41 +1,49 @@
 # Security Policy
 
-There are many users using LibOSDP in some capacity in production. If you think
-you found a bug that may have security implications, please follow the usual
-responsible disclosure protocols. Any issue reported in this channel will be
-acknowledged withing 3 business days.
-
-If an issue has been confirmed  by a maintainer, we request the reporter to
-respect a 90 day embargo period before making the issue public.
-
-## Supported Versions
-
-LibOSDP will support the last 2 [releases][1] for security and bug fixes.
-
-| Version | Branch | Supported          |
-| ------- | -------|------------------- |
-| <= 1.5  | N/A    | :x:                |
-| 2.4.x   | 2.4.x  | :white_check_mark: |
-| latest  | master | :white_check_mark: |
+LibOSDP is deployed in production by a wide range of users. We take the
+security of the library and its downstream consumers seriously and welcome
+reports of any issue that may have security implications.
 
 ## Reporting a Vulnerability
 
-Please send an email to sidcha.dev@gmail.com ([GPG]([2])).
+If you believe you have found a vulnerability, please follow responsible
+disclosure practices and email us at security@osdp.dev ([GPG][2]). We will
+acknowledge your report within 3 business days.
+
+Once a maintainer has confirmed the issue, we ask that reporters honour a
+90-day embargo before disclosing it publicly. This window allows us to notify
+subscribers of the security mailing list and gives downstream consumers time to
+update their systems.
+
+## Supported Versions
+
+LibOSDP provides security and bug fixes for the latest two [releases][1], in
+addition to the `master` branch.
+
+| Version | Branch        | Supported          |
+| ------- | ------------- | ------------------ |
+| <= 2.0  | N/A           | :x:                |
+| 3.1.x   | release_3.1   | :white_check_mark: |
+| 3.2.x   | release_3.2   | :white_check_mark: |
+| latest  | master        | :white_check_mark: |
 
 ## Security Mailing List
 
-If you are a vendor using LibOSDP in a product (or any production capacity),
-please send an email to sidcha.dev@gmail.com to get added to a private mailing
-list which will be used to notify about critical incidents such as
-vulnerabilities and potential fixes or workarounds before the issue has been made
-public.
+If you use LibOSDP in a product or any other production capacity, we encourage
+you to join our private security mailing list. Subscribers are notified of
+critical incidents — such as vulnerabilities and their fixes or workarounds —
+before the details are made public. To request access, email security@osdp.dev.
 
-You can also follow the [security advisories][3] page but this will be updated
-only after the issue has been made public.
+We recommend subscribing with a dedicated, role-based address such as
+security@your-company.com rather than an individual's mailbox, as this keeps the
+list current as personnel change.
 
-Note: For very obvious reasons, not everyone can be added to this list. You
-should be able to prove that you are indeed using LibOSDP in production.
+Membership is limited to verified production users. Writing to us from a company
+email address is usually sufficient to establish this.
 
-[1]: https://github.com/goToMain/libosdp/releases
+You may also monitor the [security advisories][3] page, though it is updated only
+after an issue has been disclosed publicly.
+
+[1]: https://github.com/osdp-dev/libosdp/releases
 [2]: https://github.com/sidcha.gpg
-[3]: https://github.com/goToMain/libosdp/security/advisories
+[3]: https://github.com/osdp-dev/libosdp/security/advisories

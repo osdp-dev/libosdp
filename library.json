@@ -1,6 +1,6 @@
 {
   "name": "LibOSDP",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "description": "A cross-platform open source implementation of IEC 60839-11-5 Open Supervised Device Protocol (OSDP). The protocol is intended to improve interoperability among access control and security products. It supports Secure Channel (SC) for encrypted and authenticated communication between configured devices.",
   "authors": [{
     "name": "Siddharth Chandrasekaran",

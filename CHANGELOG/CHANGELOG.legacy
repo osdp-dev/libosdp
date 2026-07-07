@@ -1,0 +1,925 @@
+v3.2.0
+------
+
+16 March 2026
+
+This marks the last release for v3 of LibOSDP as v4 will break a few API to switch
+to a new "one channel per osdp_t" data model.
+
+Enhancements:
+  - Python: Enable support for app owned queue data
+  - API: Add app-owned queue mode with completion callbacks
+  - Add some quality of life improvements for Zephyr
+  - chore: Add macro guards around config.h.in entries
+  - Add python support for zero-coppy and add a pytest
+  - API: Add support for a new zero-copy RX path
+  - allow REPLAY_OSTATR as reply for CMD_OUT
+  - Add helper methods to read/write from buffers
+  - cp: Remove unused flag PD_FLAG_HAS_SCBK
+  - LibOSDP: Decouple OSDP_FLAG_XXX and PD_FLAG_XXX
+  - Add static inline helpers for various OSDP_FLAG_* macros
+  - API: Reorder attribute macros for Clang compatibility
+  - PD: Add internal command validation
+
+Fixes:
+  - Fix build git version tags
+  - tests: Fix broken command unit tests
+  - Fix docs build
+  - test: Fix failure due to capabilities
+  - tests: Fix warning about unused functions
+  - python: Fix deadlocks by using with statement in locks
+  - pyosdp: Fix error propagation to help debugging
+  - fixup! Initialize command and event structs before the are used
+  - Initialize command and event structs before the are used
+  - pyosdp: Fix status command event and struct builders
+  - fix Stat Decode error in file transfer keep alive mode
+  - Avoid unused variable warnings in case __ASSERT evaluates to NOP.
+  - PD: Fix warning about unhandled cases in validate_command
+  - CP: Fix un‑annotated fall‑through in notify_command_status
+  - fixup! PD: Add internal command validation
+  - CP: Fix bug in sequence number progression
+  - PD: Fix non-compliant REPLY_RMAC_I status byte
+  - Remove redundant pd->reply_id sets and add missing javadoc entry
+
+
+v3.1.0
+------
+
+25 September 2025
+
+This release introduces hotplug support, adaptive CRC handling, improved
+sequnce number handling, and several CP/PD enhancements. It also includes
+critical bug fixes for MFG commands, memory leaks (python), and protocol
+stability.
+
+Enhancements:
+  - API: Add support for PD hot-plug/unplug
+  - unit-tests: Add coverage for commands and events
+  - tests: Fix and enhance Python OSDP test infrastructure
+  - unit-tests: Add CP/PD startup time fuzzers
+  - CP: Improve sequence number NAK handling and recovery
+  - unit-tests: Add more phy layer tests
+  - CP: Add adaptive checksum/CRC-16 support with automatic fallback
+  - CI: Add support for more python platforms
+  - API: provide export macros locally
+  - Add initial support to build LibOSDP as a Zephyr module
+  - cmake: Add option to enable bare metal builds
+  - cmake: Rename CONFIG_XXX with OPT_XXX
+  - cp: Reset retry_count when PD responds
+  - pd: Add missing call to osdp_sc_init()
+  - API: Rename cp_send_command and pd_notify_event
+  - API: Add channel close callback
+  - API: CP: Add support for command broadcast
+  - CP: Extend debug logging for events
+  - API: PD: Add new COMESET_DONE command
+  - API: Extend PD status report mask to byte array
+  - API: Deprecate OSDP_CARD_FMT_ASCII
+  - API: Add new PD capabilities introduced in OSDP v2.2
+  - API: Add support to include PDs after osdp_cp_setup
+
+Fixes:
+  - MFG: remove command field on OSDP 2.2
+  - Fix manufacturer command callback return value handling
+  - python: Fix a plethora of memory leaks and other issues
+  - Fix Wireshark Lua dissector issue on newer Lua versions
+  - PD: Initialize event objects to prevent undefined behavior
+  - pd: Fix bug in MFGREP events from application
+  - build: Fix breakage due to CRC16 re-org
+  - Fix platformio CP example
+  - Phy: Fix packet header scan
+  - pytest: skip broken test test_command_status()
+  - PD: Fix some random cases where pd->reply_id could be invlaid
+  - pd: Fix do_command_complete callback handling
+  - crypto/tinyaes: Typecast RAND_MAX to float to fix warning
+  - fix offline notification
+
+
+v3.0.8
+------
+
+12 November 2024
+
+A quick re-relase of v3.0.7 with 2 critical fixes needed for Rust and
+PlatformIO. Refer to previous relase for actual change log.
+
+Fixes:
+  - utils: Bump submodule to get __BARE_METAL__ target fix
+  - scripts: Fix make-release.sh after PlatformIO changes
+
+
+v3.0.7
+------
+
+11 November 2024
+
+This release has been long overdue, bringing in a lot of enhancements and
+stability fixes. Most notable change include PlatformIO support.
+
+Enhancements:
+  - CI: Fix PlatformIO publish workflow
+  - scripts: Add release hooks for platformio
+  - PlatformIO: check-in a cached copy of generated headers
+  - PlatformIO: Add initial port for PlatformIO
+  - doc: Split osdp_pd_into_t into it's own section
+  - cmake: Always export compile_commands.json
+  - ci: Move to actions/upload-artifact@v4 to fix CI builds
+  - build: Make changes to allow nix/nixos builds
+  - libosdp: Make a copy of PD name from pd_info_t
+  - file: Add support various flow control flags
+  - API: Add support for PD status change events.
+  - file: Add support for keep alive messages
+  - cp: Add support for delaying file transfer
+  - file: Switch to using to BYTES to/from unsigned types macros
+  - file: Fix multiple assumptions about target endianess
+  - crypto: Anotate panic method with 'noreturn' attribute
+  - cmake: Add more sanitizers and rename the config key for it
+  - scripts: run_tests.sh: Switch to cmake based build and run invocations
+  - cmake, make: generate osdp_config.h in build/include dir
+  - doc: Update packet and data trace documentation
+  - Rename osdp_pcap.* as osdp_diag.* to allow for future enhancements
+  - examples/python: PD: Add singal handler to exit the script
+  - python: Enable packet trace builds by default
+  - API: Add a flag to enable packet trace at runtime
+  - scripts: Update run_tests.sh to call functions for different test suites
+  - cp: phy: Allow plaintext NACKs when SC is active
+  - cp: Add a log line when retrying SC after timeout
+  - cp: keyset complete don't request SC restart if PD is not online
+  - Prefix CP/PD tags to setup log line
+  - cp: Add entry for handling OSDP_ERR_PKT_NACK to add comments
+  - cp: Set reply_id to REPLY_INVALID before sending a command
+  - cp: Introduce "probe" state for PDs that don't respond
+  - doc: Update cmake invocations for cross-platform builds
+  - api: Remove OSDP_EXPORT decorations in declarations
+  - cmake: Exclude targets that cannot be built when using MSVC
+  - doc: Add section about vcpkg usage
+  - API: Add new setup flag to guard notification events
+  - API: Add support notification events
+  - scripts: Add a tests runner scripts
+  - doc: Add deprecation notice for osdpctl
+  - pytest: Add tests for pd_id and pd_cap API
+  - test: Add some info message when invoked with -n flag
+  - python: osdp: Add method in KeyStore to persisting a key
+  - python: osdp: Consume and export pd_id and pd_cap getters
+  - python: osdp_sys: Enable pd_cap and pd_id getters
+  - phy: Lower log level for packet_scan_sckip reports
+  - phy: Allow multiple mark bytes before SOM
+
+Fixes:
+  - Fix handling of empty SCS17/SCS18 messages
+  - Annotate osdp_millis_now definition with __weak atrribute
+  - python: Fix LED commands with temporary and permanent records
+  - Copied osdp_export.h from correct location on install
+  - cp: Fix 'REPLY_BUSY' handling logic
+  - pd: Don't discard SC before acknowledging keyset command
+  - cp: Move cp_cmd_free() out of cp_translate_cmd()
+  - cp: Fix typo in flag CP_REQ_OFFLINE value
+  - file: Fix bug in the exclusive flag collection
+  - libosdp: Fix memory leak when file ops is registered
+  - cp: Fix loss of tamper bit when saving power bit in status event
+  - utils: Pull in fixes for loging and make
+  - utils: Bump submodule for windows build fix
+  - cp: Fix segfault in osdp_cp_teardown()
+  - python: Fix broken build due to wrong return type
+  - python: Fix potential null-ptr-deref during event callback
+  - Bump utils and fix some typos in osdp.h
+  - examples: Fix makefile and some minor udpates
+  - pd: Fix firmware_version reports in PD_ID
+
+
+v3.0.6
+------
+
+10 May 2024
+
+Patch release to address rust build failure issue.
+
+Fixes:
+  - examples: python: Fix pyserial read timeout
+  - Continue normally on successful command callback on status commands
+  - phy: Enhance package scan logging by printing mark-byte
+  - ci: Exclude cpp sample from all and build explicitly in build-ci
+  - ci: Fix broken release action
+
+
+v3.0.5
+------
+
+23 March 2024
+
+More vcpkg integration issue fixes. This relaese is also about more platform
+suppport.
+
+Enhancements:
+  - ci: Enhance to run on different platforms; start doc builds
+  - cmake: Add options to disable shared/static builds
+
+Fixes:
+  - examples: cpp: Use std::this_thread::sleep_for instead of usleep
+  - doc: Fix doxygen build by copying and patching osdp.h
+  - api: Fix some more doxygen formatting issues
+  - doc: Remove deprecated doxygen config entries
+  - cmake: cpack: Fix package definitions
+  - crypto: openssl: Remove call to ERR_print_errors_fp()
+  - crypo: Add missing headers for openssl.c
+  - api: Add OSDP_EXPORT to exported methods in osdp.h
+  - python: example: Update README.md with socat link option
+  - ci: Fix cross-platform build and change cpack artifact path
+  - cmake: Fix MSVC OSDP_EXPORT macro issue
+  - cmake: Fix MSVC compiler flag issue
+  - CI: Add an on-demand cross platform build check runner
+  - cmake: Fix broken CI build due utils build
+
+
+v3.0.4
+------
+
+19 March 2024
+
+A release to patch cmkae issues found during vcpkg integration. This version
+will be pegged to the first vcpkg release.
+
+Fixes:
+  - cmake: Fix issues found when integrating with vcpkg
+  - Fix input_check() macros for windows builds
+  - api: Fixup comamnd queue flush function name
+
+
+v3.0.3
+------
+
+13 March 2024
+
+Minor release with a few fixes required for rust development to progress
+
+Enhancements:
+  - make: Add support for make install
+  - api: cp: Add method to flush command queue
+  - python: osdp_sys: Add some error context for public API
+  - doc: Add libosdp/compatibility to top level index.rst
+
+Fixes:
+  - doc: Fixup doc in multiple places
+  - api: More doxygen fixups
+  - cmake: Fix packet trace and data trace linkage
+  - api: Fix regression caused by doxygen formatting commit
+  - api: Fix doxygen comments style all over osdp.h
+  - Fix minor typos in the Wireshark payload dissector
+  - doc: More README updates
+  - doc: Update README; fix compatibility table
+  - libosdp: Fix issue with SC retry timer
+  - utils: Pull in fix for time usage on Windows
+
+
+v3.0.2
+------
+
+09 March 2024
+
+Yet another minor release to address some of the issues that were identified in
+3.0.0 release. With this release, LibOSDP supports Windows as a first-class
+citizen.
+
+Enhancements:
+  - pytest: run.sh: Add an option to skip running the tests
+  - doc: Add LibOSDP compatibility table
+  - publish-pypi: Enable windows build/publish
+  - doc: Update security.md
+  - python: example: Add some CLI args and add a README.md
+  - pytest: Add some stage info for run.sh
+  - libosdp: phy: some minor houekeeping
+  - python: Deprecate master key based key derivation
+  - python: Remove concrete "channel" implementations
+  - libosdp: file: Make impossible conditions as BUG_ON()
+  - libosdp: file: Do not disrupt SC when file TX fails
+  - pcap: Replace ':' with '_' in pcap file name timestamp
+  - utils: bump submodule to fix __weak warning
+
+Fixes:
+  - Fix bug in SC setup due to missing call to cp_keyset_complete
+  - python: Fix buggy call to PyArg_Parse due to type of len
+  - python: fix some minor issues for MSVC to build libosdp
+  - pcap: Fix file name character replacement bug
+  - dissector: Remove extra space in command ID text
+  - libosdp: Fix broken SC due to missing sc_init call
+
+
+v3.0.1
+------
+
+20 February 2024
+
+A quick follow up release adding a few key features that got left out in 3.0.0.
+Most notably, packet trace and data trace infrastructure has been reworked and
+a custom Wireshark protocol dissector for OSDP was added. Additionally, Some
+efforts has been made to support Windows as a build platform.
+
+Enhancements:
+  - libosdp: Add Packet scan skipped bytes instrumentation
+  - pcap: Move declarations to a separate header
+  - doc: Update info about dissector loading on windows
+  - libosdp: Add support for windows builds
+  - dissector: Append command/reply name to tree view for better analysis
+  - libosdp: Migrate rust code to a dedicated repo
+  - misc: dissector: Add support for data tracer
+  - libosdp: data_trace: Fix bug in packet length passed to tracer
+  - libosdp: pcap: Log the number of packets captured
+  - libosdp: pcap: Bump utils submodule to fix issues
+  - libosdp: Extend tracing infrastructure to DATA_TRACE
+  - libosdp: Add timestamp to trace files for uniqueness
+  - libosdp: Add a custom protocol disector for WireShark
+  - libosdp: Switch to pcap based packet tracing
+
+Fixes:
+  - libosdp: Fix packet scan skipped bytes instrumentation
+  - Repaired references to osdp_millis_now()
+  - doc: Update debugging.rst and README.md with new tracing changes
+  - examples: python: Fixup some more minor issues
+  - libosdp: Rename samples/ as examples/ as it sounds better
+  - examples: python: Fix CP and PD examples for the higher level osdp module
+  - CI: Allow publish-pypi.yml to be activated on manual triggers
+  - CI: Update python publishing to multilinux
+
+
+v3.0.0
+------
+
+14 February 2024
+
+This Major release bring rust support, CP state machine cleanups, API cleanups,
+and many other enhancemtns and fixes.
+
+Enhancements:
+  - Add rust support (single entry for 80+ patches)
+  - Rewrite osdpctl in rust (single entry for many patches)
+  - chore: Update copyright year to 2024
+  - python: vendor LibOSDP sources when packaging
+  - python: Remove code referring to CMakeLists.txt version
+  - API, python: Add LED color constants from v2.2 of the spec
+  - doc: Update top-level README.md
+  - libosdp: cp: Move keyset completion handler to get_next_ok_state()
+  - tests: pytest: Add install_mode SCBK set test
+  - libosdp: Unify StatusReport query and event structs
+  - libosdp: cp: Move functionality away from command builders
+  - pytests: Remove timeout from CP status test
+  - python: Adapt to changes to status event/command handling
+  - libosdp: Rework status command and event handling
+  - libosdp: cp: Reword event callback mechanism to use requests
+  - libosdp: Permit REPLY_COM response for CMD_COMSET
+  - rust: Add method to make a pair of unix channels
+  - libosdp: Split events data maxlen macro as we have for commands
+  - libosdp: Reduce command/event pool size
+  - python: Add a get_file_tx_status() for PD
+  - test: unit-test: Add command and event callback logging for file tx command
+  - pyosdp: Move set_log_level() to be module method
+  - tests: unit-tests: Add initial skeleton for command test
+  - libosdp: cp: Rework CP state machine
+  - libosdp: cp: Remove some more master key related code
+  - libosdp: cp: Move call to cp_cmd_free into cp_translate_cmd
+  - libosdp: cp: Add BUG() macro and call for file TX cmd translate
+  - libosdp: cp: Decouple internal and external command queue
+  - cmake: utils,samples: Bump minimum required version
+  - libosdp: CP: Lower comeset reply log level to info
+  - libosdp: API: Do not indiate SC active when using SCBK-D
+  - libosdp: phy: Also ignore commands with PD address.MSB set
+  - libosdp: phy: Ignore reply with PD address.MSB cleared
+  - Increasing the max data contained in an OSDP enevt to 128bytes
+  - utils: Bump submodule to latest commit
+  - doc: Add some notes about make build
+  - libosdp: API: Remove osdp_set_command_complete_callback
+  - libosdp: Set PD address to 0x7F for broadcast packets
+  - libosdp: API: common: Increase PD offline status timeout to 600ms
+  - scripts: Unify release generation scripts into one place
+  - rust: Add workaround for osdp_config.h.in copy to OUT_DIR
+  - rust: cp: Add support for the new status command
+  - libosdp: cp: Add different query options for OSDP_CMD_STATUS
+  - libosdp: cp: Refactor API command handling (translating) logic
+  - python: Update README.me and samples after testing
+  - python: osdp: pd: Add support sc_wait() method
+  - python: osdp: Add support for non-blocking get_{command,event}
+  - cmake: Remove python/ subdirectory from chain
+  - python: Merge test/pytest/testlib as main python package
+  - libosdp: const-annotate some more public API
+  - libosdp: Const-ize parameters of exposed methods
+  - libosdp: Remove deprecated methods tree-wide
+  - libosdp: Add support for Magenta and Cyan LED colors
+  - libosdp: Demote osdp_logger_init to a macro alias
+
+Fixes:
+  - utils: Bump submodule to fix build failure due to VLA
+  - Fix regression in Rust binding. Commit
+    51b626c94bc39242f9793c916471bdadafe24679 increased buffer size to 128
+    bytes. Adjust binding accordingly.
+  - make: Fix configure.sh for linux
+  - libosdp: Fix warnings that break rust build
+  - utils: Bump submodule to fix log line termination issue
+  - libosdp: phy: Fix PACKET_TRACE command byte offset
+  - libosdp: phy: Fix packet trace mark byte logging
+  - doc: security: Update doc to have latest info; fix a typo
+  - libosdp: cp: Fix broken keyset for an install_mode PD
+  - CP: API: Fix callback signature in cpp header
+  - python: osdp_sys: fix memory leak in pyosdp_add_pd_cap
+  - pytest: Fix run.sh to be invokable from other dirs
+  - python: Fix pd_info builder after const qualification of info->cap
+  - src/osdp_common.c: waring: _GNU_SOURCE redefined
+  - utils: version bump - pickup fixes for gcc warnings/errors
+  - unit-test: Fix broken build due to old API drop changes
+  - Fix potential null pointer deref at LOG_* call site
+  - cp: disallow unexpected SC responses
+
+
+v2.4.0
+------
+
+28 October 2023
+
+This release marks the end of 2.x version of libosdp. Bring some minor
+updates and fixes.
+
+Enhancements:
+  - libosdp: Add new API to set a log callback function
+  - unit-test: Add line noise simulation methods
+  - pytest: Add new test for CP/PD status reports
+  - pyosdp: pd: Expose a new API to check online status
+  - libosdp: Update to new logger API
+  - Expose new configure time macro REPO_ROOT
+  - configure: Add new option --debug to enable debug symbols
+  - make: Don't remove and rebuild unit-test target each time
+  - cmake: Add hook to checkout submodules
+  - pd: Use teardown in peripheral destructor only if context exists
+  - cp: Use teardown in control panel destructor only if context exists
+
+Fixes:
+  - libosdp: Fix stable API change violation
+  - unit-tests: Fix warning due to change of fclose sinature
+  - libosdp: cmake: Fix static builds with local openssl
+  - c++: add header guards
+  - pytest: testlib: Fix bug in retry count
+  - pytest: Make CP and PD restart-able
+  - API: common: Fix osdp_get_status_mask for PD mode
+  - Fix null pointer deref issue osdp_reply_name
+  - doc: Update domain name to sidcha.dev as gotomain.io has expired
+  - Update copyright year to 2023
+  - Remove obsolete travis CI config file and it's refs
+  - check osdp close file status (according prototype function comments)
+  - save PD Local Status
+
+
+v2.3.0
+------
+
+27 June 2023
+
+A standard mid-year release with accumulated fixes and enhancements.
+Interestingly, this release has a high number of community contributions :)
+
+Enhancements:
+  - Add support for additional baud rate 57600
+  - Add deprecation notice for command_complete_callback API
+  - pyosdp: refactor make_(struct|dict) methods into translators
+  - pyosdp: Move similar methods closer for maintainability
+  - pyosdp: Refactor event handling method names
+  - pyosdp: refactor command handling method names
+  - pytest: Add tests for IO and status events
+  - pyosdp: export IO and status events to use in pytests
+  - libosdp: Add support for tamper and power status events
+  - phy: Allow sequence repeat packets
+  - libosdp: Limit max packet size to reported peer RX size
+  - pd: Add support for handling multiple records in output command
+  - pytest: More multidrop test related changes
+  - zephyr: Refactor command_callback into a method
+  - PD: Reset phy state when ignoring a packet
+  - libosdp: file: Promote to be a fist-class citizen
+  - libosdp: Allow file transfers to be aborted
+  - pd: Handle OSDP_EVENT_MFGREP case in pd_translate_event
+  - pyosdp, pytests: Add test case for mfgrep event
+
+Fixes:
+  - pyosdp: Hoist cmd->id set in pyosdp_make_struct_cmd
+  - fix LED & Buzzer repeated command
+  - mbedtls: fix incorrect mode in ecb encryption
+  - fix: converts uint64 to uint32 for arm device capability.
+  - Disable FindMbedTLS.cmake to fix issue in #108
+  - Fix typos in secure channel docs
+  - Make installation with cmake happier
+  - pd: Fix CMD_ABORT length check
+  - cp: Add support for local status query command
+  - Fix sequence reversing issue during phy_reset()
+  - libosdp: Fix plethora of bugs in input/output events
+  - pyosdp: Drop Py_TPFLAGS_HAVE_GC flags on osdp class
+  - Fix issues in configure.sh
+  - corrected typo in doxygen documentation
+  - file: Fix bug in return value processing in build_command
+  - libosdp: raw loops to memcpy and other zephyr review fixes
+  - fixup! libosdp: file: Promote to be a fist-class citizen
+  - pytest: Add file transfer abort test
+  - unit-test: Fix test failure due to missing extern
+  - unit-test: Fix a use-after-free bug in test async runner
+  - fixup! pd: Handle OSDP_EVENT_MFGREP case in pd_translate_event
+
+
+v2.2.0
+------
+
+01 December 2022
+
+Yet another minor release with accumulated fixes and enhancements. Notable
+changes since last release include,
+
+Enhancements:
+  - pd: add method to flush event queue
+  - Enable REPLY_ISTATR and REPLY_OSTATR support
+  - libosdp: Added opaque argument to command_complete_callback
+  - pytest: Add events tests
+  - phy: Only flush channel on errors in osdp_phy_state_reset
+  - phy: Don't attempt to send a NACK for some early failures
+  - libosdp: Make osdp_cmd_mfg and osdp_mfgrep identical
+  - cp: Do not propagate PHY errors as-is
+  - libosdp: Add a ring buffer to store the RX data
+  - libosdp: Move channel read/writes into phy layer
+  - unit-tests: Resurrect the old unit-tests modules
+  - libosdp: Add a softname for PDs in the info struct
+  - Avoid one ifdef by reorg and static inline-ing
+  - libosdp: Add support for I/O status monitoring/reporting
+  - Enable address sanitizer enabled builds
+
+Fixes:
+  - libosdp: Fix CMD_ABORT's assigned command code
+  - cp: Fix cardread and keypress event decode cases
+  - unit-tests: Add a test case to validate the mark-byte skip
+  - pytest: Fix is_sc_active() to return boolean
+  - fixup: libosdp: Add support for I/O status monitoring/reporting
+  - Fix build failure
+  - Fix OSDP_QUEUE_SLAB_SIZE defintion and some typos
+  - Fix a heap-buffer-overflow in __cp_setup()
+
+
+v2.1.0
+------
+
+15 April 2022
+
+This minor release puts together the enhancements and fixed accumulated over the
+last year. No dramatic changes.
+
+Enhancements:
+  - pytest: Remove master_key_workflow test case
+  - pyosdp: cp_init switch to osdp_cp_setup2()
+  - pytest: Add set/clear flags methods
+  - libosdp: Add new exported method: osdp_cp_modify_flag()
+  - libosdp: Add new flag OSDP_PD_FLAG_IGN_UNSOLICITED
+  - pd: Add check on the length field of osdp_MFGREP
+  - pytest: remove the need to install python module for tests
+  - cmake: replace FindPython{Interp,Libs} with FindPython3
+  - LibOSDP: Consume logger from utils so we don't own that module
+  - libosdp: Remove -Werror; seems a bit excessive :)
+  - libosdp: Set an example by not using osdp_cp_setup()
+  - PD: Prevent out of order CMD_SCRYPT for safety
+  - libosdp: Mark osdp_cp_setup() as deprecated
+  - CP: Expose new API osdp_cp_setup2() to discourage use of master_key
+  - Phy: Nack secure messages received without an active SC session
+
+Fixes:
+  - Fix an overflow bug in osdp_phy_check_packet()
+  - Add null checks on struct osdp_file pointer
+  - pyosdp: Fix handling of temporary flag in LED command
+  - pytest: Add LED command temporary: False test
+  - pyosdp: Expose set/clear flags method in the python wrapper
+  - CP fixup needed when communicating with hardware PD
+  - Fixed wrong command ID while logging "REPLY_PDID" in OSDP_CP_STATE_IDREQ
+  - Fix copy-paste issue in cmake/FindMbedTLS.cmake
+
+
+v2.0.0
+------
+
+19 September 2021
+
+This major release brings support for new features added in IEC Edition 1.0 of
+the OSDP specification and other bug fixes and API changes.
+
+Enhancements:
+  - pytest: Add test coverage in pytest
+  - sc: Fix API inconsistency in compute_session_keys()
+  - libosdp: Deprecate ad-hoc unit testing
+  - libosdp: Document members of struct osdp and struct osdp_pd
+  - pyosdp: Add support for file transfer command
+  - CP: Add public method to get PD ID and capability
+  - Tiny-AES: Update source files to latest version
+  - libosdp: Add support for MbedTLS
+  - libosdp: Cleanup error handling between phy and CP/PD
+  - Deprecate Master key based key derivation
+  - Add support for OSDP File Transfer
+  - Advertise and decode peer_size capability
+  - Add support for CMD_ABORT, CMD_ACURXSIZE, CMD_KEEPACTIVE
+  - Add support for additional baud rates 19200 and 230400
+
+Fixes:
+  - libosdp: Change API to handle any number PDs in get_(sc_)status_mask
+  - libosdp: Double SC timeout to be a bit more flexible
+  - PD: Fix bug when phy wants wait for more data by PD discards rx_buf
+  - PD: Fix packet trace logging of sent bytes
+  - libosdp: USE_SCBK-D has a higher precedence in choice of SCBK
+  - file_tx: Many fixes and enhancements
+  - libosdp: Fix slab_free() assertion bug in release builds
+  - SC: Fix SCBK clobber in osdp_compute_session_keys()
+  - libosdp: Discard Secure Channel if a KEYSET is ACKed in plaintext
+  - CP: Fix packet consumption from rx_buffer issue
+  - cp: Allow applications to KEYSET with SCBK or master_key
+  - Fix: Allow keyset with SCBK; guard master_key route with ENFORCE_SECURE
+  - Ignore reply packet coming from another PD.
+  - Fix the master key check in osdp_cp_setup()
+
+
+v1.5.0
+------
+
+17 April 2021
+
+This release marks the end of OSPD specification v2.1.6 support. Post this
+release, LibOSDP would start supporting new features added in IEC Edition 1.0
+specification.
+
+Features:
+  - libosdp: Introduce a lean-build system
+  - tests: Add a command level unit test executor
+  - libosdp: Add new command complete callback
+
+Enhancements:
+  - libosdp: Add cmake option CONFIG_OSDP_STATIC_PD (configure --static-pd)
+  - pd: Use better NAK error code when rejecting a command due to SC inactive
+  - LibOSDP: Split build/send and receive/decode methods
+  - Add new typedef and document osdp_log_fn_t
+  - Remove implicit logging via printf()
+  - Avoid allocs by switching log buf to static char[]
+  - Add compile time switch to disable colours in osdp logs
+  - Add Makefile target to clone utils submodules at init
+  - phy: Allow non-conformant, 0 length, encrypted data blocks
+  - cp: Add bounded exponential back-off for offline retries
+  - cp: Add detection of a busy reply with sequence number 0
+  - Mark some methods with __weak for portability
+
+Fixes:
+  - Clean src/osdp_cp.o even if it is not built due to --single-pd
+  - Just fix the description comment for OSDP_PD_NAK_SEQ_NUM
+  - Call osdp_logger_init() before setting up CP/PD for early logging
+  - Fix off-by-one at vsnprintf()'s return value assertion
+  - Move osdp_millis_*() into utils::utils.c
+  - Move unistd.h into CONFIG_DISABLE_PRETTY_LOGGING guard
+  - Enable github workflows on lean build to keep them in sync
+  - Fix coverity identified off-by-one out-of-bound array access
+  - Fix coverity identified logical dead-code
+  - sc: Fix potential out-of-bound buffer access
+  - cp: Bypass unneeded packet decoding for a busy reply
+  - cp: Don't regenerate random numbers for the challenge command
+  - cp: Add the OSDP_ONLINE_RETRY_WAIT_MS timeout
+  - pd: Fix device capabilities report
+  - Call to osdp_dump was using incorrect length
+
+
+v1.4.0
+------
+
+31 January 2021
+
+This relase brings in a lot of bug fixes and some minor enhancements.
+
+Enhancements:
+  - doc: Add Doxygen and breathe to talk with sphinx
+  - LibOSDP: Add osdp.hpp and cpp samples
+  - cp: Add new flag FLAG_SC_DISABLED when master_key == NULL
+  - Add support for adpative MARK bytes on packets
+  - libosdp: consume only processed bytes from rx_buf
+  - test: Get test log level from test context
+  - Add a toplevel cmake offload makefile
+  - PD: Add API osdp_pd_set_capabilities()
+  - PD: Add CAP validation on received commands
+  - PD: Allow only specific commands in plain text when ENFORCE_SECURE
+  - Consume new hexdump API; Modify packet_trace logs
+  - Move src/include/* to src/ for simplicity
+  - PD: Reset SC active status bit when there is a timeout
+  - pyosdp: promote set_loglevel() as osdp class static method
+  - libosdp: Add support for multiple PDs connected in a single channel
+  - Add compile time switch CONFIG_OSDP_SKIP_MARK_BYTE
+  - Allow LibOSDP to export its build rules to other modules
+  - libosdp: Optionally, find and use openssl if available
+
+Fixes:
+  - pyosdp: cp: change type of master_key to python bytes
+  - cp: Fix master keyset functionality
+  - libosdp: cleanup logs and remove some duplicate code
+  - Fix python warnings -- bugs
+  - Disambiguate logging macro from the loglevel enum entry
+  - CP: Fix some ENFORCE_SECURE holes
+  - Reset seq_number before moving to ONLINE without SC
+  - fix: map the public osdp_cmd_e id codes when sending commands to the OSDP API
+    function osdp_cp_send_command()
+  - fix in using correct context pointer for PD (pd_ctx instead of cp_ctx)
+  - The PD address 0 is also a valid address!
+  - Fix the check of the checksum of received packets.
+  - Avoid receiving invalid data by flushing rx before each send.
+  - do not flush rx queue when skipping commands. when skipping commands addressed
+    to other nodes the rx queue should not be flushed. The complete command is
+    already received and flushing the rx queue only risks removing bytes in the
+    next command.
+  - PD: Discard SC flag on MAC verification and decryption errors
+  - Fix REPLY_RAW card data length bug - Related-To: #31
+  - Fix constant time compare in osdp_ct_compare()
+  - pyosdp: fix untested PD capabilities code flow
+  - Fix CONFIG_OSDP_PACKET_TRACE that was flooding logs with osdp_POLL
+  - cp: Fix unexpected reply condition missing break
+  - Fix osdp_event_cardread length bits/bytes mixup
+
+
+v1.3.0
+------
+
+16 September 2020
+
+With this release, LibOSDP now has python bindings. It is possible to setup a
+device as a Control Panel or Peripheral Device through python. Also, PD now
+supports alternate replies in the form of OSDP events.
+
+Enhancements:
+  - libosdp: Add flag ENFORCE_SECURE to make secure assumptions
+  - libosdp: Resolve PD address / offset inconsistencies
+  - libosdp: Remove CONFIG_OSDP_SC_ENABLED macro switch
+  - libosdp: deprecate osdp_cp_send_cmd_*() methods in favour of osdp_cp_send_command()
+  - libosdp: add PD app command callback support
+  - Make OSDP_FLAG_INSTALL_MODE a setup time flag
+  - Add support for manufacturer specific commands
+  - Add support for osdp_FMT, osdp_RAW, osdp_KEYPAD and handle their osdp_events
+  - Move command alloc/queue API into CP region
+  - Add checks that a pd is online before queueing commands.
+  - osdpctl: consume utils/channel.c and remove native impl
+  - libosdp: Add support for callback data in notifiers
+
+Fixes:
+  - Fix srand issue in tests, pyosdp, and osdpctl
+  - PD: Fix bug PD_FLAG_SC_ACTIVE not removed when PD goes offline
+  - PD: always check the timeout on receiving packets
+  - libosdp: Deprecate command queues for PD mode
+  - Add osdp_events and make changes globally
+  - Fix multiple checkpactch issues found in zephyr upstream
+  - Move PD offset validation above context dereference
+  - Move COMSET out of CONFIG_OSDP_SC_ENABLED macro guard
+  - libosdp: fix COMSET command regression
+  - Refactor some command struct members for consistency
+  - Fix python memory leak and python keyset error check.
+  - libosdp: Fix bug in PD_MASK() macro
+  - libosdp: fix missing cmd_dequeue return check
+  - Rebuild utils with -fPIC to fix gcc/linux build issues
+  - doc: Add protocol/faq update README.md
+  - Consume slab allocation from utils and remove native implementation
+  - Return aligned memory from slab allocator.
+  - Fix doc links in README.md
+  - Fix multiple broken links in doc/ after sphinx move
+  - Update AES to to latest kokke/tiny-AES-c
+
+
+v1.2.0
+------
+
+15 August 2020
+
+This release marks the first HEAD of initial PD support in Zephyr RTOS upstream
+(https://github.com/zephyrproject-rtos/zephyr). Lot of changes to coding style
+were made to upstream the PD sources without too much variation to the one here.
+
+Enhancements:
+  - Add support for sphinx documentation builds see: https://libosdp.gotomain.io
+  - Add a macro switch to disable Secure Channel
+  - Add utils git-submodule and delete all copied ad-hoc utils from this repo
+  - Add pkg-config file for libosdp
+  - PD: When seq number 0 is received, invalidate SC status
+  - Add github actions workflows for tests and release
+  - Rewrite PD and CP fsm for zephyr integration
+  - osdpctl: rewrite rs232.c into utils/serial.c
+  - osdpctl: remove pid file in osdpctl stop. Also check return code of kill
+  - Produce source and binary tarballs with cPack
+  - Bring changes from zephyr PD, post review and apply it to CP as well
+  - Control the externally exposed library symbols using `EXPORT` macro
+
+Fixes:
+  - Make all internal methods static; scope all globals with `osdp_`
+  - Add colors for various log levels of libosdp
+  - Refactor all reference to struct osdp_pd as 'pd' everywhere
+  - Fix static analysis issues identified by Xcode
+  - travis: switch to Ubuntu 18.04 bionic for testing
+  - osdpctl: Fix bug in `hex2int()`
+  - osdpctl: Fix bug in load_scbk(); test key_store feature
+  - osdpctl make config as the first argument for all commands
+  - Fix sequence number 0 sent by CP does not reset connection in PD
+  - osdpctl: Make PD message queue channel owner, responsible for cleanup
+  - osdpctl: Fix segfault on channel cleanup code
+
+
+v1.1.0
+------
+
+28 June 2020
+
+This release bumps up the minor number as the contract has changed. It
+introduces 2 major changes (first 2 in enhancements). The rest is all
+re-organization and fixes.
+
+Enhancements:
+  - In PD Change app notification of incoming commands to polling to
+    simplify API
+  - Replace circular buffer command queue with linked list queue
+  - Add SC status and status query methods
+  - Add assert guards for exposed methods
+  - Cleanup osdp.h by splitting it into multiple files
+  - Split cmake rules into subdirectories
+
+Fixes:
+  - Add PD address to REPLY_COM in pd_build_reply
+  - Fix fd leak in read_pid
+  - Fix missing null char at atohstr()
+  - Fix memory under-alloc due to operator precedence issues
+
+
+v1.0.0
+------
+
+29 May 2020
+
+This is the first release of libosdp. It has been in pre-release for a
+long time now and has been tested sufficiently well for a first release.
+Rate of bug fixes has gone down significantly.
+
+As of this release, libosdp has the following high level feature:
+  - Supports OSDP CP mode of operation
+  - Supports OSDP PD mode of operation
+  - Supports Secure Channel for communication
+  - Ships a tool: osdpctl to consume and library and setup/manage osdp
+    devices
+  - Documents key areas in the protocol that are of interest for consumers
+    of this library.
+
+So far, this library's CP implementation has been tested with multiple
+OSDP PDs including HID's devices and found to be working as expected. The
+PD implementation has been tested with it's own CP counterpart so this some
+level of confidence on the that too.
+
+
+v0.4 Beta - 3
+-------------
+
+17 Jan 2020
+
+Fix multiple bugs found in LibOSDP:
+  - fix unhandled reply-code bug
+  - fix issue where reader goes permanent reader offline
+  - retry SC after OSDP_PD_SC_RETRY_SEC when possible
+  - fix USE_SCBKD inversion bug
+  - fix bug in MAC add/check for SCS_15
+
+Note:
+This tag has CP mode verified with HID RK40 readers. This can act as
+reference point for all PD change validation hereafter.
+
+
+v0.3 Beta - 2
+-------------
+
+15 Dec 2019
+
+New Features:
+  - Added new tool osdpctl to create, manage and control osdp devices
+  - Add PD context to CP logs for clarity
+
+Enhancements and bug fixes:
+  - Fix PD stale pointer issue in osdp_setup
+  - Fix MAC generation bug in Secure Channel
+  - Fix Data offset bug in Secure Channel
+  - Fix issues reported by -Wimplicit-fallthrough
+  - Fix memleak in PD command queue alloc
+  - Fix wrap around bug in cmd_queue
+  - Fix many clang static code analysis issues
+
+
+v0.2 Beta - 1
+-------------
+
+29 Nov 2019
+
+Features and Issue Fixes:
+  - Master key management in CP and PD
+  - Many small issue fixes
+
+Known limitations:
+  - install mode stuffs need to be ironed out comset command needs to be
+  - handled correctly
+
+
+v0.1 Alpha
+----------
+
+15 Nov 2019
+
+libosdp has reached a point where all the primary featured are in place.
+
+Known limitations:
+  - Master key management is missing
+  - Install mode stuffs need to be ironed out
+  - comset command needs to be handled correctly

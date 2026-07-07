@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2025 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
+ * Copyright (c) 2019-2026 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -9,9 +9,14 @@
 #include <osdp.h>
 #include "test.h"
 
-extern int (*test_state_update)(struct osdp_pd *);
+extern int test_state_update(struct osdp_pd *);
 
 int test_fsm_resp = 0;
+#ifdef OPT_OSDP_RX_ZERO_COPY
+/* One canned reply is served per command; release_pkt marks it consumed so a
+ * poll before the next command does not re-deliver a stale frame. */
+static bool s_fsm_served;
+#endif
 
 int test_cp_fsm_send(void *data, uint8_t *buf, int len)
 {
@@ -38,13 +43,17 @@ int test_cp_fsm_send(void *data, uint8_t *buf, int len)
 
 		]);
 	}
+#ifdef OPT_OSDP_RX_ZERO_COPY
+	s_fsm_served = false;
+#endif
 	return len;
 }
 
-int test_cp_fsm_receive(void *data, uint8_t *buf, int len)
+/* Copy the canned reply selected by the last command into `buf`; returns its
+ * length or -1 when no reply is pending. Shared by the byte-stream recv and the
+ * zero-copy recv_pkt paths. */
+static int fsm_fill_response(uint8_t *buf)
 {
-	ARG_UNUSED(data);
-
 	uint8_t resp_id[] = {
 #ifndef OPT_OSDP_SKIP_MARK_BYTE
 		0xff,
@@ -65,8 +74,6 @@ int test_cp_fsm_receive(void *data, uint8_t *buf, int len)
 		0x53, 0xe5, 0x08, 0x00, 0x06, 0x40, 0xb0, 0xf0
 	};
 
-	ARG_UNUSED(len);
-
 	switch (test_fsm_resp) {
 	case 1:
 		memcpy(buf, resp_ack, sizeof(resp_ack));
@@ -81,21 +88,64 @@ int test_cp_fsm_receive(void *data, uint8_t *buf, int len)
 	return -1;
 }
 
+int test_cp_fsm_receive(void *data, uint8_t *buf, int len)
+{
+	ARG_UNUSED(data);
+	ARG_UNUSED(len);
+	return fsm_fill_response(buf);
+}
+
+#ifdef OPT_OSDP_RX_ZERO_COPY
+int test_cp_fsm_recv_pkt(void *data, const uint8_t **buf, int *max_len)
+{
+	static uint8_t frame[32];
+	int n;
+
+	ARG_UNUSED(data);
+	if (s_fsm_served) {
+		return -1;
+	}
+	n = fsm_fill_response(frame);
+	if (n <= 0) {
+		return -1;
+	}
+	*buf = frame;
+	*max_len = n;
+	return 0;
+}
+
+void test_cp_fsm_release_pkt(void *data, const uint8_t *buf)
+{
+	ARG_UNUSED(data);
+	ARG_UNUSED(buf);
+	s_fsm_served = true;
+}
+#endif /* OPT_OSDP_RX_ZERO_COPY */
+
 int test_cp_fsm_setup(struct test *t)
 {
 	/* mock application data */
+	struct osdp_channel channel = {
+		.data = NULL,
+		.send = test_cp_fsm_send,
+#ifndef OPT_OSDP_RX_ZERO_COPY
+		.recv = test_cp_fsm_receive,
+#else
+		.recv_pkt = test_cp_fsm_recv_pkt,
+		.release_pkt = test_cp_fsm_release_pkt,
+#endif
+		.flush = NULL,
+	};
 	osdp_pd_info_t info = {
 		.address = 101,
 		.baud_rate = 9600,
 		.flags = 0,
-		.channel.data = NULL,
-		.channel.send = test_cp_fsm_send,
-		.channel.recv = test_cp_fsm_receive,
-		.channel.flush = NULL,
 		.scbk = NULL,
 	};
+#ifndef OPT_OSDP_LOG_MINIMAL
 	osdp_logger_init("osdp::cp", t->loglevel, NULL);
-	struct osdp *ctx = (struct osdp *)osdp_cp_setup(1, &info);
+#endif /* OPT_OSDP_LOG_MINIMAL */
+	struct osdp *ctx = (struct osdp *)osdp_cp_setup(&channel, 1, &info);
 	if (ctx == NULL) {
 		printf("   init failed!\n");
 		return -1;

@@ -1,5 +1,5 @@
 #
-#  Copyright (c) 2023-2025 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
+#  Copyright (c) 2023-2026 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
 #
 #  SPDX-License-Identifier: Apache-2.0
 #
@@ -108,3 +108,41 @@ def test_status_wait_methods():
     # Test individual wait methods
     assert cp.online_wait(pd_addr, timeout=1), "online_wait should return True for already online PD"
     assert cp.sc_wait(pd_addr, timeout=1), "sc_wait should return True for already active SC"
+
+def test_metrics_access_and_reset():
+    """Test metrics access from both CP and PD wrappers."""
+    deadline = time.time() + 5
+    cp_metrics = None
+    pd_metrics = None
+
+    while time.time() < deadline:
+        cp_metrics = cp.get_metrics(pd_addr)
+        pd_metrics = pd.get_metrics()
+        if cp_metrics["packets_sent"] or cp_metrics["packets_received"]:
+            break
+        time.sleep(0.1)
+
+    assert cp_metrics is not None
+    assert pd_metrics is not None
+    assert set(cp_metrics.keys()) == {
+        "packets_sent",
+        "packets_received",
+        "packet_check_errors",
+        "nak_count",
+        "sc_handshake_count",
+        "sc_failure_count",
+        "command_count",
+        "event_count",
+    }
+    assert set(pd_metrics.keys()) == set(cp_metrics.keys())
+
+    # The API provides interval metrics, so a second read after the first
+    # snapshot should reset counters back toward zero.
+    next_cp_metrics = cp.get_metrics(pd_addr)
+    next_pd_metrics = pd.get_metrics()
+    assert sum(next_cp_metrics.values()) <= sum(cp_metrics.values())
+    assert sum(next_pd_metrics.values()) <= sum(pd_metrics.values())
+
+def test_pd_info_default_baud_rate():
+    info = PDInfo(101, f1, scbk=key).get()
+    assert info["baud_rate"] == 9600

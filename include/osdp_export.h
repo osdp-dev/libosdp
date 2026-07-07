@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
+ * Copyright (c) 2025-2026 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -21,8 +21,16 @@
 #endif
 
 /* ---------- Export / Import / Visibility ---------- */
+/*
+ * Windows/Cygwin contract (consumer-facing):
+ *   OSDP_STATIC_DEFINE  -> consumer links the static library; no decoration.
+ *   BUILDING_API        -> producer is building the shared library; dllexport.
+ *   (neither)           -> consumer links the shared library; dllimport.
+ */
 #if defined(_WIN32) || defined(__CYGWIN__)
-  #if defined(BUILDING_API)
+  #if defined(OSDP_STATIC_DEFINE)
+    #define API_EXPORT
+  #elif defined(BUILDING_API)
     #if defined(__GNUC__)
       #define API_EXPORT __attribute__ ((dllexport))
     #else
@@ -47,6 +55,16 @@
 #endif
 
 /* ---------- Deprecation (with message) ---------- */
+
+/*
+ * Undefine API_DEPRECATED before redefining it. On macOS the SDK header
+ * <os/availability.h> defines API_DEPRECATED with a different signature
+ * (platform/version specifiers, not a plain string), which causes macro
+ * expansion errors when osdp.h uses OSDP_DEPRECATED_EXPORT("msg").
+ */
+#ifdef API_DEPRECATED
+#undef API_DEPRECATED
+#endif
 
 /* Prefer C++ [[deprecated("msg")]] if available, otherwise compiler specifics. */
 #if defined(__cplusplus) && API_HAS_CPP_ATTR(deprecated)

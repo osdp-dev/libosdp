@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2025 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
+ * Copyright (c) 2019-2026 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -43,10 +43,14 @@ osdp_pd_info_t pd_info[] = {
 		.address = 101,
 		.baud_rate = 115200,
 		.flags = 0,
-		.channel.send = sample_cp_send_func,
-		.channel.recv = sample_cp_recv_func,
 		.scbk = NULL,
 	},
+};
+
+static struct osdp_channel cp_channel = {
+	.data = NULL,
+	.send = sample_cp_send_func,
+	.recv = sample_cp_recv_func,
 };
 
 int main()
@@ -55,7 +59,7 @@ int main()
 
 	osdp_logger_init("osdp::cp", OSDP_LOG_DEBUG, NULL);
 
-	ctx = osdp_cp_setup(1, pd_info);
+	ctx = osdp_cp_setup(&cp_channel, 1, pd_info);
 	if (ctx == NULL) {
 		printf("cp init failed!\n");
 		return -1;

@@ -29,4 +29,4 @@ In some cases, it might help to provide a comprehensive log file (see how you
 can generate this [here][1]). This is an optional requirement, so use your best
 judgment and decide if it is needed.
 
-[1]: https://libosdp.sidcha.dev/libosdp/debugging.html
+[1]: https://doc.osdp.dev/libosdp/debugging

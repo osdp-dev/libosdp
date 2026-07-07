@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2024-2025 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
+# Copyright (c) 2024-2026 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -8,6 +8,7 @@ name: Cross Platform Build
 
 on:
   workflow_dispatch:
+  workflow_call:
 
 jobs:
   cross_platform_build:
@@ -15,22 +16,76 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        # macos-13 is an intel runner, macos-14 is apple silicon
-        os: [ubuntu-latest, macos-13, macos-14, windows-latest]
+        # macos-15-intel is an intel runner, macos-14 is apple silicon
+        os: [ubuntu-latest, macos-15-intel, macos-14, windows-latest]
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
       with:
         submodules: recursive
     - name: Configure
       run: cmake -B build -DCMAKE_BUILD_TYPE=Debug .
     - name: Build
       run: cmake --build build --parallel 8
+    # Unit tests are gated on NOT MSVC in CMakeLists.txt (utils/tests depend
+    # on pthread and POSIX APIs not available under MSVC), so the `check`
+    # target only exists on Linux/macOS. Skip the step on Windows.
     - name: Run unit-tests
-      run: cmake --build build --parallel 8 --target check-ut
+      if: matrix.os != 'windows-latest'
+      run: cmake --build build --parallel 8 --target check
     - name: Pack built binaries
       run: cmake --build build --target package
     - name: Upload artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: libosdp-${{ matrix.os }}-binaries
         path: build/artifacts/
+
+  # MSYS2 (MinGW/UCRT/Clang) exercises the libosdp core on non-MSVC Windows
+  # backends. These toolchains do not define _MSC_VER, so the `NOT MSVC` gates
+  # in CMakeLists.txt would normally pull in utils/, unit-tests, and examples
+  # — all of which rely on POSIX APIs (fork, sys/select.h, System V IPC) that
+  # MSYS2's native Windows subsystems do not provide. OPT_OSDP_LIB_ONLY=ON
+  # skips those subdirectories so only src/ is built, which is what these
+  # toolchains can realistically support.
+  msys2_lib_only:
+    name: MSYS2 ${{ matrix.name }}
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: MinGW64 GCC
+            msystem: MINGW64
+            packages: >-
+              mingw-w64-x86_64-gcc
+              mingw-w64-x86_64-cmake
+              mingw-w64-x86_64-ninja
+          - name: UCRT64 GCC
+            msystem: UCRT64
+            packages: >-
+              mingw-w64-ucrt-x86_64-gcc
+              mingw-w64-ucrt-x86_64-cmake
+              mingw-w64-ucrt-x86_64-ninja
+          - name: CLANG64 Clang
+            msystem: CLANG64
+            packages: >-
+              mingw-w64-clang-x86_64-clang
+              mingw-w64-clang-x86_64-cmake
+              mingw-w64-clang-x86_64-ninja
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: ${{ matrix.msystem }}
+          update: true
+          cache: true
+          install: ${{ matrix.packages }}
+      - name: Configure
+        run: cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DOPT_OSDP_LIB_ONLY=ON .
+      - name: Build
+        run: cmake --build build --parallel

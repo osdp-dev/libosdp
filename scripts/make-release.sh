@@ -60,32 +60,23 @@ function platformio_inc_version() {
 }
 
 function generate_change_log() {
-	last_rel=$(git tag --list 'v*' --sort=v:refname | tail -1)
 	version=$(perl -ne 'print $1 if (/ VERSION (\d+.\d+.\d)\)$/)' CMakeLists.txt)
-
-	cat <<-EOF
-	v${version} ## TODO
-	------
-
-	$(date "+%d %B %Y")
-	
-	Release subject ## TODO"
-
-	Enhancements: ## TODO"
-
-	Fixes: ## TODO"
-	EOF
-
-	# Changes since last release
-	git log ${last_rel}..HEAD --oneline --no-merges --decorate=no | perl -pe 's/^\w+ /  - /'
+	python3 scripts/changelog_tool.py init \
+		--version "v${version}" \
+		--output-dir CHANGELOG \
+		--date "$(date "+%Y-%m-%d")"
 }
 
 function prepare_libosdp_release() {
 	cmake_inc_version "." $1
 	setup_py_inc_version "python" $1
 	platformio_inc_version $1
-	generate_change_log > /tmp/rel.txt
-	printf '%s\n\n\n%s\n' "$(cat /tmp/rel.txt)" "$(cat CHANGELOG)" > CHANGELOG
+	generate_change_log >/dev/null
+}
+
+function release_file_path() {
+	version=$1
+	echo "CHANGELOG/RELEASE-v${version}.md"
 }
 
 function do_libosdp_release() {
@@ -93,26 +84,31 @@ function do_libosdp_release() {
 		prepare_libosdp_release $1
 		exit 0
 	fi
+	version=$(perl -ne 'print $1 if (/ VERSION (\d+\.\d+\.\d+)\)$/)' CMakeLists.txt)
+	release_file=$(release_file_path "$version")
 	git diff --cached --name-status | while read status file; do
-		if [[ "$file" != "CHANGELOG" ]] && \
+		if [[ "$file" != "$release_file" ]] && \
 		   [[ "$file" != "CMakeLists.txt" ]] && \
 		   [[ "$file" != "python/setup.py" ]] && \
 		   [[ "$file" != "library.json" ]] && \
 		   [[ "$file" != "platformio/osdp_config.h" ]]
 		then
 			echo "ERROR:"
-			echo "  Only CHANGELOG CMakeLists.txt and few other files must be modified"
+			echo "  Only $release_file, CMakeLists.txt and a few related version files"
 			echo "  to make a release commit. To prepare a new release, run this"
 			echo "  script on a clean git tree."
 			exit 1
 		fi
 	done
-	version=$(perl -ne 'print $1 if (/ VERSION (\d+\.\d+\.\d+)\)$/)' CMakeLists.txt)
-	if grep -q -E "^v$version ## TODO$" CHANGELOG; then
-		echo "CHANGELOG needs to be updated manually"
+	if [[ ! -f "$release_file" ]]; then
+		echo "Missing release file: $release_file"
 		exit 1
 	fi
-	git add CHANGELOG CMakeLists.txt python/setup.py library.json platformio/osdp_config.h &&
+	if ! python3 scripts/changelog_tool.py validate --file "$release_file" --expected-version "v$version" --quiet; then
+		echo "Release file needs to be updated manually"
+		exit 1
+	fi
+	git add "$release_file" CMakeLists.txt python/setup.py library.json platformio/osdp_config.h &&
 	git commit -s -m "Release v$version" &&
 	git tag "v$version" -s -a -m "Release v$version"
 }
@@ -131,4 +127,3 @@ while [ $# -gt 0 ]; do
 done
 
 do_libosdp_release $INC
-

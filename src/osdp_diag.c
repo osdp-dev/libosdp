@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024-2025 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
+ * Copyright (c) 2024-2026 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -52,7 +52,7 @@ void osdp_packet_capture_finish(struct osdp_pd *pd)
 		LOG_ERR("Unable to stop capture (flush/close failed)");
 		return;
 	}
-	LOG_INF("Captured %d packets", num_packets);
+	LOG_INF("Captured %zu packets", num_packets);
 }
 
 void osdp_capture_packet(struct osdp_pd *pd, uint8_t *buf, int len)

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2025 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
+ * Copyright (c) 2021-2026 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -11,6 +11,7 @@
 #define FILE_TRANSFER_HEADER_SIZE     11
 #define FILE_TRANSFER_STAT_SIZE       7
 
+/* Wire-protocol status codes carried in struct osdp_cmd_file_stat::status */
 #define OSDP_FILE_TX_STATUS_ACK                0
 #define OSDP_FILE_TX_STATUS_CONTENTS_PROCESSED 1
 #define OSDP_FILE_TX_STATUS_PD_RESET           2
@@ -30,16 +31,65 @@ static inline void file_state_reset(struct osdp_file *f)
 	f->length = 0;
 	f->errors = 0;
 	f->size = 0;
-	f->state = OSDP_FILE_IDLE;
+	f->state = OSDP_FILE_TX_STATE_IDLE;
+	f->outcome = OSDP_FILE_TX_OUTCOME_OK;
+	f->is_open = false;
+	f->keep_alive_pending = false;
 	f->file_id = 0;
 	f->tstamp = 0;
 	f->wait_time_ms = 0;
 	f->cancel_req = false;
 }
 
-static inline bool file_tx_in_progress(struct osdp_file *f)
+static inline void file_close_if_open(struct osdp_pd *pd)
 {
-	return f && f->state == OSDP_FILE_INPROG;
+	struct osdp_file *f = TO_FILE(pd);
+
+	if (f->is_open) {
+		if (f->ops.close(f->ops.arg) < 0) {
+			LOG_ERR("File close failed; continuing");
+		}
+		f->is_open = false;
+	}
+}
+
+/* Converge every terminal path here: close the file, emit the
+ * notification (CP only), reset to IDLE. */
+static void file_transition_done(struct osdp_pd *pd,
+				 enum osdp_file_tx_outcome outcome)
+{
+	struct osdp_file *f = TO_FILE(pd);
+	int file_id = f->file_id;
+
+	file_close_if_open(pd);
+	f->outcome = outcome;
+	f->state = OSDP_FILE_TX_STATE_DONE;
+
+	if (is_cp_mode(pd)) {
+		if (outcome == OSDP_FILE_TX_OUTCOME_OK_REBOOTING) {
+			make_request(pd, CP_REQ_OFFLINE);
+		}
+		osdp_file_tx_notify_done(pd, file_id, outcome);
+	}
+
+	file_state_reset(f);
+}
+
+static enum osdp_file_tx_outcome file_outcome_from_wire_status(int16_t status)
+{
+	switch (status) {
+	case OSDP_FILE_TX_STATUS_CONTENTS_PROCESSED:
+		return OSDP_FILE_TX_OUTCOME_OK;
+	case OSDP_FILE_TX_STATUS_PD_RESET:
+		return OSDP_FILE_TX_OUTCOME_OK_REBOOTING;
+	case OSDP_FILE_TX_STATUS_ERR_UNKNOWN:
+		return OSDP_FILE_TX_OUTCOME_UNRECOGNIZED;
+	case OSDP_FILE_TX_STATUS_ERR_INVALID:
+		return OSDP_FILE_TX_OUTCOME_INVALID;
+	case OSDP_FILE_TX_STATUS_ERR_ABORT:
+	default:
+		return OSDP_FILE_TX_OUTCOME_ABORTED;
+	}
 }
 
 /* --- Sender CMD/RESP Handers --- */
@@ -48,10 +98,10 @@ static void write_file_tx_header(struct osdp_file *f, uint8_t *buf)
 {
 	int len = 0;
 
-	U8_TO_BYTES_LE(f->file_id, buf, len);
-	U32_TO_BYTES_LE(f->size, buf, len);
-	U32_TO_BYTES_LE(f->offset, buf, len);
-	U16_TO_BYTES_LE(f->length, buf, len);
+	bwrite_u8(f->file_id, buf, &len);
+	bwrite_u32_le(f->size, buf, &len);
+	bwrite_u32_le(f->offset, buf, &len);
+	bwrite_u16_le(f->length, buf, &len);
 	assert(len == FILE_TRANSFER_HEADER_SIZE);
 }
 
@@ -61,15 +111,14 @@ int osdp_file_cmd_tx_build(struct osdp_pd *pd, uint8_t *buf, int max_len)
 	struct osdp_file *f = TO_FILE(pd);
 	uint8_t *data = buf + FILE_TRANSFER_HEADER_SIZE;
 
-	/**
-	 * We should never reach this function if a valid file transfer as in
-	 * progress.
-	 */
-	BUG_ON(f == NULL);
-	BUG_ON(f->state != OSDP_FILE_INPROG && f->state != OSDP_FILE_KEEP_ALIVE);
+	/* Reached only once a transfer is live; osdp_file_tx_get_command()
+	 * has already gated on pd->file and state. */
+	assert(f != NULL);
+	assert(f->state == OSDP_FILE_TX_STATE_INPROG ||
+	       f->state == OSDP_FILE_TX_STATE_WAIT);
 
 	if ((size_t)max_len <= FILE_TRANSFER_HEADER_SIZE) {
-		LOG_ERR("TX_Build: insufficient space; need:%zu have:%d",
+		LOG_ERR("TX_Build: insufficient space; need:%d have:%d",
 			FILE_TRANSFER_HEADER_SIZE, max_len);
 		goto reply_abort;
 	}
@@ -78,8 +127,13 @@ int osdp_file_cmd_tx_build(struct osdp_pd *pd, uint8_t *buf, int max_len)
 		LOG_WRN("TX_Build: Ignoring plaintext file transfer request");
 	}
 
-	if (f->state == OSDP_FILE_KEEP_ALIVE) {
-		LOG_DBG("TX_Build: keep-alive");
+	/* PD-requested post-completion keep-alive: file is fully sent, PD
+	 * just wants the channel kept warm. No read attempt; emit a
+	 * header-only ping and let the PD drive completion via its next
+	 * stat reply. */
+	if (f->state == OSDP_FILE_TX_STATE_WAIT && f->offset == f->size) {
+		LOG_DBG("TX_Build: keep-alive (PD requested)");
+		f->length = 0;
 		write_file_tx_header(f, buf);
 		return FILE_TRANSFER_HEADER_SIZE;
 	}
@@ -102,9 +156,27 @@ int osdp_file_cmd_tx_build(struct osdp_pd *pd, uint8_t *buf, int max_len)
 		goto reply_abort;
 	}
 	if (f->length == 0) {
-		LOG_WRN("TX_Build: Read 0 length chunk");
-		goto reply_abort;
+		/* App has no data ready right now. Park in WAIT and emit a
+		 * header-only keep-alive instead of tearing the transfer
+		 * down. The empty-read counter bounds the retry budget via
+		 * osdp_file_tx_get_command()'s OSDP_FILE_ERROR_RETRY_MAX
+		 * check, so a permanently-stuck app eventually still
+		 * aborts cleanly. */
+		f->errors++;
+		f->state = OSDP_FILE_TX_STATE_WAIT;
+		LOG_DBG("TX_Build: app busy; keep-alive (errors=%d)",
+			f->errors);
+		write_file_tx_header(f, buf);
+		return FILE_TRANSFER_HEADER_SIZE;
 	}
+
+	/* Got data: resume INPROG if we were waiting and clear the
+	 * empty-read retry budget. */
+	if (f->state == OSDP_FILE_TX_STATE_WAIT) {
+		LOG_DBG("TX_Build: app recovered; resuming");
+		f->state = OSDP_FILE_TX_STATE_INPROG;
+	}
+	f->errors = 0;
 
 	/* fill the packet buffer (layout: struct osdp_cmd_file_xfer) */
 	write_file_tx_header(f, buf);
@@ -113,14 +185,13 @@ int osdp_file_cmd_tx_build(struct osdp_pd *pd, uint8_t *buf, int max_len)
 
 reply_abort:
 	LOG_ERR("TX_Build: Aborting file transfer due to unrecoverable error!");
-	file_state_reset(f);
+	file_transition_done(pd, OSDP_FILE_TX_OUTCOME_ABORTED);
 	return -1;
 }
 
 int osdp_file_cmd_stat_decode(struct osdp_pd *pd, uint8_t *buf, int len)
 {
 	int pos = 0;
-	bool do_close = false;
 	struct osdp_file *f = TO_FILE(pd);
 	struct osdp_cmd_file_stat stat;
 
@@ -129,7 +200,8 @@ int osdp_file_cmd_stat_decode(struct osdp_pd *pd, uint8_t *buf, int len)
 		return -1;
 	}
 
-	if (f->state != OSDP_FILE_INPROG) {
+	if (f->state != OSDP_FILE_TX_STATE_INPROG &&
+	    f->state != OSDP_FILE_TX_STATE_WAIT) {
 		LOG_ERR("Stat_Decode: File transfer is not in progress!");
 		return -1;
 	}
@@ -141,10 +213,10 @@ int osdp_file_cmd_stat_decode(struct osdp_pd *pd, uint8_t *buf, int len)
 	}
 
 	/* Collect struct osdp_cmd_file_stat */
-	BYTES_TO_U8_LE(buf, pos, stat.control);
-	BYTES_TO_U16_LE(buf, pos, stat.delay);
-	BYTES_TO_U16_LE(buf, pos, stat.status);
-	BYTES_TO_U16_LE(buf, pos, stat.rx_size);
+	stat.control = buf[pos++];
+	stat.delay = bread_u16_le(buf, &pos);
+	stat.status = bread_u16_le(buf, &pos);
+	stat.rx_size = bread_u16_le(buf, &pos);
 	assert(pos == len);
 	assert(f->offset + f->length <= f->size);
 
@@ -153,42 +225,37 @@ int osdp_file_cmd_stat_decode(struct osdp_pd *pd, uint8_t *buf, int len)
 	SET_FLAG_V(f, OSDP_FILE_TX_FLAG_PLAIN_TEXT, stat.control & 0x02)
 	SET_FLAG_V(f, OSDP_FILE_TX_FLAG_POLL_RESP, stat.control & 0x04)
 
+	/* If the prior tx was a host-busy keep-alive (length == 0), keep
+	 * the empty-read counter intact so a permanently-busy app still
+	 * hits OSDP_FILE_ERROR_RETRY_MAX. Successful data chunks clear it
+	 * in tx_build. */
 	f->offset += f->length;
-	do_close = f->length && (f->offset == f->size);
 	f->wait_time_ms = stat.delay;
 	f->tstamp = osdp_millis_now();
 	f->length = 0;
-	f->errors = 0;
 
-	if (f->offset != f->size) {
-		/* Transfer is in progress */
-		return 0;
-	}
-
-	/* File transfer complete; close file and end file transfer */
-
-	if (do_close && f->ops.close(f->ops.arg) < 0) {
-		LOG_ERR("Stat_Decode: Close failed! ... continuing");
-	}
-
-	switch (stat.status) {
-	case OSDP_FILE_TX_STATUS_KEEP_ALIVE:
-		f->state = OSDP_FILE_KEEP_ALIVE;
-		LOG_INF("Stat_Decode: File transfer done; keep alive");
-		return 0;
-	case OSDP_FILE_TX_STATUS_PD_RESET:
-		make_request(pd, CP_REQ_OFFLINE);
-		__fallthrough;
-	case OSDP_FILE_TX_STATUS_CONTENTS_PROCESSED:
-		f->state = OSDP_FILE_DONE;
-		LOG_INF("Stat_Decode: File transfer complete");
-		return 0;
-	default:
+	if (stat.status < 0) {
 		LOG_ERR("Stat_Decode: File transfer error; "
-		        "status:%d offset:%d", stat.status, f->offset);
-		f->errors++;
+			"status:%d offset:%d", stat.status, f->offset);
+		file_transition_done(pd,
+				     file_outcome_from_wire_status(stat.status));
 		return -1;
 	}
+
+	if (f->offset != f->size) {
+		/* Transfer still in progress. */
+		return 0;
+	}
+
+	if (stat.status == OSDP_FILE_TX_STATUS_KEEP_ALIVE) {
+		f->state = OSDP_FILE_TX_STATE_WAIT;
+		LOG_INF("Stat_Decode: File transfer done; keep alive");
+		return 0;
+	}
+
+	LOG_INF("Stat_Decode: File transfer complete");
+	file_transition_done(pd, file_outcome_from_wire_status(stat.status));
+	return 0;
 }
 
 /* --- Receiver CMD/RESP Handler --- */
@@ -207,31 +274,33 @@ int osdp_file_cmd_tx_decode(struct osdp_pd *pd, uint8_t *buf, int len)
 		return -1;
 	}
 
-	if ((size_t)len <= sizeof(struct osdp_cmd_file_xfer)) {
+	/* A header-only frame (zero-length data) is the CP keep-alive
+	 * ping. Accept it; reject only frames that are short of the
+	 * fixed header. */
+	if ((size_t)len < sizeof(struct osdp_cmd_file_xfer)) {
 		LOG_ERR("TX_Decode: invalid decode len:%d exp>=%zu",
 			len, sizeof(struct osdp_cmd_file_xfer));
 		return -1;
 	}
 
-	BYTES_TO_U8_LE(buf, pos, xfer.type);
-	BYTES_TO_U32_LE(buf, pos, xfer.size);
-	BYTES_TO_U32_LE(buf, pos, xfer.offset);
-	BYTES_TO_U16_LE(buf, pos, xfer.length);
+	xfer.type = buf[pos++];
+	xfer.size = bread_u32_le(buf, &pos);
+	xfer.offset = bread_u32_le(buf, &pos);
+	xfer.length = bread_u16_le(buf, &pos);
 	assert(pos == sizeof(struct osdp_cmd_file_xfer));
 	assert(xfer.length + pos == len);
 
-	if (f->state == OSDP_FILE_IDLE || f->state == OSDP_FILE_DONE) {
+	if (f->state == OSDP_FILE_TX_STATE_IDLE) {
 		if (pd->command_callback) {
-			/**
-			 * Notify app of this command and make sure
-			 * we can proceed
-			 */
+			/* Notify app of this command and make sure we can
+			 * proceed */
 			cmd.id = OSDP_CMD_FILE_TX;
 			cmd.file_tx.flags = f->flags;
 			cmd.file_tx.id = xfer.type;
 			rc = pd->command_callback(pd->command_callback_arg, &cmd);
-			if (rc < 0)
+			if (rc < 0) {
 				return -1;
+			}
 		}
 
 		/* new file write request */
@@ -245,12 +314,23 @@ int osdp_file_cmd_tx_decode(struct osdp_pd *pd, uint8_t *buf, int len)
 		file_state_reset(f);
 		f->file_id = xfer.type;
 		f->size = xfer.size;
-		f->state = OSDP_FILE_INPROG;
+		f->is_open = true;
+		f->state = OSDP_FILE_TX_STATE_INPROG;
 	}
 
-	if (f->state != OSDP_FILE_INPROG) {
+	if (f->state != OSDP_FILE_TX_STATE_INPROG) {
 		LOG_ERR("TX_Decode: File transfer is not in progress!");
 		return -1;
+	}
+
+	/* CP keep-alive ping (zero-length frame): skip the user write
+	 * callback entirely and leave offset unchanged. stat_build will
+	 * reply ACK without ERR_INVALID once it sees the flag. */
+	if (xfer.length == 0) {
+		LOG_DBG("TX_Decode: keep-alive ping at off:%d", xfer.offset);
+		f->keep_alive_pending = true;
+		f->length = 0;
+		return 0;
 	}
 
 	f->length = f->ops.write(f->ops.arg, data, xfer.length, xfer.offset);
@@ -278,7 +358,7 @@ int osdp_file_cmd_stat_build(struct osdp_pd *pd, uint8_t *buf, int max_len)
 		return -1;
 	}
 
-	if (f->state != OSDP_FILE_INPROG) {
+	if (f->state != OSDP_FILE_TX_STATE_INPROG) {
 		LOG_ERR("Stat_Build: File transfer is not in progress!");
 		return -1;
 	}
@@ -289,7 +369,11 @@ int osdp_file_cmd_stat_build(struct osdp_pd *pd, uint8_t *buf, int max_len)
 		return -1;
 	}
 
-	if (f->length > 0) {
+	if (f->keep_alive_pending) {
+		/* CP-side keep-alive ping: ACK without advancing offset so
+		 * the CP can retry the same chunk once its app recovers. */
+		f->keep_alive_pending = false;
+	} else if (f->length > 0) {
 		f->offset += f->length;
 	} else {
 		stat.status = OSDP_FILE_TX_STATUS_ERR_INVALID;
@@ -298,23 +382,18 @@ int osdp_file_cmd_stat_build(struct osdp_pd *pd, uint8_t *buf, int max_len)
 	f->length = 0;
 	assert(f->offset <= f->size);
 	if (f->offset == f->size) { /* EOF */
-		if (f->ops.close(f->ops.arg) < 0) {
-			LOG_ERR("Stat_Build: Close failed!");
-			return -1;
-		}
-		f->state = OSDP_FILE_DONE;
 		stat.status = OSDP_FILE_TX_STATUS_CONTENTS_PROCESSED;
 		LOG_INF("TX_Decode: File receive complete");
+		file_transition_done(pd, OSDP_FILE_TX_OUTCOME_OK);
 	}
 
 	/* fill the packet buffer (layout: struct osdp_cmd_file_stat) */
 
-	U8_TO_BYTES_LE(stat.control, buf, len);
-	U16_TO_BYTES_LE(stat.delay, buf, len);
-	U16_TO_BYTES_LE(stat.status, buf, len);
-	U16_TO_BYTES_LE(stat.rx_size, buf, len);
+	bwrite_u8(stat.control, buf, &len);
+	bwrite_u16_le(stat.delay, buf, &len);
+	bwrite_u16_le(stat.status, buf, &len);
+	bwrite_u16_le(stat.rx_size, buf, &len);
 	assert(len == FILE_TRANSFER_STAT_SIZE);
-
 	return len;
 }
 
@@ -322,11 +401,8 @@ int osdp_file_cmd_stat_build(struct osdp_pd *pd, uint8_t *buf, int max_len)
 
 void osdp_file_tx_abort(struct osdp_pd *pd)
 {
-	struct osdp_file *f = TO_FILE(pd);
-
-	if (file_tx_in_progress(f)) {
-		f->ops.close(f->ops.arg);
-		file_state_reset(f);
+	if (osdp_file_tx_is_active(pd)) {
+		file_transition_done(pd, OSDP_FILE_TX_OUTCOME_ABORTED);
 	}
 }
 
@@ -342,13 +418,13 @@ int osdp_file_tx_get_command(struct osdp_pd *pd)
 {
 	struct osdp_file *f = TO_FILE(pd);
 
-	if (!f || f->state == OSDP_FILE_IDLE || f->state == OSDP_FILE_DONE) {
+	if (!osdp_file_tx_is_active(pd)) {
 		return 0;
 	}
 
 	if (f->errors > OSDP_FILE_ERROR_RETRY_MAX || f->cancel_req) {
 		LOG_ERR("Aborting transfer of file fd:%d", f->file_id);
-		osdp_file_tx_abort(pd);
+		file_transition_done(pd, OSDP_FILE_TX_OUTCOME_ABORTED);
 		return CMD_ABORT;
 	}
 
@@ -377,7 +453,7 @@ int osdp_file_tx_command(struct osdp_pd *pd, int file_id, uint32_t flags)
 		return -1;
 	}
 
-	if (file_tx_in_progress(f)) {
+	if (osdp_file_tx_is_active(pd)) {
 		if (flags & OSDP_CMD_FILE_TX_FLAG_CANCEL) {
 			if (file_id == f->file_id) {
 				f->cancel_req = true;
@@ -411,11 +487,26 @@ int osdp_file_tx_command(struct osdp_pd *pd, int file_id, uint32_t flags)
 	f->flags = flags;
 	f->file_id = file_id;
 	f->size = size;
-	f->state = OSDP_FILE_INPROG;
+	f->is_open = true;
+	f->state = OSDP_FILE_TX_STATE_INPROG;
 	return 0;
 }
 
 /* --- Exported Methods --- */
+
+#ifdef OPT_OSDP_STATIC
+#ifndef OSDP_FILE_STATIC_SLOTS
+#define OSDP_FILE_STATIC_SLOTS OSDP_CP_MAX_PDS
+#endif
+static inline struct osdp_file *file_static_slot_get(int pd_idx)
+{
+	static struct osdp_file g_osdp_file_slots[OSDP_FILE_STATIC_SLOTS];
+	if (pd_idx < 0 || pd_idx >= OSDP_FILE_STATIC_SLOTS) {
+		return NULL;
+	}
+	return &g_osdp_file_slots[pd_idx];
+}
+#endif /* OPT_OSDP_STATIC */
 
 int osdp_file_register_ops(osdp_t *ctx, int pd_idx,
 			   const struct osdp_file_ops *ops)
@@ -424,11 +515,20 @@ int osdp_file_register_ops(osdp_t *ctx, int pd_idx,
 	struct osdp_pd *pd = osdp_to_pd(ctx, pd_idx);
 
 	if (!pd->file) {
+#ifdef OPT_OSDP_STATIC
+		pd->file = file_static_slot_get(pd_idx);
+		if (pd->file == NULL) {
+			LOG_PRINT("No static osdp_file slot for pd_idx=%d", pd_idx);
+			return -1;
+		}
+		memset(pd->file, 0, sizeof(struct osdp_file));
+#else
 		pd->file = calloc(1, sizeof(struct osdp_file));
 		if (pd->file == NULL) {
 			LOG_PRINT("Failed to alloc struct osdp_file");
 			return -1;
 		}
+#endif
 	}
 
 	memcpy(&pd->file->ops, ops, sizeof(struct osdp_file_ops));
@@ -442,7 +542,8 @@ int osdp_get_file_tx_status(const osdp_t *ctx, int pd_idx,
 	input_check(ctx, pd_idx);
 	struct osdp_file *f = TO_FILE(osdp_to_pd(ctx, pd_idx));
 
-	if (f->state != OSDP_FILE_INPROG && f->state != OSDP_FILE_DONE) {
+	if (!f || (f->state != OSDP_FILE_TX_STATE_INPROG &&
+		   f->state != OSDP_FILE_TX_STATE_WAIT)) {
 		LOG_PRINT("File TX not in progress");
 		return -1;
 	}

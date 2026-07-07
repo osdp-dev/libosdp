@@ -1,5 +1,5 @@
 #
-#  Copyright (c) 2020-2025 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
+#  Copyright (c) 2020-2026 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
 #
 #  SPDX-License-Identifier: Apache-2.0
 #
@@ -46,11 +46,11 @@ set(CPACK_PACKAGE_FILE_NAME "${PACKAGE_NAME}-${SYSTEM_NAME}")
 include(CPackComponent)
 cpack_add_component(distributables
 	DISPLAY_NAME  ${PROJECT_NAME}
-    DESCRIPTION   "Distributables (shared/static libararies, binaries, etc.,)"
+	DESCRIPTION   "Distributables (shared/static libraries, binaries, etc.)"
 )
-cpack_add_component(distributables
+cpack_add_component(headers
 	DISPLAY_NAME  ${PROJECT_NAME}
-    DESCRIPTION   "Development headers"
+	DESCRIPTION   "Development headers"
 )
 cpack_add_component(config_files
 	DISPLAY_NAME  ${PROJECT_NAME}

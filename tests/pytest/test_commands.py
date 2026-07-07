@@ -1,5 +1,5 @@
 #
-#  Copyright (c) 2021-2025 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
+#  Copyright (c) 2021-2026 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
 #
 #  SPDX-License-Identifier: Apache-2.0
 #
@@ -8,13 +8,18 @@ import time
 import pytest
 
 from osdp import *
-from conftest import make_fifo_pair, cleanup_fifo_pair, assert_command_received, wait_for_notification_event, wait_for_non_notification_event
+from conftest import (
+    MultidropBus,
+    assert_command_received,
+    wait_for_notification_event,
+    wait_for_non_notification_event,
+)
 
 secure_pd_addr = 101
 insecure_pd_addr = 102
 
-f1_1, f1_2 = make_fifo_pair("secure_pd")
-f2_1, f2_2 = make_fifo_pair("insecure_pd")
+bus = MultidropBus(2)
+chn = bus.multidrop_channel()
 
 key = KeyStore.gen_key()
 
@@ -26,19 +31,18 @@ pd_cap = PDCapabilities([
 ])
 
 pd_info_list = [
-    PDInfo(secure_pd_addr, f1_1, scbk=key, flags=[ LibFlag.EnforceSecure, LibFlag.EnableNotification ]),
-    PDInfo(insecure_pd_addr, f2_1, flags=[ LibFlag.EnableNotification ])
+    PDInfo(secure_pd_addr, chn, scbk=key, flags=[ LibFlag.EnforceSecure, LibFlag.EnableNotification ]),
+    PDInfo(insecure_pd_addr, chn, flags=[ LibFlag.EnableNotification ])
 ]
 
-# TODO remove this.
 secure_pd = PeripheralDevice(
-    PDInfo(secure_pd_addr, f1_2, scbk=key, flags=[ LibFlag.EnforceSecure ]),
+    PDInfo(secure_pd_addr, bus.pd_channel(0), scbk=key, flags=[ LibFlag.EnforceSecure ]),
     pd_cap,
     log_level=LogLevel.Debug
 )
 
 insecure_pd = PeripheralDevice(
-    PDInfo(insecure_pd_addr, f2_2),
+    PDInfo(insecure_pd_addr, bus.pd_channel(1)),
     pd_cap,
     log_level=LogLevel.Debug
 )
@@ -53,9 +57,9 @@ cp = ControlPanel(pd_info_list, log_level=LogLevel.Debug)
 def cp_check_command_status(cmd, expected_outcome=True):
     event = {
         'event': Event.Notification,
-        'type': EventNotification.Command,
+        'type': Notification.Command,
         'arg0': cmd,
-        'arg1': 1 if expected_outcome else 0,
+        'arg1': 0 if expected_outcome else -1,
     }
     wait_for_notification_event(cp, secure_pd.address, event)
 
@@ -74,15 +78,13 @@ def teardown_test():
     cp.teardown()
     for pd in pd_list:
         pd.teardown()
-    cleanup_fifo_pair("secure_pd")
-    cleanup_fifo_pair("insecure_pd")
 
 def test_command_output():
     test_cmd = {
         'command': Command.Output,
         'output_no': 0,
         'control_code': 1,
-        'timer_count': 10
+        'timer_count': 0
     }
     assert cp.is_online(secure_pd_addr)
     assert cp.submit_command(secure_pd_addr, test_cmd)
@@ -171,7 +173,7 @@ def test_command_mfg():
     cp_check_command_status(Command.Manufacturer)
 
 def test_command_mfg_with_reply():
-    """Test manufacturer command that triggers automatic manufacturer reply"""
+    """Test manufacturer command with asynchronous manufacturer reply event"""
     def evt_handler(pd, event):
         print(f"DEBUG: Received event: {event}")
         assert event['event'] == Event.ManufacturerReply
@@ -184,10 +186,7 @@ def test_command_mfg_with_reply():
         assert command['command'] == Command.Manufacturer
         assert command['vendor_code'] == 0x00030201
         assert command['data'] == bytes([9,1,9,2,6,3,1,7,7,0])
-        # Return positive value to trigger automatic manufacturer reply
-        # The reply data is echoed back from the command data
-        print("DEBUG: Command callback returning 1")
-        return 1, None
+        return 0, None
 
     assert cp.is_online(secure_pd_addr)
 
@@ -215,6 +214,15 @@ def test_command_mfg_with_reply():
         }
         assert_command_received(secure_pd, expected_cmd_received)
 
+        cp_check_command_status(Command.Manufacturer)
+
+        # Emit manufacturer reply event asynchronously from the PD app
+        secure_pd.submit_event({
+            'event': Event.ManufacturerReply,
+            'vendor_code': 0x00030201,
+            'data': bytes([9,1,9,2,6,3,1,7,7,0]),
+        })
+
         # The manufacturer reply event should be received by the CP
         expected_event = {
             'event': Event.ManufacturerReply,
@@ -230,6 +238,35 @@ def test_command_mfg_with_reply():
         else:
             cp.set_event_handler(None)
 
+        if original_command_handler is not None:
+            secure_pd.set_command_handler(original_command_handler)
+        else:
+            secure_pd.set_command_handler(None)
+
+def test_command_mfg_nack_soft_fail():
+    def cmd_handler(command):
+        assert command['command'] == Command.Manufacturer
+        return -1, None
+
+    assert cp.is_online(secure_pd_addr)
+
+    original_command_handler = getattr(secure_pd, 'user_command_handler', None)
+    try:
+        secure_pd.set_command_handler(cmd_handler)
+
+        test_cmd = {
+            'command': Command.Manufacturer,
+            'vendor_code': 0x00030201,
+            'data': bytes([1, 2, 3, 4]),
+        }
+        assert cp.submit_command(secure_pd_addr, test_cmd)
+        assert_command_received(secure_pd, test_cmd)
+        cp_check_command_status(Command.Manufacturer, expected_outcome=False)
+
+        # MFG NAK is a soft failure and does not drop PD online state.
+        time.sleep(0.2)
+        assert cp.is_online(secure_pd_addr)
+    finally:
         if original_command_handler is not None:
             secure_pd.set_command_handler(original_command_handler)
         else:

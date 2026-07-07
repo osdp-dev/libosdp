@@ -10,9 +10,9 @@
 
 This is a cross-platform open source implementation of IEC 60839-11-5 Open
 Supervised Device Protocol (OSDP). The protocol is intended to improve
-interoperability among access control and security products. It supports Secure
-Channel (SC) for encrypted and authenticated communication between configured
-devices.
+[interoperability][40] among access control and security products. It supports
+Secure Channel (SC) for encrypted and authenticated communication between
+configured devices.
 
 OSDP describes the communication protocol for interfacing one or more Peripheral
 Devices (PD) to a Control Panel (CP) over a two-wire RS-485 multi-drop serial
@@ -27,7 +27,7 @@ This protocol is developed and maintained by [Security Industry Association][20]
 
   - Supports secure channel communication (AES-128) by default and provides a
     custom init-time flag to enforce a higher level of security not mandated by
-    the specification
+    the specification ([see][41])
   - Can be used to setup a PD or CP mode of operation (see [examples][39]).
   - Exposes a well defined contract though a single [header file][38].
   - Cross-platform; can be built to run on bare-metal embedded devices, Linux,
@@ -104,12 +104,12 @@ commands and replies and their support status in LibOSDP [here][22].
 ## Dependencies
 
   * A working C compiler; such as gcc, clang or msvc
-  * Cmake3 (or GNU Make)
-  * [goToMain/C-Utils][25] submodule
+  * CMake 3.14 or newer (or GNU Make)
+  * [osdp-dev/C-Utils][25] submodule
 
 Optionally,
   * Python3 (host)
-  * [Doxygen][9] (host; for building the html docs as seen [here][6])
+  * [Doxygen][9] (host; for generating API metadata)
   * [OpenSSL][8] (host and target, optional - recommended)
   * [MbedTLS][7] (host and target, optional)
   * [PyTest][5] (host; for running the integrated test suite)
@@ -128,10 +128,12 @@ export CCFLAGS=--specs=nosys.specs
 make
 ```
 
-To build LibOSDP and all its components you must have Cmake version 3.14 (or
+To build LibOSDP and all its components you must have CMake version 3.14 (or
 above) and a C compiler installed. This repository produces a `libosdp.so` and
-`libosdpstatic.a`; so depending on on your needs you can link these with -losdp
-or -losdpstatic, respectively.
+`libosdpstatic.a`; so depending on your needs you can link these with `-losdp`
+or `-losdpstatic`, respectively. Downstream CMake projects can consume the
+library with `find_package(libosdp CONFIG REQUIRED)` and link against the
+`libosdp::libosdp` target.
 
 Have a look at `examples/*` for a quick lookup on how to consume this library and
 structure your application.
@@ -140,14 +142,13 @@ You can also read the [API documentation][26] for a comprehensive list of APIs
 that are exposed by LibOSDP.
 
 ```sh
-git clone https://github.com/goToMain/libosdp --recurse-submodules
+git clone https://github.com/osdp-dev/libosdp --recurse-submodules
 cd libosdp
 cmake -B build .
 cmake --build build --parallel
 ```
 
-Refer to the [documentation][23] for more information on build and cross
-compilation.
+Refer to the project links below for more information on build and usage.
 
 ### Run the test suite
 
@@ -169,18 +170,6 @@ is how you can run them:
 
 To add new tests for the feature you are working one, see the other tests in
 `pytest` directory.
-
-### Build HTML docs
-
-This sections is for those who want to build the HTML documentation for this
-project locally. The latest version of the doc can always be found at
-[libosdp.sidcha.dev][6].
-
-Build the docs by doing the following (build directory has the html files).
-
-```sh
-./scripts/make-html-docs.sh
-```
 
 ## Contributions, Issues and Bugs
 
@@ -214,41 +203,39 @@ supporting the development by donations though my [GitHub sponsors page][15].
 Your support will ensure sustained development of LibOSDP.
 
 [1]: https://img.shields.io/github/v/release/GoToMain/libosdp?display_name=tag&logo=github
-[2]: https://github.com/goToMain/libosdp/releases/latest
+[2]: https://github.com/osdp-dev/libosdp/releases/latest
 [3]: https://github.com/goTomain/libosdp/workflows/Build%20CI/badge.svg
 [4]: https://github.com/goTomain/libosdp/actions?query=workflow%3A%22Build+CI%22
 [5]: https://docs.pytest.org/en/latest/
-[6]: https://libosdp.sidcha.dev/
 [7]: https://github.com/ARMmbed/mbedtls
 [8]: https://www.openssl.org/
 [9]: https://www.doxygen.nl/index.html
 [10]: https://crates.io/crates/libosdp
-[11]: https://github.com/goToMain/libosdp-rs/tree/master/libosdp
+[11]: https://github.com/osdp-dev/libosdp-rs/tree/master/libosdp
 [12]: https://pypi.org/project/libosdp/
-[13]: https://github.com/goToMain/libosdp/tree/master/python
-[14]: https://libosdp.sidcha.dev/libosdp/debugging
+[13]: https://github.com/osdp-dev/libosdp/tree/master/python
+[14]: https://doc.osdp.dev/libosdp/debugging
 [15]: https://github.com/sponsors/sidcha
 [16]: https://img.shields.io/pypi/v/libosdp?logo=python&link=https%3A%2F%2Fpypi.org%2Fproject%2Flibosdp%2F
 [17]: https://badges.registry.platformio.org/packages/sidcha/library/LibOSDP.svg
 [18]: https://registry.platformio.org/libraries/sidcha/LibOSDP
 [19]: https://crates.io/search?q=libosdp
 [20]: https://www.securityindustry.org/industry-standards/open-supervised-device-protocol/
-[21]: https://libosdp.sidcha.dev/protocol/
-[22]: https://libosdp.sidcha.dev/protocol/commands-and-replies.html
-[23]: https://libosdp.sidcha.dev/libosdp/build-and-install.html
+[21]: https://doc.osdp.dev/protocol/
+[22]: https://doc.osdp.dev/protocol/commands-and-replies
 [24]: https://github.com/goTomain/libosdp
 [25]: https://github.com/goTomain/c-utils
-[26]: https://libosdp.sidcha.dev/api/
-[27]: https://libosdp.sidcha.dev/protocol/faq.html
-[28]: https://github.com/goToMain/libosdp/issues/new/choose
-[29]: https://github.com/goToMain/libosdp/blob/master/python
-[30]: https://github.com/goToMain/libosdp/tree/master/tests/pytest/testlib
-[31]: https://github.com/goToMain/libosdp/issues
+[26]: https://doc.osdp.dev/api/
+[27]: https://doc.osdp.dev/protocol/faq
+[28]: https://github.com/osdp-dev/libosdp/issues/new/choose
+[31]: https://github.com/osdp-dev/libosdp/issues
 [32]: https://img.shields.io/vcpkg/v/libosdp
 [33]: https://vcpkg.link/ports/libosdp
 [34]: https://img.shields.io/crates/v/libosdp?style=flat&logo=rust&logoColor=DDD&label=crate%20%3A%20libosdp&link=https%3A%2F%2Fcrates.io%2Fcrates%2Flibosdp
 [35]: https://crates.io/crates/libosdp
 [36]: https://img.shields.io/crates/v/osdpctl?style=flat&logo=rust&logoColor=DDD&label=crate%20%3A%20osdpctl&link=https%3A%2F%2Fcrates.io%2Fcrates%2Fosdpctl
 [37]: https://crates.io/crates/osdpctl
-[38]: https://github.com/goToMain/libosdp/blob/master/include/osdp.h
-[39]: https://github.com/goToMain/libosdp/tree/master/examples
+[38]: https://github.com/osdp-dev/libosdp/blob/master/include/osdp.h
+[39]: https://github.com/osdp-dev/libosdp/tree/master/examples
+[40]: https://doc.osdp.dev/libosdp/compatibility
+[41]: https://doc.osdp.dev/libosdp/secure-channel

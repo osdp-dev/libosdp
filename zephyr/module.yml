@@ -1,1 +1,4 @@
 name: libosdp
+build:
+  cmake: zephyr
+  kconfig: zephyr/Kconfig

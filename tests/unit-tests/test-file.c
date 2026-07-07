@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2025 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
+ * Copyright (c) 2021-2026 Siddharth Chandrasekaran <sidcha.dev@gmail.com>
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -19,6 +19,11 @@ struct test_data {
 	bool is_cp;
 	int file_id;
 	int fd;
+	/* Sender-side busy injection (CP read callback only) */
+	int read_count;        /* total read() calls */
+	int read_busy_mod;     /* if >0, every Nth read returns 0 */
+	bool read_always_busy; /* if true, every read returns 0 */
+	int empty_read_count;  /* observed 0-length reads */
 };
 
 struct test_data sender_data;
@@ -61,6 +66,17 @@ static int test_fops_read(void *arg, void *buf, int size, int offset)
 		printf(SUB_1 "%s_read: fd:%d\n",
 			t->is_cp ? "sender" : "receiver", t->fd);
 		return -1;
+	}
+
+	t->read_count++;
+
+	/* Simulate a momentarily-busy host: returning 0 means "no data
+	 * ready right now"; libosdp must keep the transfer alive instead
+	 * of aborting. */
+	if (t->read_always_busy ||
+	    (t->read_busy_mod > 0 && (t->read_count % t->read_busy_mod) == 0)) {
+		t->empty_read_count++;
+		return 0;
 	}
 
 	ret = pread(t->fd, buf, (size_t)size, (size_t)offset);
@@ -160,12 +176,30 @@ err:
 	return false;
 }
 
+struct file_tx_notification {
+	int count;
+	int type;
+	int arg0;
+	int arg1;
+};
+
+static struct file_tx_notification g_notif;
+
 static int event_callback(void *arg, int pd, struct osdp_event *ev)
 {
 	ARG_UNUSED(arg);
 	ARG_UNUSED(pd);
-	ARG_UNUSED(ev);
-	printf(SUB_1 "got event callback\n");
+
+	if (ev->type != OSDP_EVENT_NOTIFICATION) {
+		return 0;
+	}
+	if (ev->notif.type != OSDP_NOTIFICATION_FILE_TX_DONE) {
+		return 0;
+	}
+	g_notif.count++;
+	g_notif.type = ev->notif.type;
+	g_notif.arg0 = ev->notif.arg0;
+	g_notif.arg1 = ev->notif.arg1;
 	return 0;
 }
 
@@ -177,7 +211,17 @@ static int cmd_callback(void *arg, struct osdp_cmd *cmd)
 	return 0;
 }
 
-void run_file_tx_tests(struct test *t, bool line_noise)
+struct file_tx_opts {
+	const char *label;
+	bool line_noise;
+	int read_busy_mod;        /* 0 = no busy injection */
+	bool read_always_busy;
+	int expected_outcome;     /* OSDP_FILE_TX_OUTCOME_* */
+	int wait_deciseconds;     /* notification wait budget, 100ms units */
+	bool verify_content;      /* compare REC_FILE against SEND_FILE */
+};
+
+static bool run_one_file_tx_case(struct test *t, const struct file_tx_opts *opts)
 {
 	bool result = false;
 	int rc, size, offset;
@@ -185,7 +229,13 @@ void run_file_tx_tests(struct test *t, bool line_noise)
 	int cp_runner = -1, pd_runner = -1;
 	uint8_t status = 0;
 
+	memset(&g_notif, 0, sizeof(g_notif));
+	memset(&sender_data, 0, sizeof(sender_data));
+	memset(&receiver_data, 0, sizeof(receiver_data));
 	sender_data.is_cp = true;
+	sender_data.read_busy_mod = opts->read_busy_mod;
+	sender_data.read_always_busy = opts->read_always_busy;
+
 	struct osdp_file_ops sender_ops = {
 		.arg = (void *)&sender_data,
 		.open = test_fops_open,
@@ -202,15 +252,17 @@ void run_file_tx_tests(struct test *t, bool line_noise)
 		.close = test_fops_close
 	};
 
-	printf("\nBegin file transfer test\n");
-
+	printf("\nBegin file transfer test: %s\n", opts->label);
 	printf(SUB_1 "setting up OSDP devices\n");
 
-	if (test_setup_devices(t, &cp_ctx, &pd_ctx)) {
+	if (test_setup_devices_ext(t, &cp_ctx, &pd_ctx,
+				   OSDP_FLAG_ENABLE_NOTIFICATION, 0)) {
 		printf(SUB_1 "Failed to setup devices!\n");
 		goto error;
 	}
 
+	/* Make sure neither side carries state from a previous case. */
+	unlink(REC_FILE);
 	if (test_create_file())
 		goto error;
 
@@ -257,26 +309,74 @@ void run_file_tx_tests(struct test *t, bool line_noise)
 		goto error;
 	}
 
-	printf(SUB_1 "monitoring file tx progress\n");
-	if (line_noise)
+	printf(SUB_1 "waiting for file tx done notification\n");
+	if (opts->line_noise)
 		enable_line_noise();
 
-	while (1) {
+	rc = 0;
+	while (g_notif.count == 0) {
 		usleep(100 * 1000);
-		rc = osdp_get_file_tx_status(cp_ctx, 0, &size, &offset);
-		if (rc < 0) {
-			printf(SUB_1 "status query failed!\n");
-			if (line_noise)
+		if (++rc > opts->wait_deciseconds) {
+			printf(SUB_1 "file tx notification not received! "
+			       "empty_reads=%d\n", sender_data.empty_read_count);
+			if (opts->line_noise)
 				print_line_noise_stats();
 			goto error;
 		}
-		if (offset == size)
-			break;
 	}
 
-	result = test_check_rec_file();
-	printf(SUB_1 "file transfer test %s\n",
-	       result ? "succeeded" : "failed");
+	if (g_notif.count != 1) {
+		printf(SUB_1 "notification fired %d times; expected 1\n",
+		       g_notif.count);
+		goto error;
+	}
+	if (g_notif.type != OSDP_NOTIFICATION_FILE_TX_DONE) {
+		printf(SUB_1 "unexpected notification type: %d\n", g_notif.type);
+		goto error;
+	}
+	if (g_notif.arg0 != 1) {
+		printf(SUB_1 "unexpected file_id: %d (want 1)\n", g_notif.arg0);
+		goto error;
+	}
+	if (g_notif.arg1 != opts->expected_outcome) {
+		printf(SUB_1 "unexpected outcome: %d (want %d)\n",
+		       g_notif.arg1, opts->expected_outcome);
+		goto error;
+	}
+
+	/* Poll API must report not-in-progress after completion. */
+	if (osdp_get_file_tx_status(cp_ctx, 0, &size, &offset) != -1) {
+		printf(SUB_1 "poll status did not reset after completion\n");
+		goto error;
+	}
+
+	if (opts->verify_content) {
+		result = test_check_rec_file();
+		printf(SUB_1 "%s: %s (empty_reads=%d)\n", opts->label,
+		       result ? "succeeded" : "failed",
+		       sender_data.empty_read_count);
+	} else {
+		/* Aborted case: pin the "bounded retries then abort"
+		 * contract. The transfer must not collapse on the first
+		 * empty read — libosdp has to keep the link alive across
+		 * several busy ticks before giving up. */
+		const int min_retries = 5;
+		if (sender_data.empty_read_count < min_retries) {
+			printf(SUB_1 "%s: aborted after only %d empty reads "
+			       "(want >= %d) — retry budget too small\n",
+			       opts->label, sender_data.empty_read_count,
+			       min_retries);
+			result = false;
+		} else {
+			result = true;
+			printf(SUB_1 "%s: aborted as expected after %d "
+			       "empty reads\n", opts->label,
+			       sender_data.empty_read_count);
+		}
+		unlink(SEND_FILE);
+		unlink(REC_FILE);
+	}
+
 error:
 	disable_line_noise();
 	async_runner_stop(cp_runner);
@@ -285,5 +385,51 @@ error:
 	osdp_cp_teardown(cp_ctx);
 	osdp_pd_teardown(pd_ctx);
 
-	TEST_REPORT(t, result);
+	return result;
+}
+
+void run_file_tx_tests(struct test *t, bool line_noise)
+{
+	struct file_tx_opts opts = {
+		.label = "baseline (no host busy)",
+		.line_noise = line_noise,
+		.expected_outcome = OSDP_FILE_TX_OUTCOME_OK,
+		.wait_deciseconds = 600, /* 60s */
+		.verify_content = true,
+	};
+
+	TEST_REPORT(t, run_one_file_tx_case(t, &opts));
+}
+
+void run_file_tx_intermittent_tests(struct test *t)
+{
+	/* CP host returns 0 every 3rd read. libosdp must send keep-alive
+	 * frames in place of the missing chunks and resume cleanly once
+	 * the host has data again — transfer should still complete with
+	 * OUTCOME_OK and identical content. */
+	struct file_tx_opts opts = {
+		.label = "CP host busy intermittently (every 3rd read)",
+		.read_busy_mod = 3,
+		.expected_outcome = OSDP_FILE_TX_OUTCOME_OK,
+		.wait_deciseconds = 600, /* 60s */
+		.verify_content = true,
+	};
+
+	TEST_REPORT(t, run_one_file_tx_case(t, &opts));
+}
+
+void run_file_tx_permanent_busy_tests(struct test *t)
+{
+	/* CP host never returns data. libosdp must keep the link alive
+	 * for a bounded number of retries and then abort the transfer
+	 * via the existing OSDP_FILE_ERROR_RETRY_MAX path. */
+	struct file_tx_opts opts = {
+		.label = "CP host busy permanently",
+		.read_always_busy = true,
+		.expected_outcome = OSDP_FILE_TX_OUTCOME_ABORTED,
+		.wait_deciseconds = 100, /* 10s — abort should be fast */
+		.verify_content = false,
+	};
+
+	TEST_REPORT(t, run_one_file_tx_case(t, &opts));
 }

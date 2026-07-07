@@ -1,19 +1,91 @@
-config LIBOSDP
+menuconfig LIBOSDP
 	bool "Open Supervised Device Protocol (OSDP) driver"
-	select RING_BUFFER
 	select CRC
-	select RING_BUFFER
 	select CRYPTO
+	imply SERIAL_SUPPORT_INTERRUPT
+	imply UART_INTERRUPT_DRIVEN
+	imply UART_USE_RUNTIME_CONFIGURE
+	help
+		Add support for Open Supervised Device Protocol (OSDP)
+
+if LIBOSDP
+
+choice LIBOSDP_CRYPTO_BACKEND
+	prompt "LibOSDP crypto backend"
+	default LIBOSDP_CRYPTO_MBEDTLS
+	help
+		Select which AES implementation LibOSDP uses for secure
+		channel crypto. Pick MbedTLS if the application already
+		pulls it in; TinyAES otherwise for smallest footprint.
+
+config LIBOSDP_CRYPTO_MBEDTLS
+	bool "MbedTLS"
 	select CRYPTO_MBEDTLS_SHIM
 	select MBEDTLS
 	select MBEDTLS_CIPHER_AES_ENABLED
 	select MBEDTLS_CIPHER_CCM_ENABLED
-	imply SERIAL_SUPPORT_INTERRUPT
-	imply UART_INTERRUPT_DRIVEN
-	imply UART_USE_RUNTIME_CONFIGURE
-	select CRC
 	help
-		Add support for Open Supervised Device Protocol (OSDP)
+		Use Zephyr's MbedTLS module for AES. Shares code with
+		the rest of the system if MbedTLS is already linked.
+
+config LIBOSDP_CRYPTO_TINYAES
+	bool "TinyAES (in-tree)"
+	help
+		Use the bundled TinyAES implementation. No external
+		crypto dependency; smallest code size.
+
+endchoice
+
+config LIBOSDP_STATIC
+	bool "Static allocation (no malloc/free)"
+	default y
+	help
+		Allocate all LibOSDP internal structures statically.
+		PD arrays are sized to OSDP_PD_MAX. This eliminates
+		all dynamic memory allocation inside LibOSDP.
+
+config LIBOSDP_RX_ZERO_COPY
+	bool "Enable zero-copy RX buffers"
+	default y
+	help
+		Use flat RX buffers from the UART driver and avoid intermediate
+		ring-buffering inside LibOSDP. Requires channel.recv_pkt().
+		When disabled, uses ring buffer for byte-by-byte reception.
+
+config LIBOSDP_RING_BUFFER
+	bool
+	default y if !LIBOSDP_RX_ZERO_COPY
+	select RING_BUFFER if !LIBOSDP_RX_ZERO_COPY
+
+config LIBOSDP_SKIP_MARK_BYTE
+	bool "Don't send the leading mark byte (0xFF)"
+	default n
+
+config LIBOSDP_LOG_MINIMAL
+	bool "Minimal logging (reduced RAM/stack)"
+	default n
+	help
+		Use a lightweight logger that omits timestamps and
+		file/line information. Saves RAM and stack space
+		on constrained targets.
+
+config LIBOSDP_DISABLE_PRETTY_LOGGING
+	bool "Don't colorize log outputs"
+	default n
+
+config LIBOSDP_PACKET_TRACE
+	bool "Enable OSDP packet trace (PCAP)"
+	default n
+	help
+		Record raw OSDP packets for diagnostics. Enables
+		PCAP capture support via osdp_diag.
+
+config LIBOSDP_DATA_TRACE
+	bool "Enable OSDP data buffer trace"
+	default n
+	help
+		Trace command/reply data buffers for diagnostics.
+		Enables PCAP capture support via osdp_diag.
 
 config OSDP_UART_BAUD_RATE
 	int "OSDP UART baud rate"
@@ -27,6 +99,139 @@ config OSDP_LOG_LEVEL
 	default 1
 	help
 		Set the logging level for the OSDP driver
+
+menu "OSDP Protocol Timings"
+
+config OSDP_PD_SC_RETRY_MS
+	int "PD secure channel retry timeout (ms)"
+	default 600000
+	help
+		Time in milliseconds after which PD retries to establish
+		secure channel with CP. Default: 600000 (10 minutes)
+
+config OSDP_PD_POLL_TIMEOUT_MS
+	int "PD poll timeout (ms)"
+	default 50
+	help
+		Maximum time in milliseconds PD waits for a poll command
+		from CP before going offline. Default: 50ms
+
+config OSDP_PD_SC_TIMEOUT_MS
+	int "PD secure channel timeout (ms)"
+	default 8000
+	help
+		Time in milliseconds after which PD considers secure channel
+		to be inactive. Default: 8000 (8 seconds)
+
+config OSDP_PD_ONLINE_TOUT_MS
+	int "PD online timeout (ms)"
+	default 8000
+	help
+		Time in milliseconds after which CP considers PD to be offline
+		if no response received. Default: 8000 (8 seconds)
+
+config OSDP_RESP_TOUT_MS
+	int "Response timeout (ms)"
+	default 200
+	help
+		Maximum time in milliseconds to wait for a response after
+		sending a command. Default: 200ms
+
+config OSDP_CMD_RETRY_WAIT_MS
+	int "Command retry wait time (ms)"
+	default 800
+	help
+		Time in milliseconds to wait before retrying a failed command.
+		Default: 800ms
+
+config OSDP_ONLINE_RETRY_WAIT_MAX_MS
+	int "Maximum online retry wait (ms)"
+	default 300000
+	help
+		Maximum time in milliseconds to wait before retrying to bring
+		a PD online. Default: 300000 (5 minutes)
+
+endmenu # OSDP Protocol Timings
+
+menu "OSDP Protocol Limits"
+
+config OSDP_CMD_MAX_RETRIES
+	int "Maximum command retries"
+	default 8
+	help
+		Maximum number of times to retry a failed command before
+		giving up. Default: 8
+
+config OSDP_FILE_ERROR_RETRY_MAX
+	int "Maximum file transfer error retries"
+	default 10
+	help
+		Maximum number of times to retry a failed file transfer
+		operation. Default: 10
+
+config OSDP_PD_MAX
+	int "Maximum number of PDs"
+	default 126
+	range 1 126
+	help
+		Maximum number of PDs that can be managed by a CP.
+		OSDP protocol allows addresses 0-126. Default: 126
+
+config OSDP_PD_NAME_MAXLEN
+	int "Maximum PD name length"
+	default 16
+	help
+		Maximum length of PD name string. Default: 16
+
+endmenu # OSDP Protocol Limits
+
+menu "OSDP Memory Configuration"
+
+config OSDP_PACKET_BUF_SIZE
+	int "OSDP packet buffer size"
+	default 1024
+	help
+		Maximum OSDP packet size. Must be at least 256 bytes.
+		For optimal zero-copy performance, set to 1024 (max OSDP packet).
+
+config OSDP_MINIMUM_PACKET_SIZE
+	int "Minimum OSDP packet size"
+	default 128
+	help
+		Minimum expected OSDP packet size for validation.
+		Default: 128 bytes
+
+config OSDP_RX_RB_SIZE
+	int "RX ring buffer size"
+	default 512
+	help
+		Size of receive ring buffer for byte-by-byte reception mode.
+		Only used when zero-copy mode is disabled. Default: 512 bytes
+
+config OSDP_CP_CMD_POOL_SIZE
+	int "CP command pool size"
+	default 4
+	help
+		Number of command slots in the CP command pool.
+		Larger values allow queuing more commands. Default: 4
+
+endmenu # OSDP Memory Configuration
+
+menu "OSDP Internal Constants"
+
+config OSDP_CMD_ID_OFFSET
+	int "Command ID offset"
+	default 5
+	help
+		Offset of command ID field in OSDP packet. Default: 5
+
+config OSDP_PCAP_LINK_TYPE
+	int "PCAP link type for packet capture"
+	default 162
+	help
+		Link type identifier for OSDP PCAP files. Default: 162
+
+endmenu # OSDP Internal Constants
 
 config OSDP_UART_BUFFER_LENGTH
 	int "OSDP UART buffer length"
@@ -45,3 +250,4 @@ config APP_LINK_WITH_OSDP
 	default y
 	depends on LIBOSDP
 
+endif # LIBOSDP

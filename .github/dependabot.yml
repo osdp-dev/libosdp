@@ -1,0 +1,33 @@
+# Dependabot keeps our exposed dependency surfaces current.
+# The git submodule (utils -> osdp-dev/c-utils) is intentionally excluded:
+# its pointer is bumped manually under controlled review.
+version: 2
+updates:
+  # CI: third-party GitHub Actions used across all workflows
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "CI"
+    groups:
+      github-actions:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Python: binding package, docs build, and pytest requirements
+  - package-ecosystem: "pip"
+    directories:
+      - "/python"
+      - "/doc"
+      - "/tests/pytest"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "python"
+    groups:
+      pip:
+        update-types:
+          - "minor"
+          - "patch"
