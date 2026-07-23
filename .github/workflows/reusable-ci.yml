@@ -124,7 +124,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           submodules: recursive
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
       - name: Run pytest suite
@@ -147,7 +147,7 @@ jobs:
             ~/.cache/pip
             ~/.platformio/.cache
           key: ${{ runner.os }}-pio
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
       - name: Install PlatformIO Core

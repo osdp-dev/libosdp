@@ -182,7 +182,7 @@ jobs:
         uses: docker/setup-buildx-action@v4
       - name: Set up Python
         if: matrix.platform != 'linux'
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       - name: Build wheels with cibuildwheel
@@ -252,7 +252,7 @@ jobs:
           ref: ${{ github.ref }}
           submodules: recursive
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: '3.11'
       - name: Install PlatformIO CLI
