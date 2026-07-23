@@ -1119,6 +1119,15 @@ enum osdp_notification_type {
 	 * reconnect that reports the same identity is silent.
 	 */
 	OSDP_NOTIFICATION_PD_ID,
+	/**
+	 * TRS card session state change (CP only). Payload: `trs_status`
+	 * (@ref osdp_notification_trs_status).
+	 *
+	 * Fires when the reader enters transparent mode (OPENED), and once more
+	 * when the session ends, either because a STOP was honoured (CLOSED) or
+	 * because it could not be established or was cut short (FAILED).
+	 */
+	OSDP_NOTIFICATION_TRS_STATUS,
 };
 
 /**
@@ -1179,7 +1188,262 @@ enum osdp_cmd_e {
 	OSDP_CMD_PIVDATA, /**< Retrieve PIV object data command */
 	OSDP_CMD_GENAUTH, /**< General authenticate command */
 	OSDP_CMD_CRAUTH, /**< Challenge/response authenticate command */
+	OSDP_CMD_XWR, /**< Transparent mode command */
 	OSDP_CMD_SENTINEL /**< Max command value */
+};
+
+/**
+ * @brief Transparent Reader Support (TRS) commands a CP application can issue to
+ * a smart card in the reader. Set in @c struct osdp_trs_cmd::command and
+ * submitted as an @c OSDP_CMD_XWR command.
+ *
+ * A card session is the band of commands between an @c OSDP_TRS_CMD_START and
+ * the matching @c OSDP_TRS_CMD_STOP, in submission order:
+ *
+ *     START, SEND_APDU, SEND_APDU, ..., STOP
+ *
+ * The library owns the wire handshakes the band implies (it negotiates
+ * transparent mode on START, and disconnects the card and restores the reader
+ * on STOP) and reports the session's progress as @c OSDP_NOTIFICATION_TRS_STATUS
+ * events. The band is enforced when a command is submitted, so misuse is an
+ * error from osdp_cp_submit_command() and never a command that runs and then
+ * has to be taken back: inside a band only TRS commands are accepted (anything
+ * else would interrupt the card transaction), and a card command is refused
+ * outside one (it would reach a reader that is not in transparent mode).
+ *
+ * To abandon a session and the APDUs still queued for it, flush the command
+ * queue (osdp_cp_flush_commands()) and then submit @c OSDP_TRS_CMD_STOP; the
+ * flushed APDUs are reported to the app individually. If the session ends on its
+ * own before its STOP is reached -- the reader rejects transparent mode, say --
+ * the APDUs left in the band are completed @c OSDP_COMPLETION_FLUSHED and an
+ * @c OSDP_TRS_SESSION_FAILED notification says why.
+ *
+ * Knowing @b when to open a band is the reader's job: a smart card entering
+ * the field is announced as an @c OSDP_EVENT_TRS card-info/card-present event,
+ * either spontaneously (some readers report cards in their default mode) or
+ * because a presence scan (osdp_cp_trs_scan_enable()) is briefly holding the
+ * reader in transparent mode. Either way, react by submitting a START; while
+ * the scan has the reader in transparent mode the new band adopts it directly,
+ * with no extra mode negotiation on the wire.
+ */
+enum osdp_trs_cmd_e {
+	OSDP_TRS_CMD_START = 1, /**< Open a card session */
+	OSDP_TRS_CMD_STOP, /**< Close the card session opened by START */
+	OSDP_TRS_CMD_SEND_APDU, /**< Send a C-APDU to the card */
+	OSDP_TRS_CMD_ENTER_PIN, /**< EMV PIN entry */
+	OSDP_TRS_CMD_CARD_SCAN, /**< Scan for a card in the field */
+};
+
+/**
+ * @brief Life-cycle of a TRS card session, reported in the `trs_status`
+ * payload of an @c OSDP_NOTIFICATION_TRS_STATUS notification.
+ */
+enum osdp_trs_session_status_e {
+	OSDP_TRS_SESSION_OPENED = 0, /**< Reader is in transparent mode; APDUs flow */
+	OSDP_TRS_SESSION_CLOSED,     /**< STOP honoured; reader restored */
+	OSDP_TRS_SESSION_FAILED,     /**< PD refused transparent mode, or the
+				      *   session was aborted by a link error */
+	OSDP_TRS_SCAN_SUSPENDED, /**< A presence-scan probe was refused by
+				      *   the reader; probing continues with
+				      *   exponential backoff */
+};
+
+/**
+ * @brief Cadence of the background card presence scan
+ * (osdp_cp_trs_scan_enable()). A zero in any field selects that parameter's
+ * built-in default.
+ */
+struct osdp_trs_scan_params {
+	/**
+	 * Time spent in the reader's default mode between probes, where
+	 * ordinary credential reads work (default 100 ms). Restarted by
+	 * ordinary card/keypad activity so a probe never cuts into an
+	 * in-progress read.
+	 */
+	uint16_t mode0_dwell_ms;
+	/**
+	 * Time spent per probe in transparent mode watching for a smart-card
+	 * sighting (default 100 ms).
+	 */
+	uint16_t mode1_dwell_ms;
+	/**
+	 * Once a probe sights a card, transparent mode is held this long
+	 * (default 500 ms) waiting for the app to open a band in response;
+	 * a band submitted within the hold adopts the reader as-is, with no
+	 * extra mode negotiation on the wire.
+	 */
+	uint16_t hold_ms;
+};
+
+/**
+ * @brief Max APDU length carried in a TRS command or reply. The default
+ * covers a short-APDU maximum (255 data + SW1SW2 + margin), which is what
+ * PIV-class certificate reads move per GET RESPONSE chunk. Overridable at
+ * build time; note that osdp_cmd/osdp_event embed a buffer of this size, so
+ * shrinking it is how constrained builds reclaim that memory. Actually
+ * usable APDU size is further bound by the negotiated packet size (see
+ * OSDP_PACKET_BUF_SIZE, default 256 -- build with 512 for full-size
+ * chunks); oversized submissions are rejected up front.
+ */
+#ifndef OSDP_TRS_APDU_MAX_LEN
+#define OSDP_TRS_APDU_MAX_LEN 258
+#endif
+/** @brief Max CSN length carried in a TRS card-info reply */
+#define OSDP_TRS_CSN_MAX_LEN 32
+/** @brief Max protocol-data length carried in a TRS card-info reply */
+#define OSDP_TRS_PROTOCOL_DATA_MAX_LEN 64
+
+struct osdp_trs_apdu {
+	uint16_t length; /**< APDU length in bytes */
+	uint8_t data[OSDP_TRS_APDU_MAX_LEN]; /**< APDU bytes */
+};
+
+/** @brief Encoding of the PIN digits the reader inserts into the C-APDU */
+enum osdp_trs_pin_format_e {
+	OSDP_TRS_PIN_FORMAT_BINARY = 1, /**< PIN digits as binary values */
+	OSDP_TRS_PIN_FORMAT_BCD, /**< PIN digits as packed BCD */
+	OSDP_TRS_PIN_FORMAT_ASCII, /**< PIN digits as ASCII characters */
+};
+
+/**
+ * @brief Conditions that end PIN entry; OR them into
+ * @c osdp_trs_pin_entry::complete_on.
+ */
+enum osdp_trs_pin_complete_e {
+	OSDP_TRS_PIN_COMPLETE_ON_MAX_DIGITS = 1 << 0, /**< max_digits entered */
+	OSDP_TRS_PIN_COMPLETE_ON_KEY        = 1 << 1, /**< Validation (enter) key pressed */
+	OSDP_TRS_PIN_COMPLETE_ON_TIMEOUT    = 1 << 2, /**< Entry timed out */
+};
+
+/**
+ * @brief TRS secure PIN entry request: the reader prompts the user for their
+ * PIN, inserts it into @a apdu as described by the layout fields below, and
+ * sends the result to the card.
+ *
+ * APDU positions are expressed in bits from the start of the APDU payload.
+ * Not every position is expressible on the wire: it must be byte-aligned (up
+ * to 120 bits) or fall within the first 15 bits; anything else fails the
+ * command submission.
+ */
+struct osdp_trs_pin_entry {
+	uint8_t timeout_initial; /**< First-digit timeout in seconds (0 = reader default) */
+	uint8_t timeout_digit; /**< Per-digit timeout in seconds after the first key */
+
+	/**
+	 * The PIN block: the region of the C-APDU where the reader formats
+	 * and inserts the entered PIN.
+	 */
+	struct {
+		enum osdp_trs_pin_format_e format; /**< PIN digit encoding */
+		bool right_justify; /**< Right-justify the PIN within the block
+				       *   (default: left-justified) */
+		uint16_t offset_bits; /**< Block position in the APDU payload, in bits */
+		uint8_t size_bytes; /**< Block size in bytes, after justification
+				       *   and formatting, as defined by the card
+				       *   scheme (8 for EMV/ISO 9564 PIN blocks) */
+	} pin_block;
+
+	/*
+	 * Optional slot in the C-APDU where the reader records how many PIN
+	 * digits the user entered; the app cannot pre-fill it because only
+	 * the reader knows the entered length.
+	 */
+	struct {
+		uint8_t size_bits; /**< Slot size in bits (0 = APDU has no such slot) */
+		uint16_t offset_bits; /**< Slot position in the APDU payload, in bits */
+	} pin_length_field;
+
+	uint8_t min_digits; /**< Minimum PIN length, in digits */
+	uint8_t max_digits; /**< Maximum PIN length, in digits */
+	uint32_t complete_on; /**< When PIN entry ends: OR of
+			       *   enum osdp_trs_pin_complete_e conditions */
+
+	uint8_t num_messages; /**< Number of display messages */
+	uint16_t language_id; /**< Display language identifier */
+	uint8_t msg_index; /**< Index of the message to display */
+	uint8_t teo_prologue[3]; /**< T=1 protocol prologue */
+	struct osdp_trs_apdu apdu; /**< C-APDU to send after PIN entry */
+};
+
+struct osdp_trs_cmd {
+	enum osdp_trs_cmd_e command; /**< Which TRS command; selects the union */
+	union {
+		struct osdp_trs_apdu apdu; /**< For OSDP_TRS_CMD_SEND_APDU */
+		struct osdp_trs_pin_entry pin_entry;
+	};
+};
+
+/** @brief Smart-card communication protocol reported in a TRS card-info reply */
+enum osdp_trs_card_protocol_e {
+	OSDP_TRS_CARD_PROTOCOL_CONTACT = 1, /**< ISO 7816 contact (T=0/T=1) */
+	OSDP_TRS_CARD_PROTOCOL_CONTACTLESS, /**< ISO 14443 A/B contactless */
+};
+
+struct osdp_trs_card_info {
+	uint8_t reader;                         /**< Reader number (0 = first, 1 = second) */
+	enum osdp_trs_card_protocol_e protocol; /**< Card communication protocol */
+	uint8_t csn_len;                        /**< Length of @a csn in bytes */
+	uint8_t csn[OSDP_TRS_CSN_MAX_LEN];      /**< Card serial number */
+	uint8_t protocol_data_len;              /**< Length of @a protocol_data in bytes */
+	/** ATR (contact) or ATS/ATQB (contactless) */
+	uint8_t protocol_data[OSDP_TRS_PROTOCOL_DATA_MAX_LEN];
+};
+
+/** @brief Smart-card presence (and interface) reported in a TRS card-present reply */
+enum osdp_trs_card_status_e {
+	OSDP_TRS_CARD_NOT_PRESENT = 1, /**< No card detected */
+	OSDP_TRS_CARD_PRESENT, /**< Card present; interface not specified */
+	OSDP_TRS_CARD_PRESENT_CONTACTLESS, /**< Card present on the contactless (ISO 14443) interface */
+	OSDP_TRS_CARD_PRESENT_CONTACT, /**< Card present on the contact (ISO 7816) interface */
+};
+
+struct osdp_trs_card_present {
+	uint8_t reader; /**< Reader number (0 = first, 1 = second) */
+	enum osdp_trs_card_status_e status; /**< Smart-card presence status */
+};
+
+struct osdp_trs_card_data {
+	uint8_t reader; /**< Reader number (0 = first, 1 = second) */
+	uint8_t status; /**< Result of the APDU exchange as reported by the reader
+	                            *   (reader-defined; not standardized by OSDP) */
+	struct osdp_trs_apdu apdu; /**< R-APDU returned by the card */
+};
+
+struct osdp_trs_pin_complete {
+	uint8_t reader; /**< Reader number (0 = first, 1 = second) */
+	uint8_t status; /**< Result of the secure PIN entry sequence as reported by the
+	             *   reader (reader-defined; not standardized by OSDP) */
+	uint8_t tries; /**< Number of PIN-entry attempts */
+};
+
+struct osdp_trs_error {
+	uint8_t code; /**< Error/NAK condition from the reader or card
+	           *   (reader-defined; not standardized by OSDP) */
+};
+
+/**
+ * @brief Transparent Reader Support (TRS) replies delivered to a CP application
+ * as an @c OSDP_EVENT_TRS event, or submitted by a PD application (via
+ * @c osdp_pd_submit_event) in answer to a TRS command. The @a reply field
+ * selects the active union member.
+ */
+enum osdp_trs_reply_e {
+	OSDP_TRS_REPLY_CARD_INFO = 1, /**< A card entered the field (CSN, protocol) */
+	OSDP_TRS_REPLY_CARD_PRESENT,  /**< Card-present status for a reader */
+	OSDP_TRS_REPLY_CARD_DATA,     /**< R-APDU returned by the card */
+	OSDP_TRS_REPLY_PIN_COMPLETE,  /**< PIN entry completed */
+	OSDP_TRS_REPLY_ERROR,         /**< Transparent-mode error / NAK from reader */
+};
+
+struct osdp_trs_reply {
+	enum osdp_trs_reply_e reply; /**< Which TRS reply; selects the union */
+	union {
+		struct osdp_trs_card_info card_info;
+		struct osdp_trs_card_present card_present;
+		struct osdp_trs_card_data card_data;
+		struct osdp_trs_pin_complete pin_complete;
+		struct osdp_trs_error error;
+	};
 };
 
 /**
@@ -1206,6 +1470,13 @@ struct osdp_notification_pd_status {
 };
 
 /**
+ * @brief Payload for OSDP_NOTIFICATION_TRS_STATUS.
+ */
+struct osdp_notification_trs_status {
+	enum osdp_trs_session_status_e status; /**< Session life-cycle state */
+};
+
+/**
  * @brief LibOSDP notification payload.
  *
  * Carries a libosdp-synthesized notification to the application. The same
@@ -1221,6 +1492,7 @@ struct osdp_notification {
 		struct osdp_notification_pd_status pd_status; /**< PD_STATUS */
 		struct osdp_mp_notification mp; /**< MP_* */
 		struct osdp_pd_id pd_id; /**< PD_ID */
+		struct osdp_notification_trs_status trs_status; /**< TRS_STATUS */
 	};
 };
 
@@ -1270,6 +1542,7 @@ struct osdp_cmd {
 		struct osdp_cmd_tdset tdset;      /**< Time and date set command structure */
 		struct osdp_cmd_pivdata pivdata;  /**< PIV data retrieval command structure */
 		struct osdp_cmd_auth auth;        /**< GENAUTH/CRAUTH command structure */
+		struct osdp_trs_cmd trs;          /**< Transparent mode command structure */
 	};
 };
 
@@ -1523,6 +1796,7 @@ enum osdp_event_type {
 	OSDP_EVENT_PIVDATAR, /**< PIV data reply event */
 	OSDP_EVENT_GENAUTHR, /**< General authenticate reply event */
 	OSDP_EVENT_CRAUTHR, /**< Challenge/response authenticate reply event */
+	OSDP_EVENT_TRS, /**< Transparent mode response event */
 	OSDP_EVENT_SENTINEL /**< Max event value */
 };
 
@@ -1545,6 +1819,7 @@ struct osdp_event {
 		struct osdp_event_piv_reply piv_reply; /**< Smartcard/PIV reply event structure */
 		struct osdp_status_report status;    /**< Status report event structure */
 		struct osdp_notification notif;      /**< LibOSDP notification (CP mode) */
+		struct osdp_trs_reply trs;           /**< Transparent mode reply event structure */
 	};
 };
 
@@ -1847,6 +2122,53 @@ int osdp_cp_submit_command(osdp_t *ctx, int pd, const struct osdp_cmd *cmd);
  */
 OSDP_EXPORT
 int osdp_cp_flush_commands(osdp_t *ctx, int pd);
+
+/**
+ * @brief Enable a background card presence scan on a TRS-capable PD, for
+ * readers that do not announce smart cards while in their default mode.
+ *
+ * While enabled and no card session (band) is open, the library time-slices
+ * the reader: it stays in the default mode for @a mode0_dwell_ms (ordinary
+ * credential reads keep working), then holds transparent mode for
+ * @a mode1_dwell_ms watching for a card sighting, and repeats. A sighting is
+ * delivered as an @c OSDP_EVENT_TRS event and transparent mode is held for
+ * @a hold_ms so the band the app opens in response adopts the reader without
+ * renegotiating the mode. See @ref osdp_trs_scan_params.
+ *
+ * The scan pauses by itself while a band or file transfer is in progress and
+ * resumes after. If the reader refuses a probe, an
+ * @c OSDP_TRS_SCAN_SUSPENDED notification is raised and probing continues
+ * with exponential backoff, so a reader that is only transiently unwilling
+ * recovers on its own; call osdp_cp_trs_scan_disable() to stop entirely.
+ *
+ * Readers that announce cards spontaneously in their default mode do not
+ * need this: their sightings are forwarded as @c OSDP_EVENT_TRS events as-is.
+ *
+ * @param ctx OSDP context
+ * @param pd PD offset (0-indexed) of this PD in `osdp_pd_info_t *` passed to
+ * osdp_cp_setup()
+ * @param params Scan cadence; NULL (or zero fields) selects the defaults
+ *
+ * @retval 0 on success
+ * @retval -1 on failure (TRS support not compiled in, or bad args)
+ */
+OSDP_EXPORT
+int osdp_cp_trs_scan_enable(osdp_t *ctx, int pd,
+			    const struct osdp_trs_scan_params *params);
+
+/**
+ * @brief Disable the background card presence scan on a PD. If a probe is
+ * in flight, the reader is restored to its default mode first.
+ *
+ * @param ctx OSDP context
+ * @param pd PD offset (0-indexed) of this PD in `osdp_pd_info_t *` passed to
+ * osdp_cp_setup()
+ *
+ * @retval 0 on success
+ * @retval -1 on failure (TRS support not compiled in, or bad args)
+ */
+OSDP_EXPORT
+int osdp_cp_trs_scan_disable(osdp_t *ctx, int pd);
 
 /**
  * @brief Get PD ID information as reported by the PD. Calling this method

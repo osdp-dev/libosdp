@@ -179,6 +179,7 @@ lib_includes = [
     "src/osdp_piv.h",
     "src/osdp_bio.h",
     "src/osdp_metrics.h",
+    "src/osdp_trs.h",
     "src/crypto/tinyaes_src.h",
 ]
 
@@ -203,6 +204,9 @@ other_files = [
     "src/osdp_diag.h",
     "utils/include/utils/pcap_gen.h",
     "utils/src/pcap_gen.c",
+
+    # Optional when TRS is enabled
+    "src/osdp_trs.c",
 ]
 
 # LICENSE lives at the repo root; vendor a copy so wheel/sdist builds
@@ -211,6 +215,8 @@ license_file = "LICENSE"
 
 definitions = [
     "OPT_OSDP_PACKET_TRACE",
+    # osdp_sys exposes no TRS bindings yet; keep TRS out of the extension.
+    # "OPT_BUILD_OSDP_TRS",
     # "OPT_OSDP_DATA_TRACE",
     # "OPT_OSDP_SKIP_MARK_BYTE",
 ]
@@ -228,6 +234,11 @@ if ("OPT_OSDP_PACKET_TRACE" in definitions or
     source_files += [
         "src/osdp_diag.c",
         "utils/src/pcap_gen.c",
+    ]
+
+if "OPT_BUILD_OSDP_TRS" in definitions:
+    source_files += [
+        "src/osdp_trs.c",
     ]
 
 source_files = add_prefix_to_path(source_files, "vendor")

@@ -14,6 +14,7 @@
     "srcFilter": [
       "+<**/*.c>",
       "-<osdp_diag.c>",
+      "-<osdp_trs.c>",
       "-<crypto/mbedtls.c>",
       "-<crypto/openssl.c>",
       "+<../utils/src/disjoint_set.c>",

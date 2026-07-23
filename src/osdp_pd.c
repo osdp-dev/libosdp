@@ -10,6 +10,7 @@
 #include "osdp_bio.h"
 #include "osdp_diag.h"
 #include "osdp_metrics.h"
+#include "osdp_trs.h"
 
 #ifndef OPT_OSDP_STATIC
 #include <stdlib.h>
@@ -193,6 +194,12 @@ static int pd_translate_event(struct osdp_pd *pd,
 		break;
 	case OSDP_EVENT_CRAUTHR:
 		reply_code = REPLY_CRAUTHR;
+		break;
+	case OSDP_EVENT_TRS:
+		/* Deferred TRS reply: a card-data/APDU response the app
+		 * submitted after its CMD_XWR callback returned. Delivered as an
+		 * unsolicited REPLY_XRD on this poll. */
+		reply_code = REPLY_XRD;
 		break;
 	default:
 		LOG_ERR("Unknown event type %d", event->type);
@@ -1090,6 +1097,48 @@ static int pd_decode_command(struct osdp_pd *pd, uint8_t *buf, int len)
 		ret = OSDP_PD_ERR_NONE;
 		break;
 	}
+	case CMD_XWR: {
+		const struct osdp_event *trs_event;
+		int trs_ret;
+
+		trs_ret = osdp_trs_cmd_decode(pd, &cmd, buf + pos, len);
+		if (trs_ret < 0) {
+			break; /* NAK */
+		}
+		if (trs_ret == OSDP_TRS_DECODE_ACK) {
+			/* library-handled command (mode set / card terminate):
+			 * acknowledge per spec Table 36/42, no app payload */
+			pd->reply_id = REPLY_ACK;
+			ret = OSDP_PD_ERR_NONE;
+			break;
+		}
+		if (trs_ret == OSDP_TRS_DECODE_MODE_REPORT) {
+			/* mode-read (Table 39): reply with the current mode */
+			pd->reply_id = REPLY_XRD;
+			ret = OSDP_PD_ERR_NONE;
+			break;
+		}
+		/* OSDP_TRS_DECODE_TO_APP: mode-1 command; hand it to the app */
+		if (!do_command_callback(pd, &cmd)) {
+			ret = OSDP_PD_ERR_REPLY;
+			break;
+		}
+		/* Only consume the app's TRS answer; an older non-TRS event at
+		 * the queue head must ride out on a poll, not be eaten here. */
+		if (pd_event_peek(pd, &trs_event) == 0 &&
+		    trs_event->type == OSDP_EVENT_TRS) {
+			/* app answered synchronously: reply now (fast card) */
+			pd_event_dequeue(pd, &trs_event);
+			pd->active_event = trs_event;
+			pd->reply_id = REPLY_XRD;
+		} else {
+			/* app deferred: ACK ("working"). The R-APDU rides out as
+			 * a REPLY_XRD on a later poll once the app submits it. */
+			pd->reply_id = REPLY_ACK;
+		}
+		ret = OSDP_PD_ERR_NONE;
+		break;
+	}
 	case CMD_KEYSET:
 		if (len != CMD_KEYSET_DATA_LEN) {
 			break;
@@ -1450,6 +1499,14 @@ static int pd_build_reply(struct osdp_pd *pd, uint8_t *buf, int max_len)
 		break;
 	case REPLY_FTSTAT:
 		ret = osdp_file_cmd_stat_build(pd, buf + len, max_len);
+		if (ret <= 0) {
+			break;
+		}
+		len += ret;
+		ret = OSDP_PD_ERR_NONE;
+		break;
+	case REPLY_XRD:
+		ret = osdp_trs_reply_build(pd, buf + len, max_len - len);
 		if (ret <= 0) {
 			break;
 		}

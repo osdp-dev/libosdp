@@ -61,6 +61,23 @@
 #define OSDP_ONLINE_RETRY_WAIT_MAX_MS           (300 * 1000u)
 #endif
 
+/* TRS presence-scan cadence defaults (see osdp_cp_trs_scan_enable) */
+#ifndef OSDP_TRS_SCAN_MODE0_DWELL_MS
+#define OSDP_TRS_SCAN_MODE0_DWELL_MS            (100)
+#endif
+
+#ifndef OSDP_TRS_SCAN_MODE1_DWELL_MS
+#define OSDP_TRS_SCAN_MODE1_DWELL_MS            (100)
+#endif
+
+#ifndef OSDP_TRS_SCAN_HOLD_MS
+#define OSDP_TRS_SCAN_HOLD_MS                   (500)
+#endif
+
+#ifndef OSDP_TRS_SCAN_BACKOFF_MAX_MS
+#define OSDP_TRS_SCAN_BACKOFF_MAX_MS            (5 * 1000u)
+#endif
+
 /* Protocol Limits */
 #ifndef OSDP_CMD_MAX_RETRIES
 #define OSDP_CMD_MAX_RETRIES                    (8)

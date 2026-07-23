@@ -142,6 +142,9 @@ void test_write_junit(struct test *t, const char *path);
 int test_setup_devices(struct test *t, osdp_t **cp, osdp_t **pd);
 int test_setup_devices_ext(struct test *t, osdp_t **cp, osdp_t **pd,
 			   uint32_t cp_flags, uint32_t pd_flags);
+int test_setup_devices_plain(struct test *t, osdp_t **cp, osdp_t **pd,
+			     uint32_t cp_flags, uint32_t pd_flags);
+bool test_wait_for_online(osdp_t *cp_ctx, int pd_idx, int timeout_sec);
 
 /*
  * Channel interceptor: a registered hook sees every frame crossing the mock
@@ -195,6 +198,8 @@ void run_async_fuzz_tests(struct test *t);
 void run_codec_fuzz_tests(struct test *t);
 void run_sc_tests(struct test *t);
 void run_vector_tests(struct test *t);
+void run_trs_tests(struct test *t); /* no-op unless OPT_BUILD_OSDP_TRS */
+void run_trs_emu_tests(struct test *t); /* no-op unless OPT_BUILD_OSDP_TRS */
 void run_pd_zc_tests(struct test *t); /* no-op unless OPT_OSDP_RX_ZERO_COPY */
 
 #define printf(...) test_printf(__VA_ARGS__)

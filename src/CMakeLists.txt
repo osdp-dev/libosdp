@@ -36,6 +36,10 @@ if (OPT_OSDP_STATIC)
 	list(APPEND LIB_OSDP_DEFINITIONS "-DOPT_OSDP_STATIC=1")
 endif()
 
+if (OPT_BUILD_OSDP_TRS)
+	list(APPEND LIB_OSDP_DEFINITIONS "-DOPT_BUILD_OSDP_TRS")
+endif()
+
 # Crypto backend selection driven by OPT_OSDP_CRYPTO_BACKEND:
 #   auto    - probe openssl, then mbedtls, else fall back to bundled tinyaes
 #   openssl - require OpenSSL (hard-fail if missing)
@@ -93,6 +97,12 @@ list(APPEND LIB_OSDP_SOURCES
 if (OPT_OSDP_PACKET_TRACE OR OPT_OSDP_DATA_TRACE)
 	list(APPEND LIB_OSDP_SOURCES
 		${CMAKE_CURRENT_SOURCE_DIR}/osdp_diag.c
+	)
+endif()
+
+if (OPT_BUILD_OSDP_TRS)
+	list(APPEND LIB_OSDP_SOURCES
+		${CMAKE_CURRENT_SOURCE_DIR}/osdp_trs.c
 	)
 endif()
 

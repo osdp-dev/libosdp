@@ -81,12 +81,17 @@ jobs:
 
   Test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # TRS is off by default; run the suite both ways so the transparent
+        # reader sources and their tests are built and exercised too.
+        trs: [ OFF, ON ]
     steps:
     - uses: actions/checkout@v7
       with:
         submodules: recursive
     - name: Configure
-      run: cmake -DCMAKE_BUILD_TYPE=Debug .
+      run: cmake -DCMAKE_BUILD_TYPE=Debug -DOPT_BUILD_OSDP_TRS=${{ matrix.trs }} .
     - name: Run unit-tests
       run: cmake --build . --parallel 7 --target check
 
