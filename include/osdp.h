@@ -1235,6 +1235,13 @@ enum osdp_cmd_e {
  * else would interrupt the card transaction), and a card command is refused
  * outside one (it would reach a reader that is not in transparent mode).
  *
+ * A reader may acknowledge a card command and answer it on a later poll, as a
+ * slow card or a PIN entry requires. The command then completes when its
+ * answer arrives, and the band waits for it before sending the next card
+ * command: a reader that stays silent for @c OSDP_TRS_ANSWER_TOUT_MS fails the
+ * command (a PIN entry waits as long as it takes), and a STOP next in the
+ * queue -- as after a flush -- gives up on it (@c OSDP_COMPLETION_FLUSHED).
+ *
  * To abandon a session and the APDUs still queued for it, flush the command
  * queue (osdp_cp_flush_commands()) and then submit @c OSDP_TRS_CMD_STOP; the
  * flushed APDUs are reported to the app individually. If the session ends on its

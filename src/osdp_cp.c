@@ -102,6 +102,54 @@ void cp_complete_engine_cmd(struct osdp_pd *pd, const struct osdp_cmd *cmd,
 	cp_cmd_free(pd, cmd);
 }
 
+/* Complete the card command whose answer the band was holding for, if any */
+static void cp_trs_settle_answer(struct osdp_pd *pd,
+				 enum osdp_completion_status status)
+{
+#ifdef OPT_BUILD_OSDP_TRS
+	const struct osdp_cmd *cmd = pd->trs.answer_cmd;
+
+	if (cmd == NULL) {
+		return;
+	}
+	pd->trs.answer_cmd = NULL;
+	cp_complete_cmd(pd, cmd, status);
+	cp_cmd_free(pd, cmd);
+#else
+	ARG_UNUSED(pd);
+	ARG_UNUSED(status);
+#endif
+}
+
+/* Whether @reply answers the card command the band is holding for */
+static bool cp_trs_reply_answers(struct osdp_pd *pd,
+				 enum osdp_trs_reply_e reply)
+{
+#ifdef OPT_BUILD_OSDP_TRS
+	const struct osdp_cmd *cmd = pd->trs.answer_cmd;
+
+	if (cmd == NULL) {
+		return false;
+	}
+	switch (reply) {
+	case OSDP_TRS_REPLY_ERROR:
+		return true;
+	case OSDP_TRS_REPLY_CARD_DATA:
+		return cmd->trs.command == OSDP_TRS_CMD_SEND_APDU;
+	case OSDP_TRS_REPLY_PIN_COMPLETE:
+		return cmd->trs.command == OSDP_TRS_CMD_ENTER_PIN;
+	case OSDP_TRS_REPLY_CARD_PRESENT:
+		return cmd->trs.command == OSDP_TRS_CMD_CARD_SCAN;
+	default:
+		return false;
+	}
+#else
+	ARG_UNUSED(pd);
+	ARG_UNUSED(reply);
+	return false;
+#endif
+}
+
 /* Which multipart family an engine-owned command's operation belongs to; the
  * tag the completion hook matches p->msg_type against. */
 static enum osdp_mp_msg_type cp_cmd_mp_type(int cmd_id)
@@ -873,6 +921,13 @@ static int cp_decode_response(struct osdp_pd *pd, uint8_t *buf, int len)
 		if (ret != OSDP_TRS_REPLY_ACTION_NONE) {
 			cp_dispatch_event(pd, &event);
 		}
+		if (pd->cmd_id == CMD_POLL &&
+		    ret != OSDP_TRS_REPLY_ACTION_NONE &&
+		    cp_trs_reply_answers(pd, event.trs.reply)) {
+			cp_trs_settle_answer(pd, trs_reply_error(pd) ?
+						 OSDP_COMPLETION_FAILED :
+						 OSDP_COMPLETION_OK);
+		}
 		ret = OSDP_CP_ERR_NONE;
 		break;
 	case REPLY_CCRYPT:
@@ -1471,12 +1526,45 @@ static void notify_trs_status(struct osdp_pd *pd,
  * turns the probe's transparent session into a band with no extra mode
  * negotiation on the wire.
  */
+/*
+ * Hold the band while a card command's answer is still to come. A STOP ends
+ * the wait, as the app is abandoning the card; so does the PD staying silent
+ * for OSDP_TRS_ANSWER_TOUT_MS -- except on a PIN entry, which waits on a
+ * person typing.
+ */
+static bool cp_trs_answer_pending(struct osdp_pd *pd)
+{
+	const struct osdp_cmd *cmd = pd->trs.answer_cmd;
+	queue_node_t *node;
+
+	if (cmd == NULL) {
+		return false;
+	}
+	if (queue_peek_first(&pd->cmd_queue, &node) == 0 &&
+	    cp_cmd_is_trs(CONTAINER_OF(node, struct osdp_cmd, _node),
+			  OSDP_TRS_CMD_STOP)) {
+		cp_trs_settle_answer(pd, OSDP_COMPLETION_FLUSHED);
+		return false;
+	}
+	if (cmd->trs.command != OSDP_TRS_CMD_ENTER_PIN &&
+	    osdp_millis_since(pd->trs.answer_tstamp) >
+		    OSDP_TRS_ANSWER_TOUT_MS) {
+		LOG_WRN("TRS: card command unanswered; moving on");
+		cp_trs_settle_answer(pd, OSDP_COMPLETION_FAILED);
+		return false;
+	}
+	return true;
+}
+
 static int cp_get_trs_command(struct osdp_pd *pd)
 {
 	const struct osdp_cmd *cmd;
 
 	switch (pd->trs.state) {
 	case TRS_STATE_XMIT:
+		if (cp_trs_answer_pending(pd)) {
+			return cp_get_poll_command(pd);
+		}
 		if (cp_cmd_dequeue(pd, &cmd)) {
 			if (pd->trs.probe && osdp_trs_probe_expired(pd)) {
 				/* Probe is done: no card transaction to
@@ -1970,6 +2058,7 @@ static void cp_state_change(struct osdp_pd *pd, enum osdp_cp_state_e next)
 		 * app is told here is the session outcome. */
 		if (cur == OSDP_CP_STATE_TRS_SETUP ||
 		    cur == OSDP_CP_STATE_TRS_RUN) {
+			cp_trs_settle_answer(pd, OSDP_COMPLETION_FLUSHED);
 			if (pd->trs.probe) {
 				/* A probe has no band to flush and no session
 				 * to report; a refusal only advances the retry
@@ -2006,6 +2095,7 @@ static void cp_state_change(struct osdp_pd *pd, enum osdp_cp_state_e next)
 			" seconds; Was in '%s' state",
 			pd->wait_ms / 1000, state_get_name(cur));
 		osdp_engines_abort(pd);
+		cp_trs_settle_answer(pd, OSDP_COMPLETION_FAILED);
 		break;
 	case OSDP_CP_STATE_SC_CHLNG:
 		osdp_phy_state_reset(pd, true);
@@ -2016,6 +2106,7 @@ static void cp_state_change(struct osdp_pd *pd, enum osdp_cp_state_e next)
 		sc_deactivate(pd);
 		notify_sc_status(pd);
 		osdp_engines_abort(pd);
+		cp_trs_settle_answer(pd, OSDP_COMPLETION_FAILED);
 		osdp_phy_state_reset(pd, true);
 		LOG_INF("PD disabled; going offline until re-enabled");
 		break;
@@ -2182,6 +2273,26 @@ static bool cp_cmd_failure_is_soft(struct osdp_pd *pd)
 	       cp_nak_code_is_app_level(pd->nak_code);
 }
 
+/*
+ * A PD that ACKs a card command is still working on it, and sends the answer
+ * on a later poll. Keep the command until then instead of completing it now.
+ */
+static bool cp_trs_park_answer(struct osdp_pd *pd)
+{
+#ifdef OPT_BUILD_OSDP_TRS
+	if (pd->cmd_id != CMD_XWR || pd->reply_id != REPLY_ACK ||
+	    pd->active_cmd == NULL || !cp_trs_cmd_is_app_owned(pd)) {
+		return false;
+	}
+	pd->trs.answer_cmd = pd->active_cmd;
+	pd->trs.answer_tstamp = osdp_millis_now();
+	return true;
+#else
+	ARG_UNUSED(pd);
+	return false;
+#endif
+}
+
 static void state_update(struct osdp_pd *pd)
 {
 	int err;
@@ -2229,6 +2340,8 @@ static void state_update(struct osdp_pd *pd)
 			 */
 			cp_own_engine_cmd(pd, pd->active_cmd,
 					  OSDP_MP_MSG_BIOREAD);
+		} else if (status && cp_trs_park_answer(pd)) {
+			/* Completes when its answer arrives on a poll */
 		} else {
 			if (status && pd->active_cmd && pd->engine_cmd &&
 			    osdp_bio_owns_cmd(pd, pd->cmd_id)) {
@@ -2777,6 +2890,7 @@ void osdp_cp_teardown(osdp_t *ctx)
 			cp_complete_engine_cmd(pd, ecmd,
 					       OSDP_COMPLETION_ABORTED);
 		}
+		cp_trs_settle_answer(pd, OSDP_COMPLETION_ABORTED);
 		cp_complete_cmd(pd, pd->active_cmd, OSDP_COMPLETION_ABORTED);
 		pd->active_cmd = NULL;
 		if (is_capture_enabled(pd)) {

@@ -65,6 +65,7 @@ struct test_trs_ctx {
 	 */
 	enum osdp_trs_card_status_e card_status;
 	int card_scan_count; /* card scans the PD app has been handed */
+	int apdu_count; /* send-APDUs the PD app has been handed */
 
 	/* CP side: card-present events counted by status */
 	int present_events;
@@ -232,6 +233,9 @@ static int trs_pd_command_callback(void *arg, struct osdp_cmd *cmd)
 
 	ctx->cmd_seen = true;
 	memcpy(&ctx->last_cmd, &cmd->trs, sizeof(ctx->last_cmd));
+	if (cmd->trs.command == OSDP_TRS_CMD_SEND_APDU) {
+		ctx->apdu_count++;
+	}
 
 	/* The app cannot act on this APDU; decline it */
 	if (ctx->nak_apdu) {
@@ -710,6 +714,85 @@ static bool test_trs_deferred_apdu()
 	}
 
 	return true;
+}
+
+static bool wait_for_apdu_count(int want, int timeout_ms)
+{
+	int waited = 0;
+
+	while (waited < timeout_ms && g_trs.apdu_count < want) {
+		usleep(10 * 1000);
+		waited += 10;
+	}
+	return g_trs.apdu_count == want;
+}
+
+/*
+ * A PD that ACKs a card command answers it on a later poll. The CP must not
+ * send the next card command until then, or that answer would come back as
+ * the reply to it; and each command completes only once it is answered.
+ */
+static bool test_trs_deferred_apdu_holds_band()
+{
+	struct osdp_cmd cmd = {
+		.id = OSDP_CMD_XWR,
+		.trs = {
+			.command = OSDP_TRS_CMD_SEND_APDU,
+			.apdu = { .length = sizeof(g_req_apdu) },
+		},
+	};
+	bool ok = false;
+
+	printf(SUB_2 "testing TRS band held for a deferred answer\n");
+
+	memcpy(cmd.trs.apdu.data, g_req_apdu, sizeof(g_req_apdu));
+	g_trs.defer = true;
+	g_trs.apdu_count = 0;
+	test_completion_reset(&g_trs.completion);
+
+	if (!test_submit_command(g_trs.cp_ctx, 0, &cmd) ||
+	    !test_submit_command(g_trs.cp_ctx, 0, &cmd)) {
+		printf(SUB_2 "Failed to submit two send-APDUs\n");
+		goto out;
+	}
+	if (!wait_for_apdu_count(1, 3000)) {
+		printf(SUB_2 "PD never received the first C-APDU\n");
+		goto out;
+	}
+	/* Several polls go by with the first answer outstanding */
+	usleep(500 * 1000);
+	if (g_trs.apdu_count != 1 ||
+	    test_completion_count(&g_trs.completion) != 0) {
+		printf(SUB_2 "CP moved on before the answer: %d C-APDUs at "
+		       "the PD, %d completions\n", g_trs.apdu_count,
+		       test_completion_count(&g_trs.completion));
+		goto out;
+	}
+
+	trs_fill_response(&g_trs);
+	test_submit_event(g_trs.pd_ctx, &g_trs.resp_event);
+	if (!test_completion_wait(&g_trs.completion, 1, 3) ||
+	    test_completion_first_status(&g_trs.completion) !=
+		    OSDP_COMPLETION_OK) {
+		printf(SUB_2 "First send-APDU did not complete OK\n");
+		goto out;
+	}
+	if (!wait_for_apdu_count(2, 3000)) {
+		printf(SUB_2 "Second C-APDU not sent after the answer\n");
+		goto out;
+	}
+
+	trs_fill_response(&g_trs);
+	test_submit_event(g_trs.pd_ctx, &g_trs.resp_event);
+	if (!test_completion_wait(&g_trs.completion, 2, 3) ||
+	    test_completion_status(&g_trs.completion) != OSDP_COMPLETION_OK) {
+		printf(SUB_2 "Second send-APDU did not complete OK\n");
+		goto out;
+	}
+	ok = true;
+out:
+	g_trs.defer = false;
+	return ok;
 }
 
 /*
@@ -2490,6 +2573,7 @@ void run_trs_tests(struct test *t)
 	result &= test_trs_pin_entry_layout_unrepresentable();
 	result &= test_trs_apdu_exchange();
 	result &= test_trs_deferred_apdu();
+	result &= test_trs_deferred_apdu_holds_band();
 	result &= test_trs_apdu_nak_keeps_session();
 	result &= test_trs_apdu_error_reply_fails_cmd();
 	result &= test_trs_card_present();

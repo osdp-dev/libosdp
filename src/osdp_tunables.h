@@ -61,6 +61,12 @@
 #define OSDP_TRS_SCAN_BACKOFF_MAX_MS            (5 * 1000u)
 #endif
 
+/* How long the CP holds a TRS band for the answer to a card command the PD
+ * acknowledged ("working") instead of answering at once. */
+#ifndef OSDP_TRS_ANSWER_TOUT_MS
+#define OSDP_TRS_ANSWER_TOUT_MS                 (5 * 1000u)
+#endif
+
 /* Protocol Limits */
 #ifndef OSDP_CMD_MAX_RETRIES
 #define OSDP_CMD_MAX_RETRIES                    (8)
