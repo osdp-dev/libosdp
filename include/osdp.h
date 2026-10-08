@@ -1143,6 +1143,7 @@ enum osdp_notification_type {
 	 * because it could not be established or was cut short (FAILED).
 	 */
 	OSDP_NOTIFICATION_TRS_STATUS,
+	OSDP_NOTIFICATION_SENTINEL /**< Max notification value */
 };
 
 /**
