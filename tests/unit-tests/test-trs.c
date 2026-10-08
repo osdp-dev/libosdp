@@ -69,6 +69,10 @@ struct test_trs_ctx {
 	/* CP side: card-present events counted by status */
 	int present_events;
 	int absent_events;
+
+	/* PD side: OSDP_NOTIFICATION_TRS_STATUS seen, in order */
+	enum osdp_trs_session_status_e pd_status[8];
+	int pd_status_count;
 };
 
 static struct test_trs_ctx g_trs = { 0 };
@@ -189,10 +193,39 @@ static bool wait_for_trs_status(enum osdp_trs_session_status_e want,
 	return false;
 }
 
+/* Wait until the PD app has been told exactly @want, in order */
+static bool wait_for_pd_statuses(const enum osdp_trs_session_status_e *want,
+				 int n, int timeout_ms)
+{
+	int waited = 0;
+
+	while (waited < timeout_ms && g_trs.pd_status_count < n) {
+		usleep(10 * 1000);
+		waited += 10;
+	}
+	if (g_trs.pd_status_count != n ||
+	    memcmp(g_trs.pd_status, want, n * sizeof(*want)) != 0) {
+		printf(SUB_2 "PD told %d TRS statuses; want %d:",
+		       g_trs.pd_status_count, n);
+		for (int i = 0; i < g_trs.pd_status_count; i++) {
+			printf(" %d", g_trs.pd_status[i]);
+		}
+		printf("\n");
+		return false;
+	}
+	return true;
+}
+
 static int trs_pd_command_callback(void *arg, struct osdp_cmd *cmd)
 {
 	struct test_trs_ctx *ctx = arg;
 
+	if (cmd->id == OSDP_CMD_NOTIFICATION &&
+	    cmd->notif.type == OSDP_NOTIFICATION_TRS_STATUS &&
+	    ctx->pd_status_count < (int)ARRAY_SIZEOF(ctx->pd_status)) {
+		ctx->pd_status[ctx->pd_status_count++] =
+			cmd->notif.trs_status.status;
+	}
 	if (cmd->id != OSDP_CMD_XWR) {
 		return 0;
 	}
@@ -244,10 +277,12 @@ static int setup_test_environment_ex(struct test *t, bool plaintext)
 
 	if (plaintext) {
 		rc = test_setup_devices_plain(t, &g_trs.cp_ctx, &g_trs.pd_ctx,
-					      OSDP_FLAG_ENABLE_NOTIFICATION, 0);
+					      OSDP_FLAG_ENABLE_NOTIFICATION,
+					      OSDP_FLAG_ENABLE_NOTIFICATION);
 	} else {
 		rc = test_setup_devices_ext(t, &g_trs.cp_ctx, &g_trs.pd_ctx,
-					    OSDP_FLAG_ENABLE_NOTIFICATION, 0);
+					    OSDP_FLAG_ENABLE_NOTIFICATION,
+					    OSDP_FLAG_ENABLE_NOTIFICATION);
 	}
 	if (rc) {
 		printf(SUB_1 "Failed to setup devices!\n");
@@ -531,9 +566,13 @@ static bool test_trs_session_start()
 {
 	printf(SUB_2 "testing TRS session start\n");
 
+	const enum osdp_trs_session_status_e pd_want[] = {
+		OSDP_TRS_SESSION_OPENED,
+	};
 	struct osdp_cmd cmd;
 
 	g_trs.status_seen = false;
+	g_trs.pd_status_count = 0;
 
 	if (submit_trs_cmd(&cmd, OSDP_TRS_CMD_START)) {
 		printf(SUB_2 "Failed to submit TRS start\n");
@@ -543,7 +582,7 @@ static bool test_trs_session_start()
 		printf(SUB_2 "TRS session-opened notification not received\n");
 		return false;
 	}
-	return true;
+	return wait_for_pd_statuses(pd_want, ARRAY_SIZEOF(pd_want), 1000);
 }
 
 static bool test_trs_apdu_exchange()
@@ -1479,8 +1518,9 @@ static bool test_trs_wire_cmd_decode_actions(void)
 		return false;
 	}
 	r = osdp_trs_cmd_decode(&pd, &cmd, terminate, sizeof(terminate));
-	if (r != OSDP_TRS_DECODE_ACK) {
-		printf(SUB_2 "terminate must be ACK'd; got %d\n", r);
+	if (r != OSDP_TRS_DECODE_RELEASE) {
+		printf(SUB_2 "terminate must be ACK'd and released; got %d\n",
+		       r);
 		return false;
 	}
 	r = osdp_trs_cmd_decode(&pd, &cmd, send_apdu, sizeof(send_apdu));
@@ -2125,9 +2165,15 @@ static bool test_trs_session_stop()
 {
 	printf(SUB_2 "testing TRS session stop\n");
 
+	/* The card is released before the reader leaves transparent mode */
+	const enum osdp_trs_session_status_e pd_want[] = {
+		OSDP_TRS_CARD_RELEASED,
+		OSDP_TRS_SESSION_CLOSED,
+	};
 	struct osdp_cmd cmd;
 
 	g_trs.status_seen = false;
+	g_trs.pd_status_count = 0;
 
 	if (submit_trs_cmd(&cmd, OSDP_TRS_CMD_STOP)) {
 		printf(SUB_2 "Failed to submit TRS stop\n");
@@ -2135,6 +2181,9 @@ static bool test_trs_session_stop()
 	}
 	if (!wait_for_trs_status(OSDP_TRS_SESSION_CLOSED, 10)) {
 		printf(SUB_2 "TRS session-closed notification not received\n");
+		return false;
+	}
+	if (!wait_for_pd_statuses(pd_want, ARRAY_SIZEOF(pd_want), 1000)) {
 		return false;
 	}
 
@@ -2145,6 +2194,40 @@ static bool test_trs_session_stop()
 	}
 
 	return true;
+}
+
+/*
+ * A CP that restarts the link takes the reader out of transparent mode
+ * without a mode-set; the PD app must hear of it all the same.
+ */
+static bool test_trs_pd_closed_on_link_restart()
+{
+	const enum osdp_trs_session_status_e pd_want[] = {
+		OSDP_TRS_SESSION_CLOSED,
+	};
+
+	printf(SUB_2 "testing TRS mode dropped on a link restart\n");
+
+	if (!test_trs_session_start()) {
+		return false;
+	}
+	g_trs.pd_status_count = 0;
+	if (osdp_cp_disable_pd(g_trs.cp_ctx, 0)) {
+		printf(SUB_2 "Failed to disable the PD\n");
+		return false;
+	}
+	for (int i = 0; i < 100 && osdp_cp_is_pd_enabled(g_trs.cp_ctx, 0);
+	     i++) {
+		usleep(10 * 1000);
+	}
+	if (osdp_cp_enable_pd(g_trs.cp_ctx, 0)) {
+		printf(SUB_2 "Failed to enable the PD\n");
+		return false;
+	}
+	if (!wait_for_pd_statuses(pd_want, ARRAY_SIZEOF(pd_want), 5000)) {
+		return false;
+	}
+	return test_wait_for_online(g_trs.cp_ctx, 0, 10);
 }
 
 /* A send-APDU with a real payload, built fresh for each of the two in-flight
@@ -2418,6 +2501,8 @@ void run_trs_tests(struct test *t)
 	result &= test_trs_scan_card_departure_event();
 	result &= test_trs_scan_mode0_activity_defers_probe();
 	result &= test_trs_scan_disable_and_flush_mid_probe();
+	/* Last: it leaves the CP with a session it abandoned mid-band */
+	result &= test_trs_pd_closed_on_link_restart();
 
 	teardown_test_environment();
 

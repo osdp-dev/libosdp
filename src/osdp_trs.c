@@ -811,9 +811,9 @@ int osdp_trs_reply_build(struct osdp_pd *pd, uint8_t *buf, int max_len)
 /* --- PD: decode incoming CMD_XWR ---
  *
  * Returns <0 on error (NAK), else one of enum osdp_trs_decode_e telling the
- * caller how to answer: ACK a library-handled command (mode set / card
- * terminate), send an XRD mode report (mode read), or deliver the decoded
- * card-session command to the app.
+ * caller how to answer: ACK a library-handled command (mode set), ACK a card
+ * terminate and tell the app, send an XRD mode report (mode read), or deliver
+ * the decoded card-session command to the app.
  */
 int osdp_trs_cmd_decode(struct osdp_pd *pd, struct osdp_cmd *cmd, uint8_t *buf,
 			int len)
@@ -862,9 +862,10 @@ int osdp_trs_cmd_decode(struct osdp_pd *pd, struct osdp_cmd *cmd, uint8_t *buf,
 		return -1;
 	}
 
-	/* Card-session teardown is library-driven; ACK it without the app */
+	/* Card-session teardown is library-driven, but only the app can
+	 * disconnect the card */
 	if (mode_code == CMD_TERMINATE) {
-		return OSDP_TRS_DECODE_ACK;
+		return OSDP_TRS_DECODE_RELEASE;
 	}
 
 	/* mode-1 commands carry a reader byte and are delivered to the app */

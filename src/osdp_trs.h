@@ -17,6 +17,7 @@ enum osdp_trs_decode_e {
 	OSDP_TRS_DECODE_ACK = 0, /* library handled it; answer osdp_ACK */
 	OSDP_TRS_DECODE_MODE_REPORT, /* answer osdp_XRD current-mode report */
 	OSDP_TRS_DECODE_TO_APP, /* deliver the decoded command to the app */
+	OSDP_TRS_DECODE_RELEASE, /* card terminate: answer osdp_ACK, tell the app */
 };
 
 /*

@@ -610,6 +610,38 @@ static void notify_sc_status(struct osdp_pd *pd)
 	pd_deliver_notification(pd, &n);
 }
 
+static void notify_trs_status(struct osdp_pd *pd,
+			      enum osdp_trs_session_status_e status)
+{
+	struct osdp_notification n = { .type = OSDP_NOTIFICATION_TRS_STATUS };
+
+	n.trs_status.status = status;
+	pd_deliver_notification(pd, &n);
+}
+
+static inline uint8_t pd_trs_mode(struct osdp_pd *pd)
+{
+#ifdef OPT_BUILD_OSDP_TRS
+	return pd->trs.mode;
+#else
+	ARG_UNUSED(pd);
+	return 0;
+#endif
+}
+
+/* The CP moves the reader in and out of transparent mode with a mode-set,
+ * and out of it by restarting the link; tell the app on each change. */
+static void pd_notify_trs_mode_change(struct osdp_pd *pd, uint8_t was)
+{
+	uint8_t mode = pd_trs_mode(pd);
+
+	if (mode == was) {
+		return;
+	}
+	notify_trs_status(pd, mode == TRS_MODE_01 ? OSDP_TRS_SESSION_OPENED :
+						    OSDP_TRS_SESSION_CLOSED);
+}
+
 /* Edge-triggered SC deactivate: only notify the app when the flag
  * actually flips. Keeps noisy paths (pd_error_reset on an already-
  * inactive SC) from spamming duplicate "SC inactive" events. */
@@ -1128,15 +1160,21 @@ static int pd_decode_command(struct osdp_pd *pd, uint8_t *buf, int len)
 	}
 	case CMD_XWR: {
 		const struct osdp_event *trs_event;
+		uint8_t trs_mode = pd_trs_mode(pd);
 		int trs_ret;
 
 		trs_ret = osdp_trs_cmd_decode(pd, &cmd, buf + pos, len);
 		if (trs_ret < 0) {
 			break; /* NAK */
 		}
-		if (trs_ret == OSDP_TRS_DECODE_ACK) {
+		pd_notify_trs_mode_change(pd, trs_mode);
+		if (trs_ret == OSDP_TRS_DECODE_ACK ||
+		    trs_ret == OSDP_TRS_DECODE_RELEASE) {
 			/* library-handled command (mode set / card terminate):
 			 * acknowledge per spec Table 36/42, no app payload */
+			if (trs_ret == OSDP_TRS_DECODE_RELEASE) {
+				notify_trs_status(pd, OSDP_TRS_CARD_RELEASED);
+			}
 			pd->reply_id = REPLY_ACK;
 			ret = OSDP_PD_ERR_NONE;
 			break;
@@ -1696,6 +1734,7 @@ static int pd_send_reply(struct osdp_pd *pd)
 static int pd_receive_and_process_command(struct osdp_pd *pd)
 {
 	bool sc_was_active = sc_is_active(pd);
+	uint8_t trs_mode = pd_trs_mode(pd);
 	int err, len = 0;
 	uint8_t *buf;
 
@@ -1712,6 +1751,8 @@ static int pd_receive_and_process_command(struct osdp_pd *pd)
 	if (sc_was_active && !sc_is_active(pd)) {
 		notify_sc_status(pd);
 	}
+	/* Likewise transparent mode, which a link restart ends */
+	pd_notify_trs_mode_change(pd, trs_mode);
 
 	/* Translate phy error codes to PD errors */
 	switch (err) {

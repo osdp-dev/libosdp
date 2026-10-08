@@ -172,10 +172,14 @@ The reader's answers arrive as `OSDP_EVENT_TRS` events carrying a
 | `OSDP_TRS_REPLY_ERROR`        | Reader-reported error |
 
 The session life-cycle itself is reported through
-`OSDP_NOTIFICATION_TRS_STATUS` (CP mode), whose `arg0` is an
-`enum osdp_trs_session_status_e`: `OPENED` when transparent mode is entered,
-`CLOSED` when a `STOP` is honored, and `FAILED` when a session cannot be
-established or is cut short by a link error.
+`OSDP_NOTIFICATION_TRS_STATUS`, whose payload is a
+`struct osdp_notification_trs_status`; its `status` field is an
+`enum osdp_trs_session_status_e`. A CP app sees `OPENED` when transparent
+mode is entered, `CLOSED` when a `STOP` is honored, and `FAILED` when a
+session cannot be established or is cut short by a link error. A PD app is
+told too, since the library drives the reader's mode itself: `OPENED` and
+`CLOSED` as the CP changes the reader's mode, including on a link restart,
+and `CARD_RELEASED` when the CP terminates the card.
 
 ```c
 /* One transparent-card session: open, select an applet, close. */

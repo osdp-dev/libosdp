@@ -1135,12 +1135,20 @@ enum osdp_notification_type {
 	 */
 	OSDP_NOTIFICATION_PD_ID,
 	/**
-	 * TRS card session state change (CP only). Payload: `trs_status`
+	 * TRS card session state change. Payload: `trs_status`
 	 * (@ref osdp_notification_trs_status).
 	 *
-	 * Fires when the reader enters transparent mode (OPENED), and once more
-	 * when the session ends, either because a STOP was honoured (CLOSED) or
-	 * because it could not be established or was cut short (FAILED).
+	 * In CP mode it fires when the reader enters transparent mode (OPENED),
+	 * and once more when the session ends, either because a STOP was
+	 * honoured (CLOSED) or because it could not be established or was cut
+	 * short (FAILED).
+	 *
+	 * In PD mode it follows the reader's own mode, which the CP sets:
+	 * OPENED when the CP puts it in transparent mode, CLOSED when the CP
+	 * takes it out or restarts the link, and CARD_RELEASED when the CP ends
+	 * its transaction with the card. A CP's presence scan flips the mode
+	 * every few hundred milliseconds, so expect a steady OPENED/CLOSED
+	 * stream while one runs.
 	 */
 	OSDP_NOTIFICATION_TRS_STATUS,
 	OSDP_NOTIFICATION_SENTINEL /**< Max notification value */
@@ -1253,10 +1261,14 @@ enum osdp_trs_cmd_e {
 /**
  * @brief Life-cycle of a TRS card session, reported in the `trs_status`
  * payload of an @c OSDP_NOTIFICATION_TRS_STATUS notification.
+ *
+ * A PD is told only OPENED, CLOSED and CARD_RELEASED; the rest are the CP's.
  */
 enum osdp_trs_session_status_e {
 	OSDP_TRS_SESSION_OPENED = 0, /**< Reader is in transparent mode; APDUs flow */
-	OSDP_TRS_SESSION_CLOSED,     /**< STOP honoured; reader restored */
+	OSDP_TRS_SESSION_CLOSED,     /**< STOP honoured (CP), or the CP took the
+				      *   reader out of transparent mode or
+				      *   restarted the link (PD); reader restored */
 	OSDP_TRS_SESSION_FAILED,     /**< PD refused transparent mode, or the
 				      *   session was aborted by a link error */
 	OSDP_TRS_SCAN_SUSPENDED, /**< A presence-scan probe was refused by
@@ -1275,6 +1287,13 @@ enum osdp_trs_session_status_e {
 	 * session and treating its failure as the card being gone.
 	 */
 	OSDP_TRS_SCAN_NO_DEPARTURE,
+	/**
+	 * PD only: the CP ended its transaction with the card (the mode-01
+	 * terminate a STOP sends). Disconnect the card, so that the next
+	 * session finds it as if it had just been presented. The reader stays
+	 * in transparent mode until CLOSED.
+	 */
+	OSDP_TRS_CARD_RELEASED,
 };
 
 /**
