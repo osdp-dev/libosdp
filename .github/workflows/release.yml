@@ -200,7 +200,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Build wheels with cibuildwheel
-        uses: pypa/cibuildwheel@v4.2.0
+        uses: pypa/cibuildwheel@v4.3.0
         with:
           output-dir: ${{ env.CIBW_OUTPUT_DIR }}
           package-dir: python/
