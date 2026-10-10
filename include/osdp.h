@@ -2114,14 +2114,20 @@ osdp_t *osdp_cp_setup(const struct osdp_channel *channel, int num_pd,
 /**
  * @brief Adds more PD devices in the CP control list.
  *
+ * This is part of setting up the CP: call it after osdp_cp_setup() and before
+ * the first osdp_cp_refresh(). Once the CP has been refreshed, its PD list is
+ * fixed and this call fails; use osdp_cp_disable_pd() and osdp_cp_enable_pd()
+ * to take PDs out of service and bring them back at runtime.
+ *
  * @param ctx OSDP context
  * @param num_pd Number of PDs connected to this CP. The `osdp_pd_info_t *` is
  * treated as an array of length num_pd.
  * @param info Pointer to info struct populated by application.
  *
  * @retval 0 on success
- * @retval -1 on failure, including when called from inside one of this
- * context's callbacks or during its teardown (see osdp_cp_refresh())
+ * @retval -1 on failure, including when called after the first
+ * osdp_cp_refresh(), from inside one of this context's callbacks or during its
+ * teardown (see osdp_cp_refresh())
  */
 OSDP_EXPORT
 int osdp_cp_add_pd(osdp_t *ctx, int num_pd, const osdp_pd_info_t *info);

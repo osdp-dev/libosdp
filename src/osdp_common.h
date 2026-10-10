@@ -263,18 +263,31 @@ static inline __noreturn void die()
 	} while (0)
 
 /*
- * Refresh, submit and flush run application callbacks -- the channel, file
- * ops, command, event and completion callbacks -- which may call back into
- * libosdp. A refresh from in there would recurse through the channel without
- * bound, and swapping the file ops or growing the PD array would pull state
- * out from under the code that called the callback, so refuse those three
- * while any of them runs.
+ * Refresh, submit, flush and adding PDs run application callbacks -- the
+ * channel, file ops, command, event, completion and log callbacks -- which
+ * may call back into libosdp. A refresh from in there would recurse through
+ * the channel without bound, and swapping the file ops or growing the PD array
+ * would pull state out from under the code that called the callback, so refuse
+ * those three while any of them runs.
  */
 #define input_check_not_running(_ctx)                                          \
 	do {                                                                   \
 		struct osdp *__ctx = (struct osdp *)_ctx;                      \
 		if (__ctx->running) {                                          \
 			LOG_PRINT("API called from inside a callback");        \
+			return -1;                                             \
+		}                                                              \
+	} while (0)
+
+/*
+ * Setup-only calls change what the refresh loop works on, so they are refused
+ * once the context has been refreshed.
+ */
+#define input_check_not_sealed(_ctx)                                           \
+	do {                                                                   \
+		struct osdp *__ctx = (struct osdp *)_ctx;                      \
+		if (__ctx->sealed) {                                           \
+			LOG_PRINT("Setup-only API called after refresh");      \
 			return -1;                                             \
 		}                                                              \
 	} while (0)
@@ -749,7 +762,8 @@ struct osdp {
 	uint32_t _magic; /* Canary to be used in input_check() */
 	int _num_pd; /* Number of PDs attached to this context */
 	bool tearing_down; /* set by teardown; public API refuses while set */
-	bool running; /* inside refresh, submit or flush: app callbacks run */
+	bool running; /* inside refresh, submit, flush or add_pd */
+	bool sealed; /* set by the first refresh; setup-only calls refuse */
 	struct osdp_pd *_current_pd; /* current operational pd's pointer */
 	struct osdp_pd *pd; /* base of PD list (must be at lest one) */
 	struct osdp_channel channel; /* OSDP channel */

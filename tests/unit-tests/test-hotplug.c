@@ -8,6 +8,7 @@
 
 #include <osdp.h>
 #include "test.h"
+#include "osdp_file.h"
 
 /* PD enabled/disabled states */
 #define PD_STATE_DISABLED  false
@@ -520,11 +521,11 @@ static void hp_refresh(osdp_t *cp, osdp_t *pd)
 }
 
 /*
- * Adding a PD moves the PD array. An operation already running on an
- * existing PD must carry on against that PD's new slot -- report its
- * progress and complete there -- not against the slot that was freed.
+ * Adding a PD would move the PD array under an operation already running on
+ * an existing PD. The CP has been refreshed by then, so the add is refused and
+ * the transfer completes undisturbed.
  */
-static bool test_add_pd_during_file_transfer(struct test *t)
+static bool test_add_pd_during_file_transfer_is_refused(struct test *t)
 {
 	struct osdp_file_ops ops = {
 		.open = hp_fopen,
@@ -585,8 +586,8 @@ static bool test_add_pd_during_file_transfer(struct test *t)
 		printf(SUB_2 "transfer never got under way\n");
 		goto out;
 	}
-	if (osdp_cp_add_pd(cp, 1, &extra)) {
-		printf(SUB_2 "add_pd failed\n");
+	if (osdp_cp_add_pd(cp, 1, &extra) != -1) {
+		printf(SUB_2 "add_pd accepted during the transfer\n");
 		goto out;
 	}
 	for (i = 0; i < 10000 && test_completion_count(&comp) == 0; i++) {
@@ -605,6 +606,206 @@ out:
 	osdp_pd_teardown(pd);
 	return result;
 }
+
+/*
+ * PDs can be added between setup and the first refresh -- a CP set up with
+ * none and filled in afterwards -- but not once the CP has been refreshed.
+ */
+static bool test_add_pd_only_before_first_refresh(struct test *t)
+{
+	osdp_pd_info_t first = {
+		.baud_rate = 9600,
+		.address = 101,
+	};
+	osdp_pd_info_t second = {
+		.baud_rate = 9600,
+		.address = 102,
+	};
+	osdp_t *cp, *harness_cp, *harness_pd;
+	bool result = false;
+
+	printf(SUB_2 "testing add_pd before and after the first refresh\n");
+
+	if (test_setup_devices(t, &harness_cp, &harness_pd)) {
+		printf(SUB_2 "Failed to setup devices!\n");
+		return false;
+	}
+	/* Refreshed once only, with nothing on the other end; it can borrow
+	 * the harness channel. */
+	cp = osdp_cp_setup(&TO_OSDP(harness_cp)->channel, 0, NULL);
+	if (cp == NULL) {
+		printf(SUB_2 "cp setup failed\n");
+		goto out_harness;
+	}
+	if (osdp_cp_add_pd(cp, 1, &first) != 0) {
+		printf(SUB_2 "add_pd refused before the first refresh\n");
+		goto out;
+	}
+	osdp_cp_refresh(cp);
+	if (osdp_cp_add_pd(cp, 1, &second) != -1) {
+		printf(SUB_2 "add_pd accepted after the first refresh\n");
+		goto out;
+	}
+	if (TO_OSDP(cp)->_num_pd != 1) {
+		printf(SUB_2 "%d PDs, want 1\n", TO_OSDP(cp)->_num_pd);
+		goto out;
+	}
+	result = true;
+out:
+	osdp_cp_teardown(cp);
+out_harness:
+	osdp_cp_teardown(harness_cp);
+	osdp_pd_teardown(harness_pd);
+	return result;
+}
+
+struct reshape_reenter {
+	osdp_t *cp;
+	bool armed;
+	int add_pd_rc;
+};
+
+static struct reshape_reenter g_reshape;
+
+static void reshape_try_add_pd(void)
+{
+	osdp_pd_info_t extra = {
+		.baud_rate = 9600,
+		.address = 103,
+	};
+
+	if (!g_reshape.armed) {
+		return;
+	}
+	g_reshape.armed = false;
+	g_reshape.add_pd_rc = osdp_cp_add_pd(g_reshape.cp, 1, &extra);
+}
+
+static int reshape_fclose(void *arg)
+{
+	ARG_UNUSED(arg);
+	reshape_try_add_pd();
+	return 0;
+}
+
+/*
+ * Swapping the file ops under a live transfer closes the open file through
+ * the old ops. A transfer runs only on a refreshed CP, so an add_pd from that
+ * close is refused rather than freeing the PD osdp_file_register_ops() goes
+ * on to reset.
+ */
+static bool test_add_pd_from_register_ops_close_is_refused(struct test *t)
+{
+	struct osdp_file_ops ops = {
+		.open = hp_fopen,
+		.read = hp_fread,
+		.write = hp_fwrite,
+		.close = reshape_fclose,
+	};
+	osdp_t *cp, *pd;
+	bool result = false;
+
+	printf(SUB_2 "testing add_pd from a file close op\n");
+
+	if (test_setup_devices(t, &cp, &pd)) {
+		printf(SUB_2 "Failed to setup devices!\n");
+		return false;
+	}
+	osdp_file_register_ops(cp, 0, &ops);
+	osdp_cp_refresh(cp);
+	if (osdp_file_tx_command(osdp_to_pd(cp, 0), 1, 0)) {
+		printf(SUB_2 "file tx did not start\n");
+		goto out;
+	}
+	g_reshape.cp = cp;
+	g_reshape.armed = true;
+	g_reshape.add_pd_rc = 1;
+	if (osdp_file_register_ops(cp, 0, &ops)) {
+		printf(SUB_2 "register_ops failed\n");
+		goto out;
+	}
+	if (g_reshape.armed || g_reshape.add_pd_rc != -1) {
+		printf(SUB_2 "add_pd from close: armed %d, rc %d, want -1\n",
+		       g_reshape.armed, g_reshape.add_pd_rc);
+		goto out;
+	}
+	result = true;
+out:
+	g_reshape.armed = false;
+	osdp_cp_teardown(cp);
+	osdp_pd_teardown(pd);
+	return result;
+}
+
+#ifndef OPT_OSDP_LOG_MINIMAL
+static void reshape_log_cb(int pd, int log_level, const char *msg,
+			   const char *file, unsigned long line)
+{
+	ARG_UNUSED(pd);
+	ARG_UNUSED(log_level);
+	ARG_UNUSED(msg);
+	ARG_UNUSED(file);
+	ARG_UNUSED(line);
+	reshape_try_add_pd();
+}
+
+/*
+ * Adding a PD without an SCBK logs a warning while the new PD array is
+ * still being built; growing it again from the log callback would free
+ * the array the outer call is filling in.
+ */
+static bool test_add_pd_from_add_pd_log_is_refused(struct test *t)
+{
+	uint8_t scbk[16] = { 0 };
+	osdp_pd_info_t first = {
+		.baud_rate = 9600,
+		.address = 101,
+		.scbk = scbk,
+	};
+	osdp_pd_info_t plain = {
+		.baud_rate = 9600,
+		.address = 102,
+	};
+	osdp_t *cp, *harness_cp, *harness_pd;
+	bool result = false;
+
+	printf(SUB_2 "testing add_pd from the log callback\n");
+
+	if (test_setup_devices(t, &harness_cp, &harness_pd)) {
+		printf(SUB_2 "Failed to setup devices!\n");
+		return false;
+	}
+	/* The log callback is picked up at setup. This CP is never refreshed,
+	 * so it can borrow the harness channel. */
+	osdp_set_log_callback(reshape_log_cb);
+	cp = osdp_cp_setup(&TO_OSDP(harness_cp)->channel, 1, &first);
+	osdp_logger_init("osdp", t->loglevel, NULL);
+	if (cp == NULL) {
+		printf(SUB_2 "cp setup failed\n");
+		goto out_harness;
+	}
+	g_reshape.cp = cp;
+	g_reshape.armed = true;
+	g_reshape.add_pd_rc = 1;
+	if (osdp_cp_add_pd(cp, 1, &plain)) {
+		printf(SUB_2 "add_pd failed\n");
+		goto out;
+	}
+	if (g_reshape.armed || g_reshape.add_pd_rc != -1) {
+		printf(SUB_2 "add_pd from log: armed %d, rc %d, want -1\n",
+		       g_reshape.armed, g_reshape.add_pd_rc);
+		goto out;
+	}
+	result = true;
+out:
+	g_reshape.armed = false;
+	osdp_cp_teardown(cp);
+out_harness:
+	osdp_cp_teardown(harness_cp);
+	osdp_pd_teardown(harness_pd);
+	return result;
+}
+#endif /* OPT_OSDP_LOG_MINIMAL */
 
 void run_hotplug_tests(struct test *t)
 {
@@ -628,6 +829,14 @@ void run_hotplug_tests(struct test *t)
 	/* Teardown test environment */
 	teardown_test_environment();
 
-	TEST_CASE(t, "add_pd_during_file_transfer",
-		  test_add_pd_during_file_transfer(t));
+	TEST_CASE(t, "add_pd_during_file_transfer_is_refused",
+		  test_add_pd_during_file_transfer_is_refused(t));
+	TEST_CASE(t, "add_pd_only_before_first_refresh",
+		  test_add_pd_only_before_first_refresh(t));
+	TEST_CASE(t, "add_pd_from_register_ops_close_is_refused",
+		  test_add_pd_from_register_ops_close_is_refused(t));
+#ifndef OPT_OSDP_LOG_MINIMAL
+	TEST_CASE(t, "add_pd_from_add_pd_log_is_refused",
+		  test_add_pd_from_add_pd_log_is_refused(t));
+#endif
 }

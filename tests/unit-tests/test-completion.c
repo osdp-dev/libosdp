@@ -255,10 +255,6 @@ static void reshape_from_flush_cb(void *arg, int pd, struct osdp_cmd *cmd,
 static bool test_reshape_from_flush_completion_is_refused(void)
 {
 	struct osdp_cmd cmd = make_led_cmd();
-	osdp_pd_info_t extra = {
-		.baud_rate = 9600,
-		.address = 105,
-	};
 	bool result = false;
 
 	g_flush_reshape.ctx = g_comp.cp;
@@ -281,8 +277,8 @@ static bool test_reshape_from_flush_completion_is_refused(void)
 		       g_flush_reshape.add_pd_rc, g_flush_reshape.register_rc);
 		goto out;
 	}
-	if (osdp_cp_add_pd(g_comp.cp, 1, &extra) != 0) {
-		printf(SUB_2 "reshape: add_pd refused after the flush\n");
+	if (osdp_file_register_ops(g_comp.cp, 0, &g_flush_reshape_ops) != 0) {
+		printf(SUB_2 "reshape: register refused after the flush\n");
 		goto out;
 	}
 	result = true;
@@ -494,7 +490,7 @@ static int nested_send(void *data, uint8_t *buf, int len)
 
 /*
  * From inside a callback, a refresh must not recurse and the calls that would
- * reshape the context must fail; outside one, the same calls work.
+ * reshape the context must fail; outside one, file ops can be registered.
  */
 static bool test_nested_calls_from_a_callback_are_refused(void)
 {
@@ -506,10 +502,6 @@ static bool test_nested_calls_from_a_callback_are_refused(void)
 	osdp_pd_info_t info = {
 		.baud_rate = 9600,
 		.address = 101,
-	};
-	osdp_pd_info_t extra = {
-		.baud_rate = 9600,
-		.address = 103,
 	};
 	bool result = false;
 	int i;
@@ -535,8 +527,7 @@ static bool test_nested_calls_from_a_callback_are_refused(void)
 		       g_nested.register_rc, g_nested.add_pd_rc);
 		goto out;
 	}
-	if (osdp_file_register_ops(g_nested.cp, 0, &g_nested_ops) != 0 ||
-	    osdp_cp_add_pd(g_nested.cp, 1, &extra) != 0) {
+	if (osdp_file_register_ops(g_nested.cp, 0, &g_nested_ops) != 0) {
 		printf(SUB_2 "nested: refused outside a callback too\n");
 		goto out;
 	}

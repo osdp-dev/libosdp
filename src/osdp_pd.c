@@ -2113,6 +2113,7 @@ void osdp_pd_refresh(osdp_t *ctx)
 	struct osdp *pd_ctx = TO_OSDP(ctx);
 	struct osdp_pd *pd = GET_CURRENT_PD(ctx);
 
+	pd_ctx->sealed = true;
 	pd_ctx->running = true;
 	osdp_pd_update(pd);
 	pd_ctx->running = false;

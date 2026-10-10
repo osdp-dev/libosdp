@@ -2720,14 +2720,19 @@ int osdp_cp_add_pd(osdp_t *ctx, int num_pd, const osdp_pd_info_t *info)
 	input_check(ctx);
 	input_check_not_tearing_down(ctx);
 	input_check_not_running(ctx);
+	input_check_not_sealed(ctx);
 	struct osdp *cp_ctx = TO_OSDP(ctx);
+	int rc;
 
 	if (!num_pd || !info) {
 		LOG_PRINT("num_pd must be > 0 and info cannot be NULL");
 		return -1;
 	}
 
-	if (cp_add_pd(cp_ctx, num_pd, info)) {
+	cp_ctx->running = true;
+	rc = cp_add_pd(cp_ctx, num_pd, info);
+	cp_ctx->running = false;
+	if (rc) {
 		LOG_PRINT("Failed to add PDs");
 		return -1;
 	}
@@ -2800,6 +2805,7 @@ void osdp_cp_refresh(osdp_t *ctx)
 	struct osdp_pd *pd;
 	struct osdp *cp_ctx = TO_OSDP(ctx);
 
+	cp_ctx->sealed = true;
 	if (cp_ctx->_num_pd == 0) {
 		return;
 	}
