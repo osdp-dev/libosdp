@@ -127,15 +127,15 @@ public:
 		return osdp_cp_flush_commands(_ctx, pd);
 	}
 
-	void set_event_callback(cp_event_callback_t cb, void *arg)
+	int set_event_callback(cp_event_callback_t cb, void *arg)
 	{
-		osdp_cp_set_event_callback(_ctx, cb, arg);
+		return osdp_cp_set_event_callback(_ctx, cb, arg);
 	}
 
-	void set_command_completion_callback(cp_command_completion_callback_t cb,
-					     void *arg)
+	int set_command_completion_callback(cp_command_completion_callback_t cb,
+					    void *arg)
 	{
-		osdp_cp_set_command_completion_callback(_ctx, cb, arg);
+		return osdp_cp_set_command_completion_callback(_ctx, cb, arg);
 	}
 
 	int get_pd_id(int pd, struct osdp_pd_id *id)
@@ -204,15 +204,15 @@ public:
 		return osdp_pd_set_capabilities(_ctx, cap);
 	}
 
-	void set_command_callback(pd_command_callback_t cb, void *args)
+	int set_command_callback(pd_command_callback_t cb, void *args)
 	{
-		osdp_pd_set_command_callback(_ctx, cb, args);
+		return osdp_pd_set_command_callback(_ctx, cb, args);
 	}
 
-	void set_event_completion_callback(pd_event_completion_callback_t cb,
-					   void *arg)
+	int set_event_completion_callback(pd_event_completion_callback_t cb,
+					  void *arg)
 	{
-		osdp_pd_set_event_completion_callback(_ctx, cb, arg);
+		return osdp_pd_set_event_completion_callback(_ctx, cb, arg);
 	}
 
 	int submit_event(struct osdp_event *event)

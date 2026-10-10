@@ -181,36 +181,48 @@ int test_api_pd_set_capabilities(osdp_t *ctx, const struct osdp_pd_cap *cap)
 	return rc;
 }
 
-void test_api_cp_set_command_completion_callback(
+int test_api_cp_set_command_completion_callback(
 	osdp_t *ctx, cp_command_completion_callback_t cb, void *arg)
 {
+	int rc;
+
 	test_api_lock();
-	(osdp_cp_set_command_completion_callback)(ctx, cb, arg);
+	rc = (osdp_cp_set_command_completion_callback)(ctx, cb, arg);
 	test_api_unlock();
+	return rc;
 }
 
-void test_api_cp_set_event_callback(osdp_t *ctx, cp_event_callback_t cb,
-				    void *arg)
+int test_api_cp_set_event_callback(osdp_t *ctx, cp_event_callback_t cb,
+				   void *arg)
 {
+	int rc;
+
 	test_api_lock();
-	(osdp_cp_set_event_callback)(ctx, cb, arg);
+	rc = (osdp_cp_set_event_callback)(ctx, cb, arg);
 	test_api_unlock();
+	return rc;
 }
 
-void test_api_pd_set_command_callback(osdp_t *ctx, pd_command_callback_t cb,
-				      void *arg)
+int test_api_pd_set_command_callback(osdp_t *ctx, pd_command_callback_t cb,
+				     void *arg)
 {
+	int rc;
+
 	test_api_lock();
-	(osdp_pd_set_command_callback)(ctx, cb, arg);
+	rc = (osdp_pd_set_command_callback)(ctx, cb, arg);
 	test_api_unlock();
+	return rc;
 }
 
-void test_api_pd_set_event_completion_callback(
+int test_api_pd_set_event_completion_callback(
 	osdp_t *ctx, pd_event_completion_callback_t cb, void *arg)
 {
+	int rc;
+
 	test_api_lock();
-	(osdp_pd_set_event_completion_callback)(ctx, cb, arg);
+	rc = (osdp_pd_set_event_completion_callback)(ctx, cb, arg);
 	test_api_unlock();
+	return rc;
 }
 
 int test_api_file_register_ops(osdp_t *ctx, int pd,

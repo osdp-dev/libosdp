@@ -250,10 +250,18 @@ static PyObject *pyosdp_pd_set_command_callback(pyosdp_pd_t *self, PyObject *arg
 		return NULL;
 	}
 
+	/* LibOSDP takes callbacks only before the first refresh; after that,
+	 * swapping the Python callable is enough. */
+	if (self->command_cb == NULL &&
+	    osdp_pd_set_command_callback(self->ctx, pd_command_cb,
+					 (void *)self)) {
+		PyErr_SetString(PyExc_RuntimeError,
+				"Command callback must be set before refresh");
+		return NULL;
+	}
 	Py_XDECREF(self->command_cb); /* release previous callback if any */
 	self->command_cb = callable;
 	Py_INCREF(self->command_cb);
-	osdp_pd_set_command_callback(self->ctx, pd_command_cb, (void *)self);
 	Py_RETURN_NONE;
 }
 

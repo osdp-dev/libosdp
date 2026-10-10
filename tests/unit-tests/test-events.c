@@ -75,6 +75,8 @@ static int setup_test_environment(struct test *t)
 
 	osdp_cp_set_event_callback(g_test_ctx.cp_ctx, test_events_event_callback, &g_test_ctx);
 	osdp_pd_set_command_callback(g_test_ctx.pd_ctx, test_events_command_callback, &g_test_ctx);
+	osdp_pd_set_event_completion_callback(
+		g_test_ctx.pd_ctx, test_event_completion_cb, &g_ev_compl);
 
 	printf(SUB_1 "starting async runners\n");
 
@@ -415,18 +417,29 @@ static bool test_submit_requires_completion_callback()
 		},
 	};
 
+	osdp_pd_info_t info = {
+		.baud_rate = 9600,
+		.address = 101,
+	};
+	osdp_t *pd;
+	bool result;
+
 	printf(SUB_2 "testing submit without completion callback fails\n");
 	reset_test_state();
 
-	osdp_pd_set_event_completion_callback(g_test_ctx.pd_ctx, NULL, NULL);
-	if (test_submit_event(g_test_ctx.pd_ctx, &event)) {
-		printf(SUB_2 "submit accepted without a completion callback\n");
+	/* Callbacks are set only before the first refresh, so use a PD that
+	 * never had one; it is never refreshed and can borrow the channel. */
+	pd = osdp_pd_setup(&TO_OSDP(g_test_ctx.pd_ctx)->channel, &info);
+	if (pd == NULL) {
+		printf(SUB_2 "pd setup failed\n");
 		return false;
 	}
-	osdp_pd_set_event_completion_callback(g_test_ctx.pd_ctx,
-					      test_event_completion_cb,
-					      &g_ev_compl);
-	return true;
+	result = !test_submit_event(pd, &event);
+	if (!result) {
+		printf(SUB_2 "submit accepted without a completion callback\n");
+	}
+	osdp_pd_teardown(pd);
+	return result;
 }
 
 /*
@@ -454,8 +467,6 @@ static bool test_cardread_formats()
 	printf(SUB_2 "testing cardread format acceptance\n");
 	reset_test_state();
 	test_completion_reset(&g_ev_compl);
-	osdp_pd_set_event_completion_callback(
-		g_test_ctx.pd_ctx, test_event_completion_cb, &g_ev_compl);
 
 	if (test_submit_event(g_test_ctx.pd_ctx, &event)) {
 		printf(SUB_2 "ASCII cardread accepted\n");
@@ -518,10 +529,6 @@ static bool test_event_reply_degraded_to_nak_completes_failed()
 	printf(SUB_2 "testing completion when reply degrades to NAK\n");
 	reset_test_state();
 	test_completion_reset(&g_ev_compl);
-
-	osdp_pd_set_event_completion_callback(g_test_ctx.pd_ctx,
-					      test_event_completion_cb,
-					      &g_ev_compl);
 
 	pd = osdp_to_pd(g_test_ctx.pd_ctx, 0);
 	pd->peer_rx_size = 128; /* OSDP_MINIMUM_PACKET_SIZE */
@@ -589,10 +596,6 @@ static bool test_event_reply_build_failure_completes()
 	printf(SUB_2 "testing completion on reply build failure\n");
 	reset_test_state();
 	test_completion_reset(&g_ev_compl);
-
-	osdp_pd_set_event_completion_callback(g_test_ctx.pd_ctx,
-					      test_event_completion_cb,
-					      &g_ev_compl);
 
 	if (!test_submit_event(g_test_ctx.pd_ctx, &bad_event)) {
 		printf(SUB_2 "failed to submit event\n");

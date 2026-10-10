@@ -2837,20 +2837,24 @@ void osdp_cp_refresh(osdp_t *ctx)
 	cp_ctx->running = false;
 }
 
-void osdp_cp_set_event_callback(osdp_t *ctx, cp_event_callback_t cb, void *arg)
+int osdp_cp_set_event_callback(osdp_t *ctx, cp_event_callback_t cb, void *arg)
 {
 	input_check(ctx);
+	input_check_not_sealed(ctx);
 	TO_OSDP(ctx)->event_callback = cb;
 	TO_OSDP(ctx)->event_callback_arg = arg;
+	return 0;
 }
 
-void osdp_cp_set_command_completion_callback(osdp_t *ctx,
-					     cp_command_completion_callback_t cb,
-					     void *arg)
+int osdp_cp_set_command_completion_callback(osdp_t *ctx,
+					    cp_command_completion_callback_t cb,
+					    void *arg)
 {
 	input_check(ctx);
+	input_check_not_sealed(ctx);
 	TO_OSDP(ctx)->command_completion_callback = cb;
 	TO_OSDP(ctx)->command_completion_callback_arg = arg;
+	return 0;
 }
 
 int osdp_cp_submit_command(osdp_t *ctx, int pd_idx, const struct osdp_cmd *cmd)

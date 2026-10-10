@@ -138,6 +138,29 @@ static void trs_cp_completion_callback(void *arg, int pd,
 }
 
 /*
+ * Completion callbacks can only be set before the first refresh, so the CP
+ * gets one that forwards to whatever the running case swaps in.
+ */
+static cp_command_completion_callback_t g_trs_completion =
+	trs_cp_completion_callback;
+static void *g_trs_completion_arg = &g_trs;
+
+static void trs_completion_dispatch(void *arg, int pd, struct osdp_cmd *cmd,
+				    enum osdp_completion_status status)
+{
+	ARG_UNUSED(arg);
+	g_trs_completion(g_trs_completion_arg, pd, cmd, status);
+}
+
+static void trs_use_completion(cp_command_completion_callback_t cb, void *arg)
+{
+	test_api_lock();
+	g_trs_completion = cb;
+	g_trs_completion_arg = arg;
+	test_api_unlock();
+}
+
+/*
  * Submit a bare TRS marker/command (START, STOP, ...) to the CP. The command is
  * queued by reference, so @a cmd is the caller's to keep alive until the command
  * completes -- callers here block on the session notification that follows it.
@@ -233,8 +256,8 @@ static int setup_test_environment_ex(struct test *t, bool plaintext)
 
 	osdp_cp_set_event_callback(g_trs.cp_ctx, trs_cp_event_callback, &g_trs);
 	osdp_cp_set_command_completion_callback(g_trs.cp_ctx,
-						trs_cp_completion_callback,
-						&g_trs);
+						trs_completion_dispatch, NULL);
+	trs_use_completion(trs_cp_completion_callback, &g_trs);
 	osdp_pd_set_command_callback(g_trs.pd_ctx, trs_pd_command_callback,
 				     &g_trs);
 
@@ -2264,9 +2287,7 @@ static bool test_trs_band_flush_on_session_failure(void)
 
 	atomic_store(&log.resubmit_armed, true);
 	atomic_store(&log.resubmit_rc, -1);
-	osdp_cp_set_command_completion_callback(g_trs.cp_ctx,
-						trs_band_flush_completion_cb,
-						&log);
+	trs_use_completion(trs_band_flush_completion_cb, &log);
 	g_trs.status_seen = false;
 	test_set_channel_hook(trs_wire_nak_hook, &hook);
 
@@ -2346,9 +2367,7 @@ static bool test_trs_band_flush_on_session_failure(void)
 
 out:
 	test_set_channel_hook(NULL, NULL);
-	osdp_cp_set_command_completion_callback(g_trs.cp_ctx,
-						trs_cp_completion_callback,
-						&g_trs);
+	trs_use_completion(trs_cp_completion_callback, &g_trs);
 	return ok;
 }
 

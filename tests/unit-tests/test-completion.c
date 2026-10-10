@@ -25,6 +25,45 @@ struct completion_ctx {
 
 static struct completion_ctx g_comp;
 
+/*
+ * Completion callbacks can only be set before the first refresh, so each
+ * context gets one that forwards to whatever the running case swaps in.
+ */
+static cp_command_completion_callback_t g_cp_completion;
+static void *g_cp_completion_arg;
+static pd_event_completion_callback_t g_pd_completion;
+static void *g_pd_completion_arg;
+
+static void cp_completion_dispatch(void *arg, int pd, struct osdp_cmd *cmd,
+				   enum osdp_completion_status status)
+{
+	ARG_UNUSED(arg);
+	g_cp_completion(g_cp_completion_arg, pd, cmd, status);
+}
+
+static void pd_completion_dispatch(void *arg, struct osdp_event *ev,
+				   enum osdp_completion_status status)
+{
+	ARG_UNUSED(arg);
+	g_pd_completion(g_pd_completion_arg, ev, status);
+}
+
+static void use_cp_completion(cp_command_completion_callback_t cb, void *arg)
+{
+	test_api_lock();
+	g_cp_completion = cb;
+	g_cp_completion_arg = arg;
+	test_api_unlock();
+}
+
+static void use_pd_completion(pd_event_completion_callback_t cb, void *arg)
+{
+	test_api_lock();
+	g_pd_completion = cb;
+	g_pd_completion_arg = arg;
+	test_api_unlock();
+}
+
 static struct osdp_cmd make_led_cmd(void)
 {
 	struct osdp_cmd cmd;
@@ -124,9 +163,7 @@ static bool test_flush_from_completion(void)
 	test_completion_reset(&g_comp.comp);
 	atomic_store(&g_comp.resubmit_rc, -1);
 	atomic_store(&g_comp.resubmit_armed, true);
-	osdp_cp_set_command_completion_callback(g_comp.cp,
-						flush_from_completion_cb,
-						&g_comp);
+	use_cp_completion(flush_from_completion_cb, &g_comp);
 
 	if (!test_submit_command(g_comp.cp, 0, &a) ||
 	    !test_submit_command(g_comp.cp, 0, &b)) {
@@ -150,9 +187,7 @@ static bool test_flush_from_completion(void)
 		return false;
 	}
 	/* Restore the suite's default callback for the cases that follow. */
-	osdp_cp_set_command_completion_callback(g_comp.cp,
-						resubmit_completion_cb,
-						&g_comp);
+	use_cp_completion(resubmit_completion_cb, &g_comp);
 	return true;
 }
 
@@ -193,9 +228,7 @@ static bool test_pd_submit_from_flush_completion(void)
 	test_completion_reset(&g_pd_comp);
 	atomic_store(&g_comp.resubmit_rc, -1);
 	atomic_store(&g_comp.resubmit_armed, true);
-	osdp_pd_set_event_completion_callback(g_comp.pd,
-					      pd_resubmit_completion_cb,
-					      &g_comp);
+	use_pd_completion(pd_resubmit_completion_cb, &g_comp);
 
 	if (!test_submit_event(g_comp.pd, &ev)) {
 		printf(SUB_2 "pd flush: submit rejected\n");
@@ -260,8 +293,7 @@ static bool test_reshape_from_flush_completion_is_refused(void)
 	g_flush_reshape.ctx = g_comp.cp;
 	g_flush_reshape.add_pd_rc = 1;
 	g_flush_reshape.register_rc = 1;
-	osdp_cp_set_command_completion_callback(
-		g_comp.cp, reshape_from_flush_cb, &g_flush_reshape);
+	use_cp_completion(reshape_from_flush_cb, &g_flush_reshape);
 	if (!test_submit_command(g_comp.cp, 0, &cmd) ||
 	    !test_submit_command(g_comp.cp, 0, &cmd)) {
 		printf(SUB_2 "reshape: submit rejected\n");
@@ -283,8 +315,7 @@ static bool test_reshape_from_flush_completion_is_refused(void)
 	}
 	result = true;
 out:
-	osdp_cp_set_command_completion_callback(
-		g_comp.cp, resubmit_completion_cb, &g_comp);
+	use_cp_completion(resubmit_completion_cb, &g_comp);
 	return result;
 }
 
@@ -313,8 +344,7 @@ static bool test_pd_reshape_from_flush_completion_is_refused(void)
 
 	g_flush_reshape.ctx = g_comp.pd;
 	g_flush_reshape.register_rc = 1;
-	osdp_pd_set_event_completion_callback(
-		g_comp.pd, pd_reshape_from_flush_cb, &g_flush_reshape);
+	use_pd_completion(pd_reshape_from_flush_cb, &g_flush_reshape);
 	if (!test_submit_event(g_comp.pd, &ev)) {
 		printf(SUB_2 "pd reshape: submit rejected\n");
 		goto out;
@@ -331,8 +361,7 @@ static bool test_pd_reshape_from_flush_completion_is_refused(void)
 	}
 	result = true;
 out:
-	osdp_pd_set_event_completion_callback(
-		g_comp.pd, pd_resubmit_completion_cb, &g_comp);
+	use_pd_completion(pd_resubmit_completion_cb, &g_comp);
 	return result;
 }
 
@@ -538,6 +567,70 @@ out:
 }
 #endif /* OPT_OSDP_RX_ZERO_COPY */
 
+static int noop_event_cb(void *arg, int pd, struct osdp_event *ev)
+{
+	ARG_UNUSED(arg);
+	ARG_UNUSED(pd);
+	ARG_UNUSED(ev);
+	return 0;
+}
+
+static int noop_command_cb(void *arg, struct osdp_cmd *cmd)
+{
+	ARG_UNUSED(arg);
+	ARG_UNUSED(cmd);
+	return 0;
+}
+
+static int set_all_callbacks(osdp_t *cp, osdp_t *pd)
+{
+	int rc = 0;
+
+	rc |= osdp_cp_set_event_callback(cp, noop_event_cb, NULL);
+	rc |= osdp_cp_set_command_completion_callback(cp, test_cmd_completion_cb,
+						      NULL);
+	rc |= osdp_pd_set_command_callback(pd, noop_command_cb, NULL);
+	rc |= osdp_pd_set_event_completion_callback(pd, test_event_completion_cb,
+						    NULL);
+	return rc;
+}
+
+/*
+ * Swapping a completion callback while commands are in flight would hand
+ * their completions to an arg that never owned them, so the callbacks are
+ * fixed once a context has been refreshed.
+ */
+static bool test_callbacks_are_set_only_before_refresh(struct test *t)
+{
+	osdp_t *cp, *pd;
+	bool result = false;
+
+	if (test_setup_devices(t, &cp, &pd)) {
+		printf(SUB_2 "callbacks: device setup failed\n");
+		return false;
+	}
+	if (set_all_callbacks(cp, pd) != 0) {
+		printf(SUB_2 "callbacks: refused before the first refresh\n");
+		goto out;
+	}
+	osdp_cp_refresh(cp);
+	osdp_pd_refresh(pd);
+	if (osdp_cp_set_event_callback(cp, noop_event_cb, NULL) != -1 ||
+	    osdp_cp_set_command_completion_callback(
+		    cp, test_cmd_completion_cb, NULL) != -1 ||
+	    osdp_pd_set_command_callback(pd, noop_command_cb, NULL) != -1 ||
+	    osdp_pd_set_event_completion_callback(
+		    pd, test_event_completion_cb, NULL) != -1) {
+		printf(SUB_2 "callbacks: accepted after the first refresh\n");
+		goto out;
+	}
+	result = true;
+out:
+	osdp_cp_teardown(cp);
+	osdp_pd_teardown(pd);
+	return result;
+}
+
 /* Every submitted object must have come back by the time teardown returns. */
 static bool test_no_objects_outstanding_after_teardown(void)
 {
@@ -558,8 +651,11 @@ void run_completion_tests(struct test *t)
 		return;
 	}
 	osdp_cp_set_command_completion_callback(g_comp.cp,
-						resubmit_completion_cb,
-						&g_comp);
+						cp_completion_dispatch, NULL);
+	osdp_pd_set_event_completion_callback(g_comp.pd,
+					      pd_completion_dispatch, NULL);
+	use_cp_completion(resubmit_completion_cb, &g_comp);
+	use_pd_completion(test_event_completion_cb, NULL);
 
 	g_comp.cp_runner = async_runner_start(g_comp.cp, osdp_cp_refresh);
 	g_comp.pd_runner = async_runner_start(g_comp.pd, osdp_pd_refresh);
@@ -595,6 +691,8 @@ void run_completion_tests(struct test *t)
 	 */
 	TEST_CASE(t, "submit_during_teardown_is_refused",
 		  test_submit_during_teardown_is_refused(t));
+	TEST_CASE(t, "callbacks_are_set_only_before_refresh",
+		  test_callbacks_are_set_only_before_refresh(t));
 #ifndef OPT_OSDP_RX_ZERO_COPY
 	TEST_CASE(t, "nested_calls_from_a_callback_are_refused",
 		  test_nested_calls_from_a_callback_are_refused());

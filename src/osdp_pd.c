@@ -2135,25 +2135,29 @@ int osdp_pd_set_capabilities(osdp_t *ctx, const struct osdp_pd_cap *cap)
 	return 0;
 }
 
-void osdp_pd_set_command_callback(osdp_t *ctx, pd_command_callback_t cb,
-				  void *arg)
+int osdp_pd_set_command_callback(osdp_t *ctx, pd_command_callback_t cb,
+				 void *arg)
 {
 	input_check(ctx);
+	input_check_not_sealed(ctx);
 	struct osdp_pd *pd = GET_CURRENT_PD(ctx);
 
 	pd->command_callback_arg = arg;
 	pd->command_callback = cb;
+	return 0;
 }
 
-void osdp_pd_set_event_completion_callback(osdp_t *ctx,
-					   pd_event_completion_callback_t cb,
-					   void *arg)
+int osdp_pd_set_event_completion_callback(osdp_t *ctx,
+					  pd_event_completion_callback_t cb,
+					  void *arg)
 {
 	input_check(ctx);
+	input_check_not_sealed(ctx);
 	struct osdp_pd *pd = GET_CURRENT_PD(ctx);
 
 	pd->event_completion_callback = cb;
 	pd->event_completion_callback_arg = arg;
+	return 0;
 }
 
 /**

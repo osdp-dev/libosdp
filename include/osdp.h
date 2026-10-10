@@ -2028,30 +2028,41 @@ int osdp_pd_set_capabilities(osdp_t *ctx, const struct osdp_pd_cap *cap);
  * @brief Set callback method for PD command notification. This callback is
  * invoked when the PD receives a command from the CP.
  *
+ * Setup only: call it before the first osdp_pd_refresh(); it returns -1
+ * afterwards.
+ *
  * @param ctx OSDP context
  * @param cb The callback function's pointer
  * @param arg A pointer that will be passed as the first argument of `cb`
+ *
+ * @retval 0 on success
+ * @retval -1 when called after the first osdp_pd_refresh()
  */
 OSDP_EXPORT
-void osdp_pd_set_command_callback(osdp_t *ctx, pd_command_callback_t cb,
-				  void *arg);
+int osdp_pd_set_command_callback(osdp_t *ctx, pd_command_callback_t cb,
+				 void *arg);
 
 /**
  * @brief Set callback method for PD event completion.
+ *
+ * Setup only: call it before the first osdp_pd_refresh(); it returns -1
+ * afterwards.
  *
  * @param ctx OSDP context
  * @param cb Callback function pointer
  * @param arg Opaque pointer passed as first callback argument
  *
+ * @retval 0 on success
+ * @retval -1 when called after the first osdp_pd_refresh()
+ *
  * @note Clearing this callback (passing NULL) while events are still queued
- * or in flight orphans them: their completions are dropped and the
- * application never gets them back. Unregister only after
- * osdp_pd_flush_events() or osdp_pd_teardown() has drained them.
+ * orphans them: their completions are dropped and the application never gets
+ * them back. Unregister only after osdp_pd_flush_events() has drained them.
  */
 OSDP_EXPORT
-void osdp_pd_set_event_completion_callback(osdp_t *ctx,
-					   pd_event_completion_callback_t cb,
-					   void *arg);
+int osdp_pd_set_event_completion_callback(osdp_t *ctx,
+					  pd_event_completion_callback_t cb,
+					  void *arg);
 
 /**
  * @brief Submit PD events to CP. These events are delivered to the CP as a
@@ -2394,29 +2405,36 @@ int osdp_cp_get_capability(const osdp_t *ctx, int pd, struct osdp_pd_cap *cap);
  * @brief Set callback method for CP event notification. This callback is
  * invoked when the CP receives an event from the PD.
  *
+ * Setup only: call it before the first osdp_cp_refresh(); it returns -1
+ * afterwards.
+ *
  * @param ctx OSDP context
  * @param cb The callback function's pointer
  * @param arg A pointer that will be passed as the first argument of `cb`
+ *
+ * @retval 0 on success
+ * @retval -1 when called after the first osdp_cp_refresh()
  */
 OSDP_EXPORT
-void osdp_cp_set_event_callback(osdp_t *ctx, cp_event_callback_t cb, void *arg);
+int osdp_cp_set_event_callback(osdp_t *ctx, cp_event_callback_t cb, void *arg);
 
 /**
  * @brief Set callback method for CP command completion.
+ *
+ * Setup only: call it before the first osdp_cp_refresh(); it returns -1
+ * afterwards.
  *
  * @param ctx OSDP context
  * @param cb Callback function pointer
  * @param arg Opaque pointer passed as first callback argument
  *
- * @note Clearing this callback (passing NULL) while commands are still queued
- * or in flight orphans them: their completions are dropped and the
- * application never gets them back. Unregister only after
- * osdp_cp_flush_commands() or osdp_cp_teardown() has drained them.
+ * @retval 0 on success
+ * @retval -1 when called after the first osdp_cp_refresh()
  */
 OSDP_EXPORT
-void osdp_cp_set_command_completion_callback(osdp_t *ctx,
-					     cp_command_completion_callback_t cb,
-					     void *arg);
+int osdp_cp_set_command_completion_callback(osdp_t *ctx,
+					    cp_command_completion_callback_t cb,
+					    void *arg);
 
 /**
  * @brief Set or clear OSDP public flags

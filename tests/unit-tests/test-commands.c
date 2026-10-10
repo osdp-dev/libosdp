@@ -1295,18 +1295,29 @@ static bool test_submit_requires_completion_callback()
 		},
 	};
 
+	osdp_pd_info_t info = {
+		.baud_rate = 9600,
+		.address = 101,
+	};
+	osdp_t *cp;
+	bool result;
+
 	printf(SUB_2 "testing submit without completion callback fails\n");
 	reset_test_state();
 
-	osdp_cp_set_command_completion_callback(g_test_ctx.cp_ctx, NULL, NULL);
-	if (test_submit_command(g_test_ctx.cp_ctx, 0, &cmd)) {
-		printf(SUB_2 "submit accepted without a completion callback\n");
+	/* Callbacks are set only before the first refresh, so use a CP that
+	 * never had one; it is never refreshed and can borrow the channel. */
+	cp = osdp_cp_setup(&TO_OSDP(g_test_ctx.cp_ctx)->channel, 1, &info);
+	if (cp == NULL) {
+		printf(SUB_2 "cp setup failed\n");
 		return false;
 	}
-	osdp_cp_set_command_completion_callback(g_test_ctx.cp_ctx,
-						commands_cmd_completion_cb,
-						&g_test_ctx);
-	return true;
+	result = !test_submit_command(cp, 0, &cmd);
+	if (!result) {
+		printf(SUB_2 "submit accepted without a completion callback\n");
+	}
+	osdp_cp_teardown(cp);
+	return result;
 }
 
 static bool test_status_command()
