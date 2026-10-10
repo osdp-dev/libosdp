@@ -360,6 +360,59 @@ class ControlPanel:
             return None
         return Metrics(**metrics)
 
+    # -- transparent reader support -----------------------------------------
+
+    def trs_scan_enable(
+        self,
+        address: int,
+        mode0_dwell_ms: int = 0,
+        mode1_dwell_ms: int = 0,
+        hold_ms: int = 0,
+    ) -> bool:
+        """Scan a TRS-capable PD for smart cards between card sessions.
+
+        For readers that do not announce cards in their default mode. The
+        library alternates the reader between its default mode, for
+        `mode0_dwell_ms`, and transparent mode, for `mode1_dwell_ms`. A
+        sighting arrives as an `events.TrsCardPresent` or
+        `events.TrsCardInfo`, and transparent mode is then held for `hold_ms`
+        so that a `commands.TrsStart` submitted in response adopts it as is.
+        A zero selects that parameter's default.
+
+        Returns False if the library refused it.
+
+        @see osdp_cp_trs_scan_enable
+        """
+        pd = self.pd_addr.index(address)
+        with self.lock:
+            return bool(
+                self.ctx.trs_scan_enable(
+                    pd, mode0_dwell_ms, mode1_dwell_ms, hold_ms
+                )
+            )
+
+    def trs_scan_disable(self, address: int) -> bool:
+        """Stop the smart-card presence scan on a PD.
+
+        @see osdp_cp_trs_scan_disable
+        """
+        pd = self.pd_addr.index(address)
+        with self.lock:
+            return bool(self.ctx.trs_scan_disable(pd))
+
+    def trs_get_max_apdu_len(self, address: int) -> int:
+        """Largest C-APDU a `commands.TrsSendApdu` can carry to a PD.
+
+        Bounded by the packet size in use, so well below
+        `commands.MAX_TRS_APDU_LEN` by default, and final only once the PD
+        has been online.
+
+        @see osdp_cp_trs_get_max_apdu_len
+        """
+        pd = self.pd_addr.index(address)
+        with self.lock:
+            return self.ctx.trs_get_max_apdu_len(pd)
+
     # -- lifecycle ----------------------------------------------------------
 
     @staticmethod

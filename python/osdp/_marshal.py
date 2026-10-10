@@ -33,6 +33,12 @@ from .enums import (
     StatusReportType,
     TemporaryLEDControlCode,
     TextControlCode,
+    TrsCardProtocol,
+    TrsCardStatus,
+    TrsCommand,
+    TrsPinComplete,
+    TrsPinFormat,
+    TrsReply,
 )
 from .errors import MarshalError
 
@@ -142,6 +148,8 @@ def _notification_payload(x) -> Payload:
             "serial_number": x.serial_number,
             "firmware_version": x.firmware_version,
         }
+    if x.type == NotificationType.TrsStatus:
+        return {"type": x.type, "status": x.status}
     return {"type": x.type}
 
 
@@ -156,6 +164,7 @@ def _notification_from_payload(cls, p: Payload):
         mp_type=p.get("mp_type", 0),
         object_id=p.get("object_id", 0), total=p.get("total", 0),
         offset=p.get("offset", 0), outcome=p.get("outcome", 0),
+        status=p.get("status", 0),
     )
     # PdId is CP-only, so only the CP-side Notification carries these fields.
     if kwargs["type"] == NotificationType.PdId:
@@ -166,6 +175,69 @@ def _notification_from_payload(cls, p: Payload):
             firmware_version=p.get("firmware_version", 0),
         )
     return cls(**kwargs)
+
+
+def _encode_trs_enter_pin(cmd: c.TrsEnterPin) -> Payload:
+    return {
+        "command": CommandId.Trs,
+        "trs_command": TrsCommand.EnterPin,
+        "timeout_initial": cmd.timeout_initial,
+        "timeout_digit": cmd.timeout_digit,
+        "pin_block": {
+            "format": cmd.pin_block.format,
+            "right_justify": cmd.pin_block.right_justify,
+            "offset_bits": cmd.pin_block.offset_bits,
+            "size_bytes": cmd.pin_block.size_bytes,
+        },
+        "pin_length_field": {
+            "size_bits": cmd.pin_length_field.size_bits,
+            "offset_bits": cmd.pin_length_field.offset_bits,
+        },
+        "min_digits": cmd.min_digits,
+        "max_digits": cmd.max_digits,
+        "complete_on": cmd.complete_on,
+        "num_messages": cmd.num_messages,
+        "language_id": cmd.language_id,
+        "msg_index": cmd.msg_index,
+        "teo_prologue": cmd.teo_prologue,
+        "apdu": cmd.apdu,
+    }
+
+
+def _decode_trs_enter_pin(payload: Payload) -> c.TrsEnterPin:
+    pin_block = payload["pin_block"]
+    pin_length_field = payload["pin_length_field"]
+    return c.TrsEnterPin(
+        timeout_initial=payload["timeout_initial"],
+        timeout_digit=payload["timeout_digit"],
+        pin_block=c.TrsPinBlock(
+            format=TrsPinFormat(pin_block["format"]),
+            right_justify=bool(pin_block["right_justify"]),
+            offset_bits=pin_block["offset_bits"],
+            size_bytes=pin_block["size_bytes"],
+        ),
+        pin_length_field=c.TrsPinLengthField(
+            size_bits=pin_length_field["size_bits"],
+            offset_bits=pin_length_field["offset_bits"],
+        ),
+        min_digits=payload["min_digits"],
+        max_digits=payload["max_digits"],
+        complete_on=TrsPinComplete(payload["complete_on"]),
+        num_messages=payload["num_messages"],
+        language_id=payload["language_id"],
+        msg_index=payload["msg_index"],
+        teo_prologue=payload["teo_prologue"],
+        apdu=payload["apdu"],
+    )
+
+
+_TRS_COMMAND_DECODERS: dict[TrsCommand, Callable[[Payload], c.Command]] = {
+    TrsCommand.Start: lambda p: c.TrsStart(),
+    TrsCommand.Stop: lambda p: c.TrsStop(),
+    TrsCommand.SendApdu: lambda p: c.TrsSendApdu(apdu=p["apdu"]),
+    TrsCommand.EnterPin: _decode_trs_enter_pin,
+    TrsCommand.CardScan: lambda p: c.TrsCardScan(),
+}
 
 
 _COMMAND_ENCODERS: dict[type, Callable[[Any], Payload]] = {
@@ -269,6 +341,24 @@ _COMMAND_ENCODERS: dict[type, Callable[[Any], Payload]] = {
         "command": CommandId.Notification,
         **_notification_payload(x),
     },
+    c.TrsStart: lambda x: {
+        "command": CommandId.Trs,
+        "trs_command": TrsCommand.Start,
+    },
+    c.TrsStop: lambda x: {
+        "command": CommandId.Trs,
+        "trs_command": TrsCommand.Stop,
+    },
+    c.TrsSendApdu: lambda x: {
+        "command": CommandId.Trs,
+        "trs_command": TrsCommand.SendApdu,
+        "apdu": x.apdu,
+    },
+    c.TrsEnterPin: _encode_trs_enter_pin,
+    c.TrsCardScan: lambda x: {
+        "command": CommandId.Trs,
+        "trs_command": TrsCommand.CardScan,
+    },
 }
 
 _COMMAND_DECODERS: dict[CommandId, Callable[[Payload], c.Command]] = {
@@ -342,6 +432,9 @@ _COMMAND_DECODERS: dict[CommandId, Callable[[Payload], c.Command]] = {
     CommandId.Notification: lambda p: _notification_from_payload(
         c.Notification, p
     ),
+    CommandId.Trs: lambda p: _TRS_COMMAND_DECODERS[
+        TrsCommand(p["trs_command"])
+    ](p),
 }
 
 
@@ -390,6 +483,26 @@ def _decode_cardread(payload: Payload) -> e.CardRead:
         data=payload["data"],
         bits=payload["length"] if fmt in _RAW_CARD_FORMATS else None,
     )
+
+
+_TRS_REPLY_DECODERS: dict[TrsReply, Callable[[Payload], e.Event]] = {
+    TrsReply.CardInfo: lambda p: e.TrsCardInfo(
+        reader=p["reader"],
+        protocol=TrsCardProtocol(p["protocol"]),
+        csn=p["csn"],
+        protocol_data=p["protocol_data"],
+    ),
+    TrsReply.CardPresent: lambda p: e.TrsCardPresent(
+        reader=p["reader"], status=TrsCardStatus(p["status"])
+    ),
+    TrsReply.CardData: lambda p: e.TrsCardData(
+        reader=p["reader"], status=p["status"], apdu=p["apdu"]
+    ),
+    TrsReply.PinComplete: lambda p: e.TrsPinComplete(
+        reader=p["reader"], status=p["status"], tries=p["tries"]
+    ),
+    TrsReply.Error: lambda p: e.TrsError(code=p["code"]),
+}
 
 
 _EVENT_ENCODERS: dict[type, Callable[[Any], Payload]] = {
@@ -447,6 +560,39 @@ _EVENT_ENCODERS: dict[type, Callable[[Any], Payload]] = {
         "event": EventId.Notification,
         **_notification_payload(x),
     },
+    e.TrsCardInfo: lambda x: {
+        "event": EventId.Trs,
+        "reply": TrsReply.CardInfo,
+        "reader": x.reader,
+        "protocol": x.protocol,
+        "csn": x.csn,
+        "protocol_data": x.protocol_data,
+    },
+    e.TrsCardPresent: lambda x: {
+        "event": EventId.Trs,
+        "reply": TrsReply.CardPresent,
+        "reader": x.reader,
+        "status": x.status,
+    },
+    e.TrsCardData: lambda x: {
+        "event": EventId.Trs,
+        "reply": TrsReply.CardData,
+        "reader": x.reader,
+        "status": x.status,
+        "apdu": x.apdu,
+    },
+    e.TrsPinComplete: lambda x: {
+        "event": EventId.Trs,
+        "reply": TrsReply.PinComplete,
+        "reader": x.reader,
+        "status": x.status,
+        "tries": x.tries,
+    },
+    e.TrsError: lambda x: {
+        "event": EventId.Trs,
+        "reply": TrsReply.Error,
+        "code": x.code,
+    },
 }
 
 _EVENT_DECODERS: dict[EventId, Callable[[Payload], e.Event]] = {
@@ -480,6 +626,7 @@ _EVENT_DECODERS: dict[EventId, Callable[[Payload], e.Event]] = {
     EventId.Notification: lambda p: _notification_from_payload(
         e.Notification, p
     ),
+    EventId.Trs: lambda p: _TRS_REPLY_DECODERS[TrsReply(p["reply"])](p),
 }
 
 

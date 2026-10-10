@@ -46,6 +46,9 @@ from .enums import (
     StatusReportType,
     TemporaryLEDControlCode,
     TextControlCode,
+    TrsPinComplete,
+    TrsPinFormat,
+    TrsSessionStatus,
 )
 
 __all__ = [
@@ -66,6 +69,13 @@ __all__ = [
     "TDSet",
     "TemporaryLEDParams",
     "Text",
+    "TrsCardScan",
+    "TrsEnterPin",
+    "TrsPinBlock",
+    "TrsPinLengthField",
+    "TrsSendApdu",
+    "TrsStart",
+    "TrsStop",
 ]
 
 MAX_TEXT_LEN = _sys.CMD_TEXT_MAX_LEN
@@ -85,6 +95,10 @@ MAX_BIO_TEMPLATE_LEN = _sys.CMD_BIOMATCH_MAX_TEMPLATE_LEN
 
 MAX_STATUS_REPORT_LEN = _sys.STATUS_REPORT_MAX_LEN
 """Most entries a status report can carry."""
+
+MAX_TRS_APDU_LEN = _sys.TRS_APDU_MAX_LEN
+"""Size of the APDU buffer in a TRS command. What fits on the wire is less;
+ask `ControlPanel.trs_get_max_apdu_len()`."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -694,6 +708,18 @@ class Notification:
     outcome: int = 0
     """Terminal outcome. Only meaningful at NotificationType.MultipartDone."""
 
+    status: int = 0
+    """TRS session state (C enum osdp_trs_session_status_e). Only for
+    NotificationType.TrsStatus."""
+
+    @property
+    def trs_status(self) -> TrsSessionStatus:
+        """How the reader's TRS mode changed.
+
+        Only for NotificationType.TrsStatus (reads status).
+        """
+        return TrsSessionStatus(self.status)
+
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -792,6 +818,200 @@ class CrAuth:
         check_length("data", self.data, MAX_PIV_DATA_LEN)
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TrsStart:
+    """Open a Transparent Reader Support card session (a band).
+
+    A band is the run of commands between a TrsStart and the TrsStop that
+    closes it, in submission order. The library puts the reader in
+    transparent mode and reports progress as `NotificationType.TrsStatus`
+    notifications. Inside a band only TRS commands are accepted, and a card
+    command outside one is refused.
+
+    @see osdp_trs_cmd_e
+
+    Example:
+        >>> TrsStart().ID.name
+        'Trs'
+    """
+
+    ID: ClassVar[CommandId] = CommandId.Trs
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TrsStop:
+    """Close the card session opened by `TrsStart`.
+
+    The library releases the card and restores the reader. To abandon a band
+    and the APDUs still queued in it, flush the command queue first.
+
+    @see osdp_trs_cmd_e
+    """
+
+    ID: ClassVar[CommandId] = CommandId.Trs
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TrsSendApdu:
+    """Send a C-APDU to the card, inside a band.
+
+    The PD answers with an `events.TrsCardData` carrying the R-APDU, or an
+    `events.TrsError`. A PD app submits that answer from within its command
+    handler to reply at once, or later for it to ride out on a poll.
+
+    @see osdp_trs_cmd
+    @see osdp_trs_apdu
+
+    Example:
+        >>> cmd = TrsSendApdu(apdu=bytes([0x00, 0xA4, 0x04, 0x00]))
+        >>> len(cmd.apdu)
+        4
+    """
+
+    ID: ClassVar[CommandId] = CommandId.Trs
+
+    apdu: bytes = b""
+    """The C-APDU; non-empty."""
+
+    def __post_init__(self) -> None:
+        if not self.apdu:
+            raise ValueError("apdu must not be empty")
+        check_length("apdu", self.apdu, MAX_TRS_APDU_LEN)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TrsPinBlock:
+    """Where, and how, a reader writes the entered PIN into the C-APDU.
+
+    @see osdp_trs_pin_entry
+    """
+
+    format: TrsPinFormat
+    """How the PIN digits are encoded."""
+
+    right_justify: bool = False
+    """Right-justify the PIN within the block rather than left-justify it."""
+
+    offset_bits: int = 0
+    """Position of the block in the APDU payload, in bits."""
+
+    size_bytes: int
+    """Block size in bytes, as defined by the card scheme (8 for EMV)."""
+
+    def __post_init__(self) -> None:
+        check_range("offset_bits", self.offset_bits, UINT16_MAX)
+        check_range("size_bytes", self.size_bytes, UINT8_MAX)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TrsPinLengthField:
+    """Where a reader records how many digits were entered, if anywhere.
+
+    @see osdp_trs_pin_entry
+    """
+
+    size_bits: int = 0
+    """Size of the field in bits; zero when the APDU has no such field."""
+
+    offset_bits: int = 0
+    """Position of the field in the APDU payload, in bits."""
+
+    def __post_init__(self) -> None:
+        check_range("size_bits", self.size_bits, UINT8_MAX)
+        check_range("offset_bits", self.offset_bits, UINT16_MAX)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TrsEnterPin:
+    """Have the reader prompt for a PIN, insert it into `apdu` and send that
+    to the card, inside a band.
+
+    The PD answers with an `events.TrsPinComplete`. The CP waits as long as
+    the person takes. Positions the wire cannot express (not byte-aligned
+    past 15 bits, or a block or length field over 15) make the library refuse
+    the submission.
+
+    @see osdp_trs_pin_entry
+
+    Example:
+        >>> cmd = TrsEnterPin(
+        ...     pin_block=TrsPinBlock(format=TrsPinFormat.BCD, size_bytes=8,
+        ...                           offset_bits=40),
+        ...     min_digits=4, max_digits=8,
+        ...     complete_on=TrsPinComplete.Key | TrsPinComplete.MaxDigits,
+        ...     apdu=bytes([0x00, 0x20, 0x00, 0x80, 0x08]) + bytes(8))
+        >>> cmd.pin_length_field.size_bits
+        0
+    """
+
+    ID: ClassVar[CommandId] = CommandId.Trs
+
+    timeout_initial: int = 0
+    """Seconds to wait for the first digit; zero for the reader's default."""
+
+    timeout_digit: int = 0
+    """Seconds to wait for each further digit."""
+
+    pin_block: TrsPinBlock
+    """Where and how the PIN goes into `apdu`."""
+
+    pin_length_field: TrsPinLengthField = TrsPinLengthField()
+    """Where the number of digits entered goes into `apdu`, if anywhere."""
+
+    min_digits: int = 0
+    """Shortest PIN accepted."""
+
+    max_digits: int = 0
+    """Longest PIN accepted."""
+
+    complete_on: TrsPinComplete = TrsPinComplete(0)
+    """What ends the entry."""
+
+    num_messages: int = 0
+    """Number of display messages."""
+
+    language_id: int = 0
+    """Display language."""
+
+    msg_index: int = 0
+    """Index of the message to display."""
+
+    teo_prologue: bytes = b"\x00\x00\x00"
+    """T=1 protocol prologue; exactly 3 bytes."""
+
+    apdu: bytes = b""
+    """The C-APDU the PIN is written into; non-empty."""
+
+    def __post_init__(self) -> None:
+        check_range("timeout_initial", self.timeout_initial, UINT8_MAX)
+        check_range("timeout_digit", self.timeout_digit, UINT8_MAX)
+        check_range("min_digits", self.min_digits, UINT8_MAX)
+        check_range("max_digits", self.max_digits, UINT8_MAX)
+        check_range("complete_on", self.complete_on, UINT32_MAX)
+        check_range("num_messages", self.num_messages, UINT8_MAX)
+        check_range("language_id", self.language_id, UINT16_MAX)
+        check_range("msg_index", self.msg_index, UINT8_MAX)
+        if len(self.teo_prologue) != 3:
+            raise ValueError("teo_prologue must be exactly 3 bytes")
+        if not self.apdu:
+            raise ValueError("apdu must not be empty")
+        check_length("apdu", self.apdu, MAX_TRS_APDU_LEN)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TrsCardScan:
+    """Ask the reader whether a card is in the field, inside a band.
+
+    The PD answers with an `events.TrsCardPresent`, or says nothing if the
+    reader cannot tell. For a scan that runs on its own between bands, see
+    `ControlPanel.trs_scan_enable()`.
+
+    @see osdp_trs_cmd_e
+    """
+
+    ID: ClassVar[CommandId] = CommandId.Trs
+
+
 Command: TypeAlias = (
     Output
     | LED
@@ -810,5 +1030,10 @@ Command: TypeAlias = (
     | FileTransfer
     | Status
     | Notification
+    | TrsStart
+    | TrsStop
+    | TrsSendApdu
+    | TrsEnterPin
+    | TrsCardScan
 )
 """Any command. Match on it to tell the members apart."""

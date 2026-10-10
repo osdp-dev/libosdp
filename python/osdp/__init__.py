@@ -48,6 +48,13 @@ from .enums import (
     StatusReportType,
     TemporaryLEDControlCode,
     TextControlCode,
+    TrsCardProtocol,
+    TrsCardStatus,
+    TrsCommand,
+    TrsPinComplete,
+    TrsPinFormat,
+    TrsReply,
+    TrsSessionStatus,
 )
 from .errors import MarshalError, NakError, OSDPError
 from .events import Event
@@ -123,4 +130,11 @@ __all__ = [
     "StatusReportType",
     "TemporaryLEDControlCode",
     "TextControlCode",
+    "TrsCardProtocol",
+    "TrsCardStatus",
+    "TrsCommand",
+    "TrsPinComplete",
+    "TrsPinFormat",
+    "TrsReply",
+    "TrsSessionStatus",
 ]

@@ -37,6 +37,13 @@ __all__ = [
     "StatusReportType",
     "TemporaryLEDControlCode",
     "TextControlCode",
+    "TrsCardProtocol",
+    "TrsCardStatus",
+    "TrsCommand",
+    "TrsPinComplete",
+    "TrsPinFormat",
+    "TrsReply",
+    "TrsSessionStatus",
 ]
 
 
@@ -122,6 +129,8 @@ class CommandId(IntEnum):
     PivData = _sys.CMD_PIVDATA
     GenAuth = _sys.CMD_GENAUTH
     CrAuth = _sys.CMD_CRAUTH
+    Trs = _sys.CMD_XWR
+    """Transparent Reader Support; every `commands.Trs*` class carries it."""
 
 
 class EventId(IntEnum):
@@ -142,6 +151,8 @@ class EventId(IntEnum):
     PivData = _sys.EVENT_PIVDATAR
     GenAuth = _sys.EVENT_GENAUTHR
     CrAuth = _sys.EVENT_CRAUTHR
+    Trs = _sys.EVENT_TRS
+    """Transparent Reader Support; every `events.Trs*` class carries it."""
 
 
 class LEDColor(_WireEnum):
@@ -283,6 +294,10 @@ class NotificationType(IntEnum):
     PdId = _sys.NOTIFICATION_PD_ID
     """PD identity collected (CP mode). Carries the PD id fields (vendor_code,
     model, version, serial_number, firmware_version)."""
+
+    TrsStatus = _sys.NOTIFICATION_TRS_STATUS
+    """A TRS card session changed state. Carries `status`, a
+    `TrsSessionStatus`."""
 
 
 class MpMsgType(_WireEnum):
@@ -443,3 +458,119 @@ class Capability(IntEnum):
     Biometrics = _sys.CAP_BIOMETRICS
     SecurePinEntry = _sys.CAP_SECURE_PIN_ENTRY
     OSDPVersion = _sys.CAP_OSDP_VERSION
+
+
+class TrsCommand(IntEnum):
+    """Which Transparent Reader Support command a `commands.Trs*` class is.
+
+    @see osdp_trs_cmd_e
+    """
+
+    Start = _sys.TRS_CMD_START
+    """Open a card session."""
+
+    Stop = _sys.TRS_CMD_STOP
+    """Close the card session opened by Start."""
+
+    SendApdu = _sys.TRS_CMD_SEND_APDU
+    """Send a C-APDU to the card."""
+
+    EnterPin = _sys.TRS_CMD_ENTER_PIN
+    """Have the reader collect a PIN and send it to the card."""
+
+    CardScan = _sys.TRS_CMD_CARD_SCAN
+    """Ask the reader whether a card is in the field."""
+
+
+class TrsReply(IntEnum):
+    """Which Transparent Reader Support reply an `events.Trs*` class is.
+
+    @see osdp_trs_reply_e
+    """
+
+    CardInfo = _sys.TRS_REPLY_CARD_INFO
+    CardPresent = _sys.TRS_REPLY_CARD_PRESENT
+    CardData = _sys.TRS_REPLY_CARD_DATA
+    PinComplete = _sys.TRS_REPLY_PIN_COMPLETE
+    Error = _sys.TRS_REPLY_ERROR
+
+
+class TrsSessionStatus(IntEnum):
+    """Life-cycle of a TRS card session, carried by a TrsStatus notification.
+
+    A PD is told only Opened, Closed and CardReleased; the rest are the CP's.
+
+    @see osdp_trs_session_status_e
+    """
+
+    Opened = _sys.TRS_SESSION_OPENED
+    """The reader is in transparent mode; APDUs flow."""
+
+    Closed = _sys.TRS_SESSION_CLOSED
+    """The session ended, or (on a PD) the CP took the reader out of
+    transparent mode or restarted the link."""
+
+    Failed = _sys.TRS_SESSION_FAILED
+    """The PD refused transparent mode, or a link error cut the session short."""
+
+    ScanSuspended = _sys.TRS_SCAN_SUSPENDED
+    """The reader refused a presence-scan probe; probing backs off and goes on."""
+
+    ScanNoDeparture = _sys.TRS_SCAN_NO_DEPARTURE
+    """The reader cannot answer a card scan, so card removal will not be
+    reported."""
+
+    CardReleased = _sys.TRS_CARD_RELEASED
+    """PD only: the CP ended its transaction with the card. Disconnect it."""
+
+
+class TrsPinFormat(_WireEnum):
+    """Encoding of the PIN digits a reader inserts into the C-APDU.
+
+    @see osdp_trs_pin_format_e
+    """
+
+    Binary = _sys.TRS_PIN_FORMAT_BINARY
+    BCD = _sys.TRS_PIN_FORMAT_BCD
+    ASCII = _sys.TRS_PIN_FORMAT_ASCII
+
+
+class TrsPinComplete(IntFlag):
+    """Conditions that end PIN entry. @see osdp_trs_pin_complete_e"""
+
+    MaxDigits = _sys.TRS_PIN_COMPLETE_ON_MAX_DIGITS
+    """The maximum number of digits has been entered."""
+
+    Key = _sys.TRS_PIN_COMPLETE_ON_KEY
+    """The validation (enter) key was pressed."""
+
+    Timeout = _sys.TRS_PIN_COMPLETE_ON_TIMEOUT
+    """Entry timed out."""
+
+
+class TrsCardProtocol(_WireEnum):
+    """How a card in the field talks. @see osdp_trs_card_protocol_e"""
+
+    Contact = _sys.TRS_CARD_PROTOCOL_CONTACT
+    """ISO 7816 contact (T=0/T=1)."""
+
+    Contactless = _sys.TRS_CARD_PROTOCOL_CONTACTLESS
+    """ISO 14443 A/B contactless."""
+
+
+class TrsCardStatus(_WireEnum):
+    """Smart-card presence reported by a reader. @see osdp_trs_card_status_e
+
+    Test for a card with the named values, not for "not NotPresent": Unknown
+    is neither.
+    """
+
+    Unknown = _sys.TRS_CARD_STATUS_UNKNOWN
+    """No presence has been reported."""
+
+    NotPresent = _sys.TRS_CARD_NOT_PRESENT
+    Present = _sys.TRS_CARD_PRESENT
+    """A card is present; the reader does not say on which interface."""
+
+    PresentContactless = _sys.TRS_CARD_PRESENT_CONTACTLESS
+    PresentContact = _sys.TRS_CARD_PRESENT_CONTACT

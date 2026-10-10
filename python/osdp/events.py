@@ -36,6 +36,9 @@ from .enums import (
     MpOutcome,
     NotificationType,
     StatusReportType,
+    TrsCardProtocol,
+    TrsCardStatus,
+    TrsSessionStatus,
 )
 from .types import PdId
 
@@ -50,6 +53,11 @@ __all__ = [
     "ManufacturerStatus",
     "Notification",
     "Status",
+    "TrsCardData",
+    "TrsCardInfo",
+    "TrsCardPresent",
+    "TrsError",
+    "TrsPinComplete",
 ]
 
 MAX_CARD_DATA_LEN = _sys.EVENT_CARDREAD_MAX_DATALEN
@@ -69,6 +77,15 @@ MAX_PIV_DATA_LEN = _sys.PIV_DATA_MAX_LEN
 
 MAX_STATUS_REPORT_LEN = _sys.STATUS_REPORT_MAX_LEN
 """Most entries a status report can carry."""
+
+MAX_TRS_APDU_LEN = _sys.TRS_APDU_MAX_LEN
+"""Longest R-APDU a TrsCardData can carry."""
+
+MAX_TRS_CSN_LEN = _sys.TRS_CSN_MAX_LEN
+"""Longest card serial number a TrsCardInfo can carry."""
+
+MAX_TRS_PROTOCOL_DATA_LEN = _sys.TRS_PROTOCOL_DATA_MAX_LEN
+"""Longest ATR/ATS a TrsCardInfo can carry."""
 
 _RAW_CARD_FORMATS = (CardFormat.Unspecified, CardFormat.Wiegand)
 
@@ -413,6 +430,10 @@ class Notification:
     firmware_version: int = 0
     """PD firmware version. Only for NotificationType.PdId."""
 
+    status: int = 0
+    """TRS session state (C enum osdp_trs_session_status_e). Only for
+    NotificationType.TrsStatus."""
+
     @property
     def sc_active(self) -> bool:
         """Whether the secure channel is up.
@@ -455,6 +476,14 @@ class Notification:
         Only for NotificationType.MultipartDone (reads outcome).
         """
         return MpOutcome(self.outcome)
+
+    @property
+    def trs_status(self) -> TrsSessionStatus:
+        """How the TRS card session changed.
+
+        Only for NotificationType.TrsStatus (reads status).
+        """
+        return TrsSessionStatus(self.status)
 
 
 
@@ -521,6 +550,147 @@ class CrAuth:
         check_length("data", self.data, MAX_PIV_DATA_LEN)
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TrsCardInfo:
+    """A smart card entered a reader's field.
+
+    Readers report this on their own, or while a presence scan holds them in
+    transparent mode; either way, open a band (`commands.TrsStart`) to talk to
+    the card.
+
+    @see osdp_trs_card_info
+
+    Example:
+        >>> event = TrsCardInfo(protocol=TrsCardProtocol.Contactless,
+        ...                     csn=bytes([0x04, 0xA2, 0x2B, 0x7C]))
+        >>> event.protocol.name
+        'Contactless'
+    """
+
+    ID: ClassVar[EventId] = EventId.Trs
+
+    reader: int = 0
+    """Zero-based reader number."""
+
+    protocol: TrsCardProtocol = TrsCardProtocol.Contactless
+    """How the card talks."""
+
+    csn: bytes = b""
+    """Card serial number, at most 32 bytes."""
+
+    protocol_data: bytes = b""
+    """ATR (contact) or ATS/ATQB (contactless), at most 64 bytes."""
+
+    def __post_init__(self) -> None:
+        check_range("reader", self.reader, UINT8_MAX)
+        check_length("csn", self.csn, MAX_TRS_CSN_LEN)
+        check_length("protocol_data", self.protocol_data,
+                     MAX_TRS_PROTOCOL_DATA_LEN)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TrsCardPresent:
+    """Whether a card is in a reader's field.
+
+    A PD's answer to a `commands.TrsCardScan`, and what a presence scan
+    reports when it sights a card.
+
+    @see osdp_trs_card_present
+
+    Example:
+        >>> TrsCardPresent(status=TrsCardStatus.PresentContactless).status.name
+        'PresentContactless'
+    """
+
+    ID: ClassVar[EventId] = EventId.Trs
+
+    reader: int = 0
+    """Zero-based reader number."""
+
+    status: TrsCardStatus = TrsCardStatus.Present
+    """Whether, and on which interface, a card is present."""
+
+    def __post_init__(self) -> None:
+        check_range("reader", self.reader, UINT8_MAX)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TrsCardData:
+    """A PD's answer to a `commands.TrsSendApdu`: the card's R-APDU.
+
+    @see osdp_trs_card_data
+
+    Example:
+        >>> event = TrsCardData(apdu=bytes([0x90, 0x00]))
+        >>> event.apdu[-2:]
+        b'\\x90\\x00'
+    """
+
+    ID: ClassVar[EventId] = EventId.Trs
+
+    reader: int = 0
+    """Zero-based reader number."""
+
+    status: int = 0
+    """Outcome of the exchange as the reader reports it; reader-defined."""
+
+    apdu: bytes = b""
+    """The R-APDU."""
+
+    def __post_init__(self) -> None:
+        check_range("reader", self.reader, UINT8_MAX)
+        check_range("status", self.status, UINT8_MAX)
+        check_length("apdu", self.apdu, MAX_TRS_APDU_LEN)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TrsPinComplete:
+    """A PD's answer to a `commands.TrsEnterPin`.
+
+    @see osdp_trs_pin_complete
+
+    Example:
+        >>> TrsPinComplete(tries=1).tries
+        1
+    """
+
+    ID: ClassVar[EventId] = EventId.Trs
+
+    reader: int = 0
+    """Zero-based reader number."""
+
+    status: int = 0
+    """Outcome of the PIN entry as the reader reports it; reader-defined."""
+
+    tries: int = 0
+    """Number of PIN entry attempts."""
+
+    def __post_init__(self) -> None:
+        check_range("reader", self.reader, UINT8_MAX)
+        check_range("status", self.status, UINT8_MAX)
+        check_range("tries", self.tries, UINT8_MAX)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TrsError:
+    """The reader or the card refused a TRS command.
+
+    @see osdp_trs_error
+
+    Example:
+        >>> TrsError(code=0x6A).code
+        106
+    """
+
+    ID: ClassVar[EventId] = EventId.Trs
+
+    code: int = 0
+    """Error condition from the reader or card; reader-defined."""
+
+    def __post_init__(self) -> None:
+        check_range("code", self.code, UINT8_MAX)
+
+
 Event: TypeAlias = (
     CardRead
     | KeyPress
@@ -534,5 +704,10 @@ Event: TypeAlias = (
     | CrAuth
     | Status
     | Notification
+    | TrsCardInfo
+    | TrsCardPresent
+    | TrsCardData
+    | TrsPinComplete
+    | TrsError
 )
 """Any event. Match on it to tell the members apart."""

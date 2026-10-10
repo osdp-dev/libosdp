@@ -36,6 +36,11 @@ from osdp.enums import (
     StatusReportType,
     TemporaryLEDControlCode,
     TextControlCode,
+    TrsCardProtocol,
+    TrsCardStatus,
+    TrsPinComplete,
+    TrsPinFormat,
+    TrsSessionStatus,
 )
 from osdp.errors import MarshalError
 
@@ -115,6 +120,34 @@ ALL_COMMANDS = [
         algorithm=1, key=2, data=bytes(range(256))[:commands.MAX_PIV_DATA_LEN]
     ),
     commands.CrAuth(algorithm=0x11, key=0x22, data=b"\x00\x01\x02"),
+    commands.Notification(
+        type=NotificationType.TrsStatus,
+        status=int(TrsSessionStatus.CardReleased),
+    ),
+    commands.TrsStart(),
+    commands.TrsStop(),
+    commands.TrsCardScan(),
+    commands.TrsSendApdu(apdu=bytes([0x00, 0xA4, 0x04, 0x00, 0x0E])),
+    commands.TrsSendApdu(apdu=bytes(commands.MAX_TRS_APDU_LEN)),
+    commands.TrsEnterPin(
+        timeout_initial=30,
+        timeout_digit=5,
+        pin_block=commands.TrsPinBlock(
+            format=TrsPinFormat.BCD, right_justify=True, offset_bits=40,
+            size_bytes=8,
+        ),
+        pin_length_field=commands.TrsPinLengthField(
+            size_bits=4, offset_bits=36
+        ),
+        min_digits=4,
+        max_digits=12,
+        complete_on=TrsPinComplete.Key | TrsPinComplete.Timeout,
+        num_messages=1,
+        language_id=0x0409,
+        msg_index=2,
+        teo_prologue=b"\x00\x40\x0d",
+        apdu=bytes([0x00, 0x20, 0x00, 0x80, 0x08]) + bytes(8),
+    ),
 ]
 
 ALL_EVENTS = [
@@ -155,6 +188,23 @@ ALL_EVENTS = [
     events.PivData(data=b"piv-object-contents"),
     events.GenAuth(data=b"auth-response"),
     events.CrAuth(data=b"challenge-response"),
+    events.Notification(
+        type=NotificationType.TrsStatus,
+        status=int(TrsSessionStatus.Opened),
+    ),
+    events.TrsCardInfo(
+        reader=1,
+        protocol=TrsCardProtocol.Contact,
+        csn=bytes([0x04, 0xA2, 0x2B, 0x7C]),
+        protocol_data=bytes([0x3B, 0x8F, 0x80, 0x01]),
+    ),
+    events.TrsCardInfo(),
+    events.TrsCardPresent(status=TrsCardStatus.PresentContactless),
+    events.TrsCardPresent(status=TrsCardStatus.NotPresent),
+    events.TrsCardData(status=1, apdu=bytes([0x6F, 0x1A, 0x90, 0x00])),
+    events.TrsCardData(),
+    events.TrsPinComplete(reader=1, status=2, tries=3),
+    events.TrsError(code=0x6A),
 ]
 
 

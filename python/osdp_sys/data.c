@@ -19,6 +19,7 @@ enum pyosdp_field_kind {
 	FIELD_U16,
 	FIELD_U32,
 	FIELD_INT,
+	FIELD_BOOL,
 	FIELD_BYTES, /* a buffer, with its length held in another field */
 	FIELD_STR, /* UTF-8 into a buffer, with its length held likewise */
 	FIELD_SUBDICT, /* a nested struct, marshalled as a nested dict */
@@ -39,6 +40,7 @@ struct pyosdp_field {
 	/* FIELD_SUBDICT */
 	const struct pyosdp_field *fields;
 	size_t present_offset; /* nested block is absent when this byte is 0 */
+	bool required; /* nested block is never absent; present_offset unused */
 };
 
 #define INT_FIELD(st, member, int_kind)                                        \
@@ -80,6 +82,9 @@ ASSERT_INT_SIZED(struct osdp_cmd_biomatch, format);
 ASSERT_INT_SIZED(struct osdp_event_bioreadr, status);
 ASSERT_INT_SIZED(struct osdp_event_bioreadr, type);
 ASSERT_INT_SIZED(struct osdp_event_biomatchr, status);
+ASSERT_INT_SIZED(struct osdp_trs_pin_entry, pin_block.format);
+ASSERT_INT_SIZED(struct osdp_trs_card_info, protocol);
+ASSERT_INT_SIZED(struct osdp_trs_card_present, status);
 
 /* --- Field access --- */
 
@@ -97,6 +102,8 @@ static int field_get_int(const void *base, size_t offset,
 		return (int)*(const uint32_t *)p;
 	case FIELD_INT:
 		return *(const int *)p;
+	case FIELD_BOOL:
+		return *(const bool *)p;
 	default:
 		return -1;
 	}
@@ -119,6 +126,9 @@ static void field_set_int(void *base, size_t offset,
 		break;
 	case FIELD_INT:
 		*(int *)p = val;
+		break;
+	case FIELD_BOOL:
+		*(bool *)p = val != 0;
 		break;
 	default:
 		break;
@@ -143,6 +153,7 @@ static int field_to_dict(PyObject *obj, const void *base,
 	case FIELD_U16:
 	case FIELD_U32:
 	case FIELD_INT:
+	case FIELD_BOOL:
 		return pyosdp_dict_add_int(
 			obj, f->key, field_get_int(base, f->offset, f->kind));
 	case FIELD_BYTES:
@@ -165,7 +176,8 @@ static int field_to_dict(PyObject *obj, const void *base,
 		str[len] = '\0';
 		return pyosdp_dict_add_str(obj, f->key, str);
 	case FIELD_SUBDICT:
-		if (field_get_int(data, f->present_offset, FIELD_U8) == 0)
+		if (!f->required &&
+		    field_get_int(data, f->present_offset, FIELD_U8) == 0)
 			return 0; /* this block does nothing; leave it out */
 		child = PyDict_New();
 		if (child == NULL)
@@ -211,6 +223,7 @@ static int field_to_struct(void *base, PyObject *dict,
 	case FIELD_U16:
 	case FIELD_U32:
 	case FIELD_INT:
+	case FIELD_BOOL:
 		if (pyosdp_dict_get_int(dict, f->key, &val))
 			return -1;
 		field_set_int(base, f->offset, f->kind, val);
@@ -255,6 +268,11 @@ static int field_to_struct(void *base, PyObject *dict,
 		return 0;
 	case FIELD_SUBDICT:
 		item = PyDict_GetItemString(dict, f->key);
+		if (item == NULL && f->required) {
+			PyErr_Format(PyExc_KeyError,
+				     "Key: '%s' of type: dict expected", f->key);
+			return -1;
+		}
 		if (item == NULL)
 			return 0; /* an absent block stays zeroed: no action */
 		if (!PyDict_Check(item)) {
@@ -520,10 +538,152 @@ static int pyosdp_make_struct_cmd_pivdata(void *payload, PyObject *dict)
 	return 0;
 }
 
+static const struct pyosdp_field trs_send_apdu_fields[] = {
+	{
+		.key = "apdu",
+		.kind = FIELD_BYTES,
+		.offset = offsetof(struct osdp_trs_cmd, apdu.data),
+		.len_offset = offsetof(struct osdp_trs_cmd, apdu.length),
+		.len_kind = FIELD_U16,
+		.max_len = OSDP_TRS_APDU_MAX_LEN,
+	},
+	END_OF_FIELDS,
+};
+
+/* The PIN block and PIN length field are anonymous structs, so their members
+ * are placed relative to the start of the struct that encloses them. */
+#define PIN_ENTRY_FIELD(block, member, field_kind)                             \
+	{                                                                      \
+		.key = #member,                                                \
+		.kind = field_kind,                                            \
+		.offset = offsetof(struct osdp_trs_pin_entry, block.member) -  \
+			  offsetof(struct osdp_trs_pin_entry, block),          \
+	}
+
+static const struct pyosdp_field trs_pin_block_fields[] = {
+	PIN_ENTRY_FIELD(pin_block, format, FIELD_INT),
+	PIN_ENTRY_FIELD(pin_block, right_justify, FIELD_BOOL),
+	PIN_ENTRY_FIELD(pin_block, offset_bits, FIELD_U16),
+	PIN_ENTRY_FIELD(pin_block, size_bytes, FIELD_U8),
+	END_OF_FIELDS,
+};
+
+static const struct pyosdp_field trs_pin_length_field_fields[] = {
+	PIN_ENTRY_FIELD(pin_length_field, size_bits, FIELD_U8),
+	PIN_ENTRY_FIELD(pin_length_field, offset_bits, FIELD_U16),
+	END_OF_FIELDS,
+};
+
+static const struct pyosdp_field trs_pin_entry_fields[] = {
+	U8_FIELD(struct osdp_trs_pin_entry, timeout_initial),
+	U8_FIELD(struct osdp_trs_pin_entry, timeout_digit),
+	{
+		.key = "pin_block",
+		.kind = FIELD_SUBDICT,
+		.offset = offsetof(struct osdp_trs_pin_entry, pin_block),
+		.fields = trs_pin_block_fields,
+		.required = true,
+	},
+	{
+		.key = "pin_length_field",
+		.kind = FIELD_SUBDICT,
+		.offset = offsetof(struct osdp_trs_pin_entry, pin_length_field),
+		.fields = trs_pin_length_field_fields,
+		.required = true,
+	},
+	U8_FIELD(struct osdp_trs_pin_entry, min_digits),
+	U8_FIELD(struct osdp_trs_pin_entry, max_digits),
+	U32_FIELD(struct osdp_trs_pin_entry, complete_on),
+	U8_FIELD(struct osdp_trs_pin_entry, num_messages),
+	U16_FIELD(struct osdp_trs_pin_entry, language_id),
+	U8_FIELD(struct osdp_trs_pin_entry, msg_index),
+	{
+		.key = "apdu",
+		.kind = FIELD_BYTES,
+		.offset = offsetof(struct osdp_trs_pin_entry, apdu.data),
+		.len_offset = offsetof(struct osdp_trs_pin_entry, apdu.length),
+		.len_kind = FIELD_U16,
+		.max_len = OSDP_TRS_APDU_MAX_LEN,
+	},
+	END_OF_FIELDS,
+};
+
+/*
+ * A TRS command is a union keyed by its own `command`. That name is taken in
+ * the dict by the OSDP command id, so the TRS one travels as "trs_command".
+ * The members of the union a command carries sit beside it, as do those of the
+ * PIN entry; its T=1 prologue is a fixed array with no length field, which
+ * the field kinds cannot express, so it is marshalled by hand.
+ */
+static int pyosdp_make_dict_cmd_trs(PyObject *obj, const void *payload)
+{
+	const struct osdp_trs_cmd *t = payload;
+	const struct osdp_trs_pin_entry *pe = &t->pin_entry;
+
+	if (pyosdp_dict_add_int(obj, "trs_command", t->command))
+		return -1;
+	switch (t->command) {
+	case OSDP_TRS_CMD_START:
+	case OSDP_TRS_CMD_STOP:
+	case OSDP_TRS_CMD_CARD_SCAN:
+		return 0;
+	case OSDP_TRS_CMD_SEND_APDU:
+		return pyosdp_fields_to_dict(obj, t, trs_send_apdu_fields);
+	case OSDP_TRS_CMD_ENTER_PIN:
+		if (pyosdp_fields_to_dict(obj, pe, trs_pin_entry_fields))
+			return -1;
+		return pyosdp_dict_add_bytes(obj, "teo_prologue",
+					     pe->teo_prologue,
+					     sizeof(pe->teo_prologue));
+	}
+	PyErr_Format(PyExc_ValueError, "Unknown TRS command: %d", t->command);
+	return -1;
+}
+
+static int pyosdp_make_struct_cmd_trs(void *payload, PyObject *dict)
+{
+	struct osdp_trs_cmd *t = payload;
+	struct osdp_trs_pin_entry *pe = &t->pin_entry;
+	uint8_t *teo_prologue;
+	int command, len;
+
+	if (pyosdp_dict_get_int(dict, "trs_command", &command))
+		return -1;
+	switch (command) {
+	case OSDP_TRS_CMD_START:
+	case OSDP_TRS_CMD_STOP:
+	case OSDP_TRS_CMD_CARD_SCAN:
+		break;
+	case OSDP_TRS_CMD_SEND_APDU:
+		if (pyosdp_fields_to_struct(t, dict, trs_send_apdu_fields))
+			return -1;
+		break;
+	case OSDP_TRS_CMD_ENTER_PIN:
+		if (pyosdp_fields_to_struct(pe, dict, trs_pin_entry_fields) ||
+		    pyosdp_dict_get_bytes(dict, "teo_prologue", &teo_prologue,
+					  &len))
+			return -1;
+		if (len != (int)sizeof(pe->teo_prologue)) {
+			PyErr_Format(PyExc_ValueError,
+				     "teo_prologue must be %zu bytes",
+				     sizeof(pe->teo_prologue));
+			return -1;
+		}
+		memcpy(pe->teo_prologue, teo_prologue, sizeof(pe->teo_prologue));
+		break;
+	default:
+		PyErr_Format(PyExc_ValueError, "Unknown TRS command: %d",
+			     command);
+		return -1;
+	}
+	t->command = (enum osdp_trs_cmd_e)command;
+	return 0;
+}
+
 /*
  * A notification's payload is a union keyed by `type`: each kind carries its
- * own typed struct (sc_status/pd_status/mp). Emit/consume the dict keys
- * the type selects so every field survives the round trip.
+ * own typed struct (sc_status/pd_status/mp/pd_id/trs_status). Emit/consume
+ * the dict keys the type selects so every field survives the round trip.
  */
 static int pyosdp_make_dict_notification(PyObject *obj, const void *payload)
 {
@@ -560,6 +720,10 @@ static int pyosdp_make_dict_notification(PyObject *obj, const void *payload)
 					n->pd_id.serial_number) ||
 		    pyosdp_dict_add_int(obj, "firmware_version",
 					n->pd_id.firmware_version))
+			return -1;
+		break;
+	case OSDP_NOTIFICATION_TRS_STATUS:
+		if (pyosdp_dict_add_int(obj, "status", n->trs_status.status))
 			return -1;
 		break;
 	default:
@@ -625,6 +789,11 @@ static int pyosdp_make_struct_notification(void *payload, PyObject *dict)
 		if (pyosdp_dict_get_int(dict, "firmware_version", &val))
 			return -1;
 		n->pd_id.firmware_version = (uint32_t)val;
+		break;
+	case OSDP_NOTIFICATION_TRS_STATUS:
+		if (pyosdp_dict_get_int(dict, "status", &val))
+			return -1;
+		n->trs_status.status = (enum osdp_trs_session_status_e)val;
 		break;
 	default:
 		break;
@@ -783,6 +952,113 @@ static const struct pyosdp_field event_status_fields[] = {
 	END_OF_FIELDS,
 };
 
+static const struct pyosdp_field trs_card_info_fields[] = {
+	U8_FIELD(struct osdp_trs_card_info, reader),
+	INT_FIELD_(struct osdp_trs_card_info, protocol),
+	{
+		.key = "csn",
+		.kind = FIELD_BYTES,
+		.offset = offsetof(struct osdp_trs_card_info, csn),
+		.len_offset = offsetof(struct osdp_trs_card_info, csn_len),
+		.len_kind = FIELD_U8,
+		.max_len = OSDP_TRS_CSN_MAX_LEN,
+		.allow_empty = true,
+	},
+	{
+		.key = "protocol_data",
+		.kind = FIELD_BYTES,
+		.offset = offsetof(struct osdp_trs_card_info, protocol_data),
+		.len_offset =
+			offsetof(struct osdp_trs_card_info, protocol_data_len),
+		.len_kind = FIELD_U8,
+		.max_len = OSDP_TRS_PROTOCOL_DATA_MAX_LEN,
+		.allow_empty = true,
+	},
+	END_OF_FIELDS,
+};
+
+static const struct pyosdp_field trs_card_present_fields[] = {
+	U8_FIELD(struct osdp_trs_card_present, reader),
+	INT_FIELD_(struct osdp_trs_card_present, status),
+	END_OF_FIELDS,
+};
+
+static const struct pyosdp_field trs_card_data_fields[] = {
+	U8_FIELD(struct osdp_trs_card_data, reader),
+	U8_FIELD(struct osdp_trs_card_data, status),
+	{
+		/* What the card returned, if anything, is the card's business */
+		.key = "apdu",
+		.kind = FIELD_BYTES,
+		.offset = offsetof(struct osdp_trs_card_data, apdu.data),
+		.len_offset = offsetof(struct osdp_trs_card_data, apdu.length),
+		.len_kind = FIELD_U16,
+		.max_len = OSDP_TRS_APDU_MAX_LEN,
+		.allow_empty = true,
+	},
+	END_OF_FIELDS,
+};
+
+static const struct pyosdp_field trs_pin_complete_fields[] = {
+	U8_FIELD(struct osdp_trs_pin_complete, reader),
+	U8_FIELD(struct osdp_trs_pin_complete, status),
+	U8_FIELD(struct osdp_trs_pin_complete, tries),
+	END_OF_FIELDS,
+};
+
+static const struct pyosdp_field trs_error_fields[] = {
+	U8_FIELD(struct osdp_trs_error, code),
+	END_OF_FIELDS,
+};
+
+static const struct pyosdp_field *trs_reply_fields(int reply)
+{
+	switch (reply) {
+	case OSDP_TRS_REPLY_CARD_INFO:
+		return trs_card_info_fields;
+	case OSDP_TRS_REPLY_CARD_PRESENT:
+		return trs_card_present_fields;
+	case OSDP_TRS_REPLY_CARD_DATA:
+		return trs_card_data_fields;
+	case OSDP_TRS_REPLY_PIN_COMPLETE:
+		return trs_pin_complete_fields;
+	case OSDP_TRS_REPLY_ERROR:
+		return trs_error_fields;
+	}
+	PyErr_Format(PyExc_ValueError, "Unknown TRS reply: %d", reply);
+	return NULL;
+}
+
+/*
+ * A TRS reply is a union keyed by `reply`; the members of the one it carries
+ * sit beside it in the dict. Every member begins at the same address.
+ */
+static int pyosdp_make_dict_event_trs(PyObject *obj, const void *payload)
+{
+	const struct osdp_trs_reply *r = payload;
+	const struct pyosdp_field *fields = trs_reply_fields(r->reply);
+
+	if (fields == NULL || pyosdp_dict_add_int(obj, "reply", r->reply))
+		return -1;
+	return pyosdp_fields_to_dict(obj, &r->card_info, fields);
+}
+
+static int pyosdp_make_struct_event_trs(void *payload, PyObject *dict)
+{
+	struct osdp_trs_reply *r = payload;
+	const struct pyosdp_field *fields;
+	int reply;
+
+	if (pyosdp_dict_get_int(dict, "reply", &reply))
+		return -1;
+	fields = trs_reply_fields(reply);
+	if (fields == NULL ||
+	    pyosdp_fields_to_struct(&r->card_info, dict, fields))
+		return -1;
+	r->reply = (enum osdp_trs_reply_e)reply;
+	return 0;
+}
+
 /* --- Translators --- */
 
 struct pyosdp_translator {
@@ -816,6 +1092,10 @@ static const struct pyosdp_translator command_translator[OSDP_CMD_SENTINEL] = {
 		.to_dict = pyosdp_make_dict_notification,
 		.to_struct = pyosdp_make_struct_notification,
 	},
+	[OSDP_CMD_XWR] = {
+		.to_dict = pyosdp_make_dict_cmd_trs,
+		.to_struct = pyosdp_make_struct_cmd_trs,
+	},
 };
 
 static const struct pyosdp_translator event_translator[OSDP_EVENT_SENTINEL] = {
@@ -836,6 +1116,10 @@ static const struct pyosdp_translator event_translator[OSDP_EVENT_SENTINEL] = {
 	[OSDP_EVENT_NOTIFICATION] = {
 		.to_dict = pyosdp_make_dict_notification,
 		.to_struct = pyosdp_make_struct_notification,
+	},
+	[OSDP_EVENT_TRS] = {
+		.to_dict = pyosdp_make_dict_event_trs,
+		.to_struct = pyosdp_make_struct_event_trs,
 	},
 };
 

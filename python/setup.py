@@ -222,8 +222,7 @@ license_file = "LICENSE"
 
 definitions = [
     "OPT_OSDP_PACKET_TRACE",
-    # osdp_sys exposes no TRS bindings yet; keep TRS out of the extension.
-    # "OPT_BUILD_OSDP_TRS",
+    "OPT_BUILD_OSDP_TRS",
     # "OPT_OSDP_DATA_TRACE",
     # "OPT_OSDP_SKIP_MARK_BYTE",
 ]

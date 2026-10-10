@@ -405,6 +405,92 @@ static PyObject *pyosdp_cp_is_pd_enabled(pyosdp_cp_t *self, PyObject *args)
 	Py_RETURN_FALSE;
 }
 
+#define pyosdp_cp_trs_scan_enable_doc                                                \
+	"trs_scan_enable(pd, mode0_dwell_ms=0, mode1_dwell_ms=0, hold_ms=0) -> bool\n" \
+	"\n"                                                                         \
+	"Start a background smart-card presence scan on a TRS-capable PD. A\n"       \
+	"zero selects that parameter's built-in default."
+static PyObject *pyosdp_cp_trs_scan_enable(pyosdp_cp_t *self, PyObject *args)
+{
+	int pd, mode0_dwell_ms = 0, mode1_dwell_ms = 0, hold_ms = 0;
+	struct osdp_trs_scan_params params;
+
+	if (!PyArg_ParseTuple(args, "I|iii", &pd, &mode0_dwell_ms,
+			      &mode1_dwell_ms, &hold_ms))
+		return NULL;
+
+	if (pd < 0 || pd >= self->num_pd) {
+		PyErr_SetString(PyExc_ValueError, "Invalid PD offset");
+		return NULL;
+	}
+
+	if (mode0_dwell_ms < 0 || mode0_dwell_ms > UINT16_MAX ||
+	    mode1_dwell_ms < 0 || mode1_dwell_ms > UINT16_MAX ||
+	    hold_ms < 0 || hold_ms > UINT16_MAX) {
+		PyErr_SetString(PyExc_ValueError,
+				"Scan times must fit in 16 bits");
+		return NULL;
+	}
+
+	params.mode0_dwell_ms = (uint16_t)mode0_dwell_ms;
+	params.mode1_dwell_ms = (uint16_t)mode1_dwell_ms;
+	params.hold_ms = (uint16_t)hold_ms;
+
+	if (osdp_cp_trs_scan_enable(self->ctx, pd, &params))
+		Py_RETURN_FALSE;
+
+	Py_RETURN_TRUE;
+}
+
+#define pyosdp_cp_trs_scan_disable_doc                                         \
+	"trs_scan_disable(pd) -> bool\n"                                       \
+	"\n"                                                                   \
+	"Stop the background smart-card presence scan on a PD."
+static PyObject *pyosdp_cp_trs_scan_disable(pyosdp_cp_t *self, PyObject *args)
+{
+	int pd;
+
+	if (!PyArg_ParseTuple(args, "I", &pd))
+		return NULL;
+
+	if (pd < 0 || pd >= self->num_pd) {
+		PyErr_SetString(PyExc_ValueError, "Invalid PD offset");
+		return NULL;
+	}
+
+	if (osdp_cp_trs_scan_disable(self->ctx, pd))
+		Py_RETURN_FALSE;
+
+	Py_RETURN_TRUE;
+}
+
+#define pyosdp_cp_trs_get_max_apdu_len_doc                                     \
+	"trs_get_max_apdu_len(pd) -> int\n"                                    \
+	"\n"                                                                   \
+	"Largest C-APDU one SEND_APDU can carry to a PD; final only once the\n" \
+	"PD has been online. Raises ValueError on a bad PD offset."
+static PyObject *pyosdp_cp_trs_get_max_apdu_len(pyosdp_cp_t *self,
+						PyObject *args)
+{
+	int pd, ret;
+
+	if (!PyArg_ParseTuple(args, "I", &pd))
+		return NULL;
+
+	if (pd < 0 || pd >= self->num_pd) {
+		PyErr_SetString(PyExc_ValueError, "Invalid PD offset");
+		return NULL;
+	}
+
+	ret = osdp_cp_trs_get_max_apdu_len(self->ctx, pd);
+	if (ret < 0) {
+		PyErr_SetString(PyExc_ValueError, "Invalid PD offset");
+		return NULL;
+	}
+
+	return Py_BuildValue("i", ret);
+}
+
 static PyObject *pyosdp_cp_modify_flag(pyosdp_cp_t *self, PyObject *args, bool do_set)
 {
 	int ret, pd, flags;
@@ -657,6 +743,12 @@ static PyMethodDef pyosdp_cp_tp_methods[] = {
 	  METH_VARARGS, pyosdp_cp_enable_pd_doc },
 	{ "is_pd_enabled", (PyCFunction)pyosdp_cp_is_pd_enabled,
 	  METH_VARARGS, pyosdp_cp_is_pd_enabled_doc },
+	{ "trs_scan_enable", (PyCFunction)pyosdp_cp_trs_scan_enable,
+	  METH_VARARGS, pyosdp_cp_trs_scan_enable_doc },
+	{ "trs_scan_disable", (PyCFunction)pyosdp_cp_trs_scan_disable,
+	  METH_VARARGS, pyosdp_cp_trs_scan_disable_doc },
+	{ "trs_get_max_apdu_len", (PyCFunction)pyosdp_cp_trs_get_max_apdu_len,
+	  METH_VARARGS, pyosdp_cp_trs_get_max_apdu_len_doc },
 	{ NULL, NULL, 0, NULL } /* Sentinel */
 };
 

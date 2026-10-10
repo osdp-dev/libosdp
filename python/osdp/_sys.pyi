@@ -51,6 +51,16 @@ class ControlPanel(_OSDPBaseClass):
     def enable_pd(self, pd: int, /) -> bool: ...
     def disable_pd(self, pd: int, /) -> bool: ...
     def is_pd_enabled(self, pd: int, /) -> bool: ...
+    def trs_scan_enable(
+        self,
+        pd: int,
+        mode0_dwell_ms: int = ...,
+        mode1_dwell_ms: int = ...,
+        hold_ms: int = ...,
+        /,
+    ) -> bool: ...
+    def trs_scan_disable(self, pd: int, /) -> bool: ...
+    def trs_get_max_apdu_len(self, pd: int, /) -> int: ...
 
 class PeripheralDevice(_OSDPBaseClass):
     def __init__(
@@ -165,6 +175,7 @@ CMD_TEXT_CC_PERMANENT_WRAP: Final[int]
 CMD_TEXT_CC_TEMPORARY_NO_WRAP: Final[int]
 CMD_TEXT_CC_TEMPORARY_WRAP: Final[int]
 CMD_TEXT_MAX_LEN: Final[int]
+CMD_XWR: Final[int]
 COMPLETION_ABORTED: Final[int]
 COMPLETION_FAILED: Final[int]
 COMPLETION_FLUSHED: Final[int]
@@ -186,6 +197,7 @@ EVENT_MFGSTAT_MAX_DATALEN: Final[int]
 EVENT_MFGSTATR: Final[int]
 EVENT_NOTIFICATION: Final[int]
 EVENT_STATUS: Final[int]
+EVENT_TRS: Final[int]
 MP_OUTCOME_ABORTED: Final[int]
 MP_OUTCOME_INVALID: Final[int]
 MP_OUTCOME_OK: Final[int]
@@ -221,6 +233,7 @@ NOTIFICATION_MP_DONE: Final[int]
 NOTIFICATION_PD_ID: Final[int]
 NOTIFICATION_PD_STATUS: Final[int]
 NOTIFICATION_SC_STATUS: Final[int]
+NOTIFICATION_TRS_STATUS: Final[int]
 PD_NAK_BIO_FMT: Final[int]
 PD_NAK_BIO_TYPE: Final[int]
 PD_NAK_RECORD: Final[int]
@@ -229,3 +242,35 @@ STATUS_REPORT_LOCAL: Final[int]
 STATUS_REPORT_MAX_LEN: Final[int]
 STATUS_REPORT_OUTPUT: Final[int]
 STATUS_REPORT_READER: Final[int]
+TRS_APDU_MAX_LEN: Final[int]
+TRS_CARD_NOT_PRESENT: Final[int]
+TRS_CARD_PRESENT: Final[int]
+TRS_CARD_PRESENT_CONTACT: Final[int]
+TRS_CARD_PRESENT_CONTACTLESS: Final[int]
+TRS_CARD_PROTOCOL_CONTACT: Final[int]
+TRS_CARD_PROTOCOL_CONTACTLESS: Final[int]
+TRS_CARD_RELEASED: Final[int]
+TRS_CARD_STATUS_UNKNOWN: Final[int]
+TRS_CMD_CARD_SCAN: Final[int]
+TRS_CMD_ENTER_PIN: Final[int]
+TRS_CMD_SEND_APDU: Final[int]
+TRS_CMD_START: Final[int]
+TRS_CMD_STOP: Final[int]
+TRS_CSN_MAX_LEN: Final[int]
+TRS_PIN_COMPLETE_ON_KEY: Final[int]
+TRS_PIN_COMPLETE_ON_MAX_DIGITS: Final[int]
+TRS_PIN_COMPLETE_ON_TIMEOUT: Final[int]
+TRS_PIN_FORMAT_ASCII: Final[int]
+TRS_PIN_FORMAT_BCD: Final[int]
+TRS_PIN_FORMAT_BINARY: Final[int]
+TRS_PROTOCOL_DATA_MAX_LEN: Final[int]
+TRS_REPLY_CARD_DATA: Final[int]
+TRS_REPLY_CARD_INFO: Final[int]
+TRS_REPLY_CARD_PRESENT: Final[int]
+TRS_REPLY_ERROR: Final[int]
+TRS_REPLY_PIN_COMPLETE: Final[int]
+TRS_SCAN_NO_DEPARTURE: Final[int]
+TRS_SCAN_SUSPENDED: Final[int]
+TRS_SESSION_CLOSED: Final[int]
+TRS_SESSION_FAILED: Final[int]
+TRS_SESSION_OPENED: Final[int]
