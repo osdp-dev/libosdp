@@ -624,6 +624,7 @@ int osdp_file_register_ops(osdp_t *ctx, int pd_idx,
 	input_check(ctx, pd_idx);
 	input_check_not_tearing_down(ctx);
 	input_check_not_running(ctx);
+	input_check_not_sealed(ctx);
 	struct osdp_pd *pd = osdp_to_pd(ctx, pd_idx);
 
 	if (!pd->file) {
@@ -642,14 +643,6 @@ int osdp_file_register_ops(osdp_t *ctx, int pd_idx,
 			return -1;
 		}
 #endif
-	}
-
-	if (osdp_file_tx_is_active(pd)) {
-		/* Resetting under a live transfer orphans the command the
-		 * engine holds; end it properly first. Done before the ops are
-		 * swapped so the open file is closed by the ops that opened
-		 * it. */
-		osdp_file_tx_abort(pd);
 	}
 
 	memcpy(&pd->file->ops, ops, sizeof(struct osdp_file_ops));

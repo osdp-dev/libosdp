@@ -202,7 +202,10 @@ static bool wait_for_notif(struct notif_record *r, int timeout_ms)
 	return false;
 }
 
-static int setup_env(void)
+/* File ops can only be registered before the first refresh, so they are
+ * passed in here rather than registered by the case; NULL for none. */
+static int setup_env(const struct osdp_file_ops *cp_fops,
+		     const struct osdp_file_ops *pd_fops)
 {
 	pthread_mutex_init(&g_nx.lock, NULL);
 
@@ -213,6 +216,11 @@ static int setup_env(void)
 
 	osdp_pd_set_command_callback(g_nx.pd_ctx, pd_cmd_cb, &g_nx);
 	osdp_cp_set_event_callback(g_nx.cp_ctx, cp_event_cb, &g_nx);
+	if ((cp_fops && osdp_file_register_ops(g_nx.cp_ctx, 0, cp_fops)) ||
+	    (pd_fops && osdp_file_register_ops(g_nx.pd_ctx, 0, pd_fops))) {
+		printf(SUB_1 "file ops registration failed\n");
+		return -1;
+	}
 
 	g_nx.cp_runner = async_runner_start(g_nx.cp_ctx, osdp_cp_refresh);
 	g_nx.pd_runner = async_runner_start(g_nx.pd_ctx, osdp_pd_refresh);
@@ -324,7 +332,7 @@ static bool test_cp_file_tx_abort_on_disable(void)
 	g_nx.sender.is_cp = true;
 	g_nx.receiver.is_cp = false;
 
-	if (setup_env() != 0) {
+	if (setup_env(&send_ops, &recv_ops) != 0) {
 		printf(SUB_2 "file-tx: failed to setup env\n");
 		return false;
 	}
@@ -332,11 +340,6 @@ static bool test_cp_file_tx_abort_on_disable(void)
 		printf(SUB_2 "file-tx: failed to create source file\n");
 		teardown_env();
 		return false;
-	}
-	if (osdp_file_register_ops(g_nx.cp_ctx, 0, &send_ops) ||
-	    osdp_file_register_ops(g_nx.pd_ctx, 0, &recv_ops)) {
-		printf(SUB_2 "file-tx: register ops failed\n");
-		goto err;
 	}
 	if (!test_submit_command(g_nx.cp_ctx, 0, &cmd)) {
 		printf(SUB_2 "file-tx: submit failed\n");
@@ -416,7 +419,7 @@ static bool test_pd_file_tx_abort_on_offline(void)
 	g_nx.sender.is_cp = true;
 	g_nx.receiver.is_cp = false;
 
-	if (setup_env() != 0) {
+	if (setup_env(&send_ops, &recv_ops) != 0) {
 		printf(SUB_2 "pd-file-tx: failed to setup env\n");
 		return false;
 	}
@@ -424,11 +427,6 @@ static bool test_pd_file_tx_abort_on_offline(void)
 		printf(SUB_2 "pd-file-tx: create file failed\n");
 		teardown_env();
 		return false;
-	}
-	if (osdp_file_register_ops(g_nx.cp_ctx, 0, &send_ops) ||
-	    osdp_file_register_ops(g_nx.pd_ctx, 0, &recv_ops)) {
-		printf(SUB_2 "pd-file-tx: register ops failed\n");
-		goto err;
 	}
 	if (!test_submit_command(g_nx.cp_ctx, 0, &cmd)) {
 		printf(SUB_2 "pd-file-tx: submit failed\n");
@@ -500,7 +498,7 @@ static bool test_file_tx_notifies_both_roles(void)
 	g_nx.sender.is_cp = true;
 	g_nx.receiver.is_cp = false;
 
-	if (setup_env() != 0) {
+	if (setup_env(&send_ops, &recv_ops) != 0) {
 		printf(SUB_2 "both-roles: failed to setup env\n");
 		return false;
 	}
@@ -508,11 +506,6 @@ static bool test_file_tx_notifies_both_roles(void)
 		printf(SUB_2 "both-roles: failed to create source file\n");
 		teardown_env();
 		return false;
-	}
-	if (osdp_file_register_ops(g_nx.cp_ctx, 0, &send_ops) ||
-	    osdp_file_register_ops(g_nx.pd_ctx, 0, &recv_ops)) {
-		printf(SUB_2 "both-roles: register ops failed\n");
-		goto err;
 	}
 
 	pthread_mutex_lock(&g_nx.lock);
@@ -582,7 +575,7 @@ void run_notification_tests(struct test *t)
 	g_nx.cp_runner = g_nx.pd_runner = -1;
 
 	/* Group A: PD-side command-callback notifications */
-	if (setup_env() != 0) {
+	if (setup_env(NULL, NULL) != 0) {
 		printf(SUB_1 "Failed to setup test environment\n");
 		TEST_REPORT(t, false);
 		return;

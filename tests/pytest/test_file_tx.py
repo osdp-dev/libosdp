@@ -140,6 +140,8 @@ def wait_for_file_tx_done(address, expected_outcome, timeout=10.0,
 
 @pytest.fixture(scope='module', autouse=True)
 def setup_test():
+    assert cp.register_file_ops(101, sender_fops)
+    assert pd.register_file_ops(receiver_fops)
     pd.start()
     cp.start()
     cp.sc_wait_all()
@@ -155,9 +157,7 @@ def test_file_transfer(utils):
     # Drain any notifications from prior tests / SC setup
     drain_events(101)
 
-    # Register file OPs and kick off a transfer
-    assert cp.register_file_ops(101, sender_fops)
-    assert pd.register_file_ops(receiver_fops)
+    # Kick off a transfer
     file_tx_cmd = commands.FileTransfer(id=FILE_ID)
     assert cp.submit_command(101, file_tx_cmd)
     assert pd.get_command() == file_tx_cmd
@@ -175,9 +175,7 @@ def test_file_tx_abort(utils):
     # Drain any notifications from prior tests / SC setup
     drain_events(101)
 
-    # Register file OPs and kick off a transfer
-    assert cp.register_file_ops(101, sender_fops)
-    assert pd.register_file_ops(receiver_fops)
+    # Kick off a transfer
     file_tx_cmd = commands.FileTransfer(id=FILE_ID)
     assert cp.submit_command(101, file_tx_cmd)
     assert pd.get_command() == file_tx_cmd

@@ -336,13 +336,13 @@ def test_cp_file_tx_aborts_on_disable_pd():
     in the C suite."""
     cp, pd = _fresh_pair("notif-fabort-cp")
     try:
-        pd.start()
-        cp.start()
-        assert cp.sc_wait_all(timeout=10), "SC handshake did not complete"
-
         sender_fops, receiver_fops, _ = _make_file_ops()
         assert cp.register_file_ops(PD_ADDR, sender_fops)
         assert pd.register_file_ops(receiver_fops)
+
+        pd.start()
+        cp.start()
+        assert cp.sc_wait_all(timeout=10), "SC handshake did not complete"
 
         # Drain any setup-time notifications.
         while cp.get_event(PD_ADDR, timeout=0) is not None:
@@ -369,13 +369,13 @@ def test_pd_file_tx_aborts_on_cp_silence():
     timeout must call osdp_file_tx_abort() on its own transfer."""
     cp, pd = _fresh_pair("notif-fabort-pd")
     try:
-        pd.start()
-        cp.start()
-        assert cp.sc_wait_all(timeout=10), "SC handshake did not complete"
-
         sender_fops, receiver_fops, _ = _make_file_ops()
         assert cp.register_file_ops(PD_ADDR, sender_fops)
         assert pd.register_file_ops(receiver_fops)
+
+        pd.start()
+        cp.start()
+        assert cp.sc_wait_all(timeout=10), "SC handshake did not complete"
 
         assert cp.submit_command(PD_ADDR, commands.FileTransfer(id=FILE_ID))
 

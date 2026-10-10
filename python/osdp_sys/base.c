@@ -195,7 +195,8 @@ static PyObject *pyosdp_get_metrics(pyosdp_base_t *self, PyObject *args)
 	"register_file_ops(pd, fops) -> bool\n"                                \
 	"\n"                                                                   \
 	"fops is a dict of 'open', 'read', 'write' and 'close' callables.\n"   \
-	"Raises ValueError if any of them is missing."
+	"Raises ValueError if any of them is missing, or if called after\n"    \
+	"the first refresh."
 static PyObject *pyosdp_file_register_ops(pyosdp_base_t *self, PyObject *args)
 {
 	int rc, pd_idx;

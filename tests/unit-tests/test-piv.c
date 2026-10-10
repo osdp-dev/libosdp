@@ -389,20 +389,12 @@ static bool test_pivdata_busy_reject(void)
 	}
 
 	/* §5.10.2: a file transfer must also be refused while the PIV op is
-	 * open -- the no-interleave rule cuts both ways. */
-	struct osdp_file_ops fops = {
-		.arg = NULL,
-		.open = piv_stub_fopen, .read = piv_stub_fread,
-		.write = piv_stub_fwrite, .close = piv_stub_fclose,
-	};
+	 * open -- the no-interleave rule cuts both ways. The suite registered
+	 * stub file ops at setup. */
 	struct osdp_cmd ftx = {
 		.id = OSDP_CMD_FILE_TX,
 		.file_tx = { .id = 1, .flags = 0 },
 	};
-	if (osdp_file_register_ops(g_piv.cp_ctx, 0, &fops)) {
-		printf(SUB_2 "busy: file ops registration failed\n");
-		return false;
-	}
 	if (test_submit_command(g_piv.cp_ctx, 0, &ftx)) {
 		printf(SUB_2 "busy: file tx accepted during PIV op\n");
 		return false;
@@ -436,6 +428,10 @@ static bool test_pivdata_busy_reject(void)
 
 void run_piv_tests(struct test *t)
 {
+	struct osdp_file_ops stub_fops = {
+		.open = piv_stub_fopen, .read = piv_stub_fread,
+		.write = piv_stub_fwrite, .close = piv_stub_fclose,
+	};
 	int rc = 0;
 	uint8_t status = 0;
 
@@ -454,6 +450,13 @@ void run_piv_tests(struct test *t)
 	osdp_cp_set_command_completion_callback(g_piv.cp_ctx,
 						 piv_cmd_completion_cb,
 						 &g_piv_compl);
+	if (osdp_file_register_ops(g_piv.cp_ctx, 0, &stub_fops)) {
+		printf(SUB_1 "Failed to register file ops\n");
+		TEST_REPORT(t, false);
+		osdp_cp_teardown(g_piv.cp_ctx);
+		osdp_pd_teardown(g_piv.pd_ctx);
+		return;
+	}
 
 	g_piv.cp_runner = async_runner_start(g_piv.cp_ctx, osdp_cp_refresh);
 	g_piv.pd_runner = async_runner_start(g_piv.pd_ctx, osdp_pd_refresh);

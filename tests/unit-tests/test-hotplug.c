@@ -8,7 +8,6 @@
 
 #include <osdp.h>
 #include "test.h"
-#include "osdp_file.h"
 
 /* PD enabled/disabled states */
 #define PD_STATE_DISABLED  false
@@ -659,6 +658,7 @@ out_harness:
 	return result;
 }
 
+#ifndef OPT_OSDP_LOG_MINIMAL
 struct reshape_reenter {
 	osdp_t *cp;
 	bool armed;
@@ -681,63 +681,6 @@ static void reshape_try_add_pd(void)
 	g_reshape.add_pd_rc = osdp_cp_add_pd(g_reshape.cp, 1, &extra);
 }
 
-static int reshape_fclose(void *arg)
-{
-	ARG_UNUSED(arg);
-	reshape_try_add_pd();
-	return 0;
-}
-
-/*
- * Swapping the file ops under a live transfer closes the open file through
- * the old ops. A transfer runs only on a refreshed CP, so an add_pd from that
- * close is refused rather than freeing the PD osdp_file_register_ops() goes
- * on to reset.
- */
-static bool test_add_pd_from_register_ops_close_is_refused(struct test *t)
-{
-	struct osdp_file_ops ops = {
-		.open = hp_fopen,
-		.read = hp_fread,
-		.write = hp_fwrite,
-		.close = reshape_fclose,
-	};
-	osdp_t *cp, *pd;
-	bool result = false;
-
-	printf(SUB_2 "testing add_pd from a file close op\n");
-
-	if (test_setup_devices(t, &cp, &pd)) {
-		printf(SUB_2 "Failed to setup devices!\n");
-		return false;
-	}
-	osdp_file_register_ops(cp, 0, &ops);
-	osdp_cp_refresh(cp);
-	if (osdp_file_tx_command(osdp_to_pd(cp, 0), 1, 0)) {
-		printf(SUB_2 "file tx did not start\n");
-		goto out;
-	}
-	g_reshape.cp = cp;
-	g_reshape.armed = true;
-	g_reshape.add_pd_rc = 1;
-	if (osdp_file_register_ops(cp, 0, &ops)) {
-		printf(SUB_2 "register_ops failed\n");
-		goto out;
-	}
-	if (g_reshape.armed || g_reshape.add_pd_rc != -1) {
-		printf(SUB_2 "add_pd from close: armed %d, rc %d, want -1\n",
-		       g_reshape.armed, g_reshape.add_pd_rc);
-		goto out;
-	}
-	result = true;
-out:
-	g_reshape.armed = false;
-	osdp_cp_teardown(cp);
-	osdp_pd_teardown(pd);
-	return result;
-}
-
-#ifndef OPT_OSDP_LOG_MINIMAL
 static void reshape_log_cb(int pd, int log_level, const char *msg,
 			   const char *file, unsigned long line)
 {
@@ -833,8 +776,6 @@ void run_hotplug_tests(struct test *t)
 		  test_add_pd_during_file_transfer_is_refused(t));
 	TEST_CASE(t, "add_pd_only_before_first_refresh",
 		  test_add_pd_only_before_first_refresh(t));
-	TEST_CASE(t, "add_pd_from_register_ops_close_is_refused",
-		  test_add_pd_from_register_ops_close_is_refused(t));
 #ifndef OPT_OSDP_LOG_MINIMAL
 	TEST_CASE(t, "add_pd_from_add_pd_log_is_refused",
 		  test_add_pd_from_add_pd_log_is_refused(t));

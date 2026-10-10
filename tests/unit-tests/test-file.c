@@ -855,6 +855,48 @@ done:
 	TEST_CASE(t, "file_tx_empty_file", result);
 }
 
+/*
+ * File ops are part of setup: a transfer can only be under way once the
+ * context has been refreshed, so after that the ops are fixed.
+ */
+void run_file_register_ops_setup_only_tests(struct test *t)
+{
+	bool result = false;
+	osdp_t *cp_ctx = NULL, *pd_ctx = NULL;
+	struct osdp_file_ops ops = {
+		.open = empty_fops_open,
+		.read = test_fops_read,
+		.write = test_fops_write,
+		.close = empty_fops_close,
+	};
+
+	printf("\nBegin file transfer test: register ops before refresh\n");
+
+	if (test_setup_devices(t, &cp_ctx, &pd_ctx)) {
+		printf(SUB_1 "Failed to setup devices!\n");
+		goto done;
+	}
+	if (osdp_file_register_ops(cp_ctx, 0, &ops) != 0 ||
+	    osdp_file_register_ops(pd_ctx, 0, &ops) != 0) {
+		printf(SUB_1 "register refused before the first refresh\n");
+		goto teardown;
+	}
+	osdp_cp_refresh(cp_ctx);
+	osdp_pd_refresh(pd_ctx);
+	if (osdp_file_register_ops(cp_ctx, 0, &ops) != -1 ||
+	    osdp_file_register_ops(pd_ctx, 0, &ops) != -1) {
+		printf(SUB_1 "register accepted after the first refresh\n");
+		goto teardown;
+	}
+	result = true;
+
+teardown:
+	osdp_cp_teardown(cp_ctx);
+	osdp_pd_teardown(pd_ctx);
+done:
+	TEST_CASE(t, "file_register_ops_setup_only", result);
+}
+
 static int16_t stat_reply_status(const uint8_t *stat)
 {
 	return (int16_t)(stat[3] | ((uint16_t)stat[4] << 8));

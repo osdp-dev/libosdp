@@ -301,14 +301,14 @@ def test_file_tx_command_completes_at_multipart_done():
         return 0
 
     try:
+        assert cp.register_file_ops(PD_ADDR, SenderFileOps())
+        assert pd.register_file_ops(ReceiverFileOps())
         pd.start()
         cp.start()
         assert cp.online_wait(PD_ADDR, timeout=10), "PD did not come online"
 
         cp.set_event_handler(on_event)
         cp.set_command_completion_handler(rec.on_command_complete)
-        assert cp.register_file_ops(PD_ADDR, SenderFileOps())
-        assert pd.register_file_ops(ReceiverFileOps())
 
         assert cp.submit_command(PD_ADDR, commands.FileTransfer(id=FILE_ID))
         # The engine owns it until the transfer ends; nothing settles here.

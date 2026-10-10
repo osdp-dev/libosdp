@@ -234,7 +234,11 @@ class PeripheralDevice:
     # -- file transfer ------------------------------------------------------
 
     def register_file_ops(self, fops: FileOps) -> bool:
-        """Supply the sink a file transfer from the CP will write into."""
+        """Supply the sink a file transfer from the CP will write into.
+
+        Call it before start(); once the PD is running, LibOSDP refuses it
+        and this raises ValueError.
+        """
         with self.lock:
             return bool(
                 self.ctx.register_file_ops(

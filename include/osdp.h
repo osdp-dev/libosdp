@@ -2863,12 +2863,17 @@ struct osdp_file_ops {
  * @brief Register a global file operations struct with OSDP. Both CP and PD
  * modes should have done so already before CP can sending a OSDP_CMD_FILE_TX.
  *
+ * Setup only: call it before the first osdp_cp_refresh() or osdp_pd_refresh();
+ * it returns -1 afterwards. Swap files from inside the registered ops instead,
+ * keyed on the file ID that open() receives.
+ *
  * @param ctx OSDP context
  * @param pd PD number in case of CP. This param is ignored in PD mode
  * @param ops Populated file operations struct
  *
- * @retval 0 on success. -1 on errors, including when called from inside one of
- * this context's callbacks or during its teardown (see osdp_cp_refresh()).
+ * @retval 0 on success. -1 on errors, including when called after the first
+ * refresh, from inside one of this context's callbacks or during its teardown
+ * (see osdp_cp_refresh()).
  */
 OSDP_EXPORT
 int osdp_file_register_ops(osdp_t *ctx, int pd,

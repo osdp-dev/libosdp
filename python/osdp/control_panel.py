@@ -319,7 +319,11 @@ class ControlPanel:
     # -- file transfer ------------------------------------------------------
 
     def register_file_ops(self, address: int, fops: FileOps) -> bool:
-        """Supply the file a subsequent FileTransfer command will send."""
+        """Supply the file a subsequent FileTransfer command will send.
+
+        Call it before start(); once the CP is running, LibOSDP refuses it
+        and this raises ValueError.
+        """
         pd = self.pd_addr.index(address)
         with self.lock:
             return bool(

@@ -309,10 +309,6 @@ static bool test_reshape_from_flush_completion_is_refused(void)
 		       g_flush_reshape.add_pd_rc, g_flush_reshape.register_rc);
 		goto out;
 	}
-	if (osdp_file_register_ops(g_comp.cp, 0, &g_flush_reshape_ops) != 0) {
-		printf(SUB_2 "reshape: register refused after the flush\n");
-		goto out;
-	}
 	result = true;
 out:
 	use_cp_completion(resubmit_completion_cb, &g_comp);
@@ -353,10 +349,6 @@ static bool test_pd_reshape_from_flush_completion_is_refused(void)
 	if (g_flush_reshape.register_rc != -1) {
 		printf(SUB_2 "pd reshape: register %d, want -1\n",
 		       g_flush_reshape.register_rc);
-		goto out;
-	}
-	if (osdp_file_register_ops(g_comp.pd, 0, &g_flush_reshape_ops) != 0) {
-		printf(SUB_2 "pd reshape: register refused after the flush\n");
 		goto out;
 	}
 	result = true;
@@ -519,7 +511,7 @@ static int nested_send(void *data, uint8_t *buf, int len)
 
 /*
  * From inside a callback, a refresh must not recurse and the calls that would
- * reshape the context must fail; outside one, file ops can be registered.
+ * reshape the context must fail.
  */
 static bool test_nested_calls_from_a_callback_are_refused(void)
 {
@@ -554,10 +546,6 @@ static bool test_nested_calls_from_a_callback_are_refused(void)
 	if (g_nested.register_rc != -1 || g_nested.add_pd_rc != -1) {
 		printf(SUB_2 "nested: register %d, add_pd %d, want -1\n",
 		       g_nested.register_rc, g_nested.add_pd_rc);
-		goto out;
-	}
-	if (osdp_file_register_ops(g_nested.cp, 0, &g_nested_ops) != 0) {
-		printf(SUB_2 "nested: refused outside a callback too\n");
 		goto out;
 	}
 	result = true;
