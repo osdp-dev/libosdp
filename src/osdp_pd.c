@@ -2119,9 +2119,10 @@ void osdp_pd_refresh(osdp_t *ctx)
 	pd_ctx->running = false;
 }
 
-void osdp_pd_set_capabilities(osdp_t *ctx, const struct osdp_pd_cap *cap)
+int osdp_pd_set_capabilities(osdp_t *ctx, const struct osdp_pd_cap *cap)
 {
 	input_check(ctx);
+	input_check_not_sealed(ctx);
 	struct osdp_pd *pd = GET_CURRENT_PD(ctx);
 
 	osdp_pd_set_attributes(pd, cap, NULL);
@@ -2131,6 +2132,7 @@ void osdp_pd_set_capabilities(osdp_t *ctx, const struct osdp_pd_cap *cap)
 	if (pd->cap[OSDP_PD_CAP_COMMUNICATION_SECURITY].compliance_level == 0) {
 		SET_FLAG(pd, PD_FLAG_SC_DISABLED);
 	}
+	return 0;
 }
 
 void osdp_pd_set_command_callback(osdp_t *ctx, pd_command_callback_t cb,

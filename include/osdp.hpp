@@ -199,9 +199,9 @@ public:
 		osdp_pd_refresh(_ctx);
 	}
 
-	void set_capabilities(const struct osdp_pd_cap *cap)
+	int set_capabilities(const struct osdp_pd_cap *cap)
 	{
-		osdp_pd_set_capabilities(_ctx, cap);
+		return osdp_pd_set_capabilities(_ctx, cap);
 	}
 
 	void set_command_callback(pd_command_callback_t cb, void *args)

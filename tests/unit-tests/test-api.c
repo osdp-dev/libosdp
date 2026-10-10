@@ -171,11 +171,14 @@ int test_api_cp_get_capability(const osdp_t *ctx, int pd,
 	return rc;
 }
 
-void test_api_pd_set_capabilities(osdp_t *ctx, const struct osdp_pd_cap *cap)
+int test_api_pd_set_capabilities(osdp_t *ctx, const struct osdp_pd_cap *cap)
 {
+	int rc;
+
 	test_api_lock();
-	(osdp_pd_set_capabilities)(ctx, cap);
+	rc = (osdp_pd_set_capabilities)(ctx, cap);
 	test_api_unlock();
+	return rc;
 }
 
 void test_api_cp_set_command_completion_callback(

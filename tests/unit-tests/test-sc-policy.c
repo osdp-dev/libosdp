@@ -375,8 +375,31 @@ static bool set_capabilities_can_disable_sc(void)
 	}
 	pd = osdp_to_pd(ctx, 0);
 	ok = sc_is_capable(pd);
-	osdp_pd_set_capabilities((osdp_t *)ctx, off);
+	ok = ok && osdp_pd_set_capabilities((osdp_t *)ctx, off) == 0;
 	ok = ok && !sc_is_capable(pd);
+	osdp_pd_teardown((osdp_t *)ctx);
+	return ok;
+}
+
+/* A CP may have read the capabilities by the time the PD has been refreshed,
+ * so they are fixed from then on. */
+static bool set_capabilities_is_refused_after_refresh(void)
+{
+	struct osdp_pd_cap off[] = {
+		{ OSDP_PD_CAP_COMMUNICATION_SECURITY, 0, 0 },
+		{ -1, -1, -1 }
+	};
+	struct osdp *ctx = scp_pd_setup(scp_scbk, 0);
+	struct osdp_pd *pd;
+	bool ok;
+
+	if (!ctx) {
+		return false;
+	}
+	pd = osdp_to_pd(ctx, 0);
+	osdp_pd_refresh((osdp_t *)ctx);
+	ok = osdp_pd_set_capabilities((osdp_t *)ctx, off) == -1;
+	ok = ok && sc_is_capable(pd);
 	osdp_pd_teardown((osdp_t *)ctx);
 	return ok;
 }
@@ -595,6 +618,8 @@ void run_sc_policy_tests(struct test *t)
 		  install_mode_pd_answers_chlng());
 	TEST_CASE(t, "set_capabilities_can_disable_sc",
 		  set_capabilities_can_disable_sc());
+	TEST_CASE(t, "set_capabilities_is_refused_after_refresh",
+		  set_capabilities_is_refused_after_refresh());
 	TEST_CASE(t, "pd_setup_rejects_enforce_secure_with_install_mode",
 		  pd_setup_rejects_enforce_secure_with_install_mode());
 	TEST_CASE(t, "cp_setup_rejects_enforce_secure_with_install_mode",

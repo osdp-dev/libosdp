@@ -335,7 +335,7 @@ bool test_api_cp_is_pd_enabled(const osdp_t *ctx, int pd);
 int test_api_cp_modify_flag(osdp_t *ctx, int pd, uint32_t flags, bool do_set);
 int test_api_cp_get_capability(const osdp_t *ctx, int pd,
 			       struct osdp_pd_cap *cap);
-void test_api_pd_set_capabilities(osdp_t *ctx, const struct osdp_pd_cap *cap);
+int test_api_pd_set_capabilities(osdp_t *ctx, const struct osdp_pd_cap *cap);
 void test_api_cp_set_command_completion_callback(
 	osdp_t *ctx, cp_command_completion_callback_t cb, void *arg);
 void test_api_cp_set_event_callback(osdp_t *ctx, cp_event_callback_t cb,
