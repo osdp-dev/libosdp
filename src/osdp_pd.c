@@ -478,6 +478,7 @@ static int pd_cmd_cap_ok(struct osdp_pd *pd, struct osdp_cmd *cmd)
 	case CMD_PIVDATA:
 	case CMD_GENAUTH:
 	case CMD_CRAUTH:
+	case CMD_XWR:
 		cap = &pd->cap[OSDP_PD_CAP_SMART_CARD_SUPPORT];
 		if (cap->compliance_level == 0) {
 			break;
@@ -1163,6 +1164,10 @@ static int pd_decode_command(struct osdp_pd *pd, uint8_t *buf, int len)
 		uint8_t trs_mode = pd_trs_mode(pd);
 		int trs_ret;
 
+		if (!pd_cmd_cap_ok(pd, NULL)) {
+			ret = OSDP_PD_ERR_REPLY;
+			break;
+		}
 		trs_ret = osdp_trs_cmd_decode(pd, &cmd, buf + pos, len);
 		if (trs_ret < 0) {
 			break; /* NAK */

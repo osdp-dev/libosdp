@@ -2537,6 +2537,69 @@ out:
 	return ok;
 }
 
+extern int test_pd_decode_command(struct osdp_pd *pd, uint8_t *buf, int len);
+
+static bool g_trs_cap_cb_fired;
+
+static int trs_cap_cmd_callback(void *arg, struct osdp_cmd *cmd)
+{
+	ARG_UNUSED(arg);
+	ARG_UNUSED(cmd);
+	g_trs_cap_cb_fired = true;
+	return 0;
+}
+
+/*
+ * A PD that never advertised OSDP_PD_CAP_SMART_CARD_SUPPORT must refuse XWR
+ * rather than decode it and hand it to the app. Only a CP that skips its own
+ * capability check can deliver one, so the PD is the last line that keeps
+ * transparent mode off a reader that never claimed it.
+ */
+static bool test_trs_xwr_without_capability_naks(struct test *t)
+{
+	/* XWR carrying a mode-01 send-apdu, which an unguarded PD would hand to
+	 * the app; buf[0] is the command id pd_decode_command consumes. */
+	uint8_t xwr_cmd[] = { CMD_XWR, 0x01, 0x01, 0x00, 0x00, 0xA4 };
+	osdp_t *cp = NULL, *pd_ctx = NULL;
+	struct osdp_pd *pd;
+	bool result = true;
+
+	printf(SUB_1 "testing XWR without smart-card capability is NAK'd -- ");
+
+	if (test_setup_devices(t, &cp, &pd_ctx)) {
+		printf("failed to setup devices\n");
+		return false;
+	}
+	pd = osdp_to_pd(pd_ctx, 0);
+	osdp_pd_set_command_callback(pd_ctx, trs_cap_cmd_callback, NULL);
+
+	/* Reader does not claim smart-card support, but is in transparent mode:
+	 * without the gate the send-apdu would reach the app. */
+	pd->cap[OSDP_PD_CAP_SMART_CARD_SUPPORT].compliance_level = 0;
+	pd->trs.mode = TRS_MODE_01;
+	g_trs_cap_cb_fired = false;
+
+	test_pd_decode_command(pd, xwr_cmd, sizeof(xwr_cmd));
+
+	if (pd->reply_id != REPLY_NAK ||
+	    pd->nak_code != OSDP_PD_NAK_CMD_UNKNOWN) {
+		printf("expected NAK(CMD_UNKNOWN), got reply_id=%d nak=%d\n",
+		       pd->reply_id, pd->nak_code);
+		result = false;
+	}
+	if (g_trs_cap_cb_fired) {
+		printf("app callback ran for an uncapable PD\n");
+		result = false;
+	}
+	if (result) {
+		printf("success!\n");
+	}
+
+	osdp_cp_teardown(cp);
+	osdp_pd_teardown(pd_ctx);
+	return result;
+}
+
 void run_trs_tests(struct test *t)
 {
 	bool result = true;
@@ -2556,6 +2619,7 @@ void run_trs_tests(struct test *t)
 	result &= test_trs_wire_pin_entry_roundtrip();
 	result &= test_trs_wire_probe_card_scan_build();
 	result &= test_trs_wire_capability_warning_is_once();
+	result &= test_trs_xwr_without_capability_naks(t);
 
 	if (setup_test_environment(t) != 0) {
 		printf(SUB_1 "Failed to setup test environment\n");
