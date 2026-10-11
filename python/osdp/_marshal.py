@@ -496,10 +496,10 @@ _TRS_REPLY_DECODERS: dict[TrsReply, Callable[[Payload], e.Event]] = {
         reader=p["reader"], status=TrsCardStatus(p["status"])
     ),
     TrsReply.CardData: lambda p: e.TrsCardData(
-        reader=p["reader"], status=p["status"], apdu=p["apdu"]
+        reader=p["reader"], reader_status=p["reader_status"], apdu=p["apdu"]
     ),
     TrsReply.PinComplete: lambda p: e.TrsPinComplete(
-        reader=p["reader"], status=p["status"], tries=p["tries"]
+        reader=p["reader"], reader_status=p["reader_status"], tries=p["tries"]
     ),
     TrsReply.Error: lambda p: e.TrsError(code=p["code"]),
 }
@@ -578,14 +578,14 @@ _EVENT_ENCODERS: dict[type, Callable[[Any], Payload]] = {
         "event": EventId.Trs,
         "reply": TrsReply.CardData,
         "reader": x.reader,
-        "status": x.status,
+        "reader_status": x.reader_status,
         "apdu": x.apdu,
     },
     e.TrsPinComplete: lambda x: {
         "event": EventId.Trs,
         "reply": TrsReply.PinComplete,
         "reader": x.reader,
-        "status": x.status,
+        "reader_status": x.reader_status,
         "tries": x.tries,
     },
     e.TrsError: lambda x: {

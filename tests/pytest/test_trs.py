@@ -69,7 +69,7 @@ class PDApp:
                     pd.submit_event(events.TrsCardData(apdu=R_APDU))
             case commands.TrsEnterPin():
                 self._record(command)
-                pd.submit_event(events.TrsPinComplete(status=0, tries=1))
+                pd.submit_event(events.TrsPinComplete(reader_status=0, tries=1))
             case commands.TrsCardScan():
                 self._record(command)
                 pd.submit_event(
@@ -206,11 +206,11 @@ def test_trs_band_send_apdu_deferred():
         time.sleep(0.05)
     assert pd_app.trs_commands == [send]
     time.sleep(0.2)
-    assert pd.submit_event(events.TrsCardData(status=1, apdu=R_APDU))
+    assert pd.submit_event(events.TrsCardData(reader_status=1, apdu=R_APDU))
 
     collected = collect_events(lambda c: len(trs_replies(c)) == 1)
     assert trs_replies(collected) == [
-        events.TrsCardData(status=1, apdu=R_APDU)
+        events.TrsCardData(reader_status=1, apdu=R_APDU)
     ]
 
     assert cp.submit_command(pd_addr, commands.TrsStop())

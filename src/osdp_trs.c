@@ -659,7 +659,7 @@ int osdp_trs_reply_decode(struct osdp_pd *pd, uint8_t *buf, int len,
 			return -1;
 		}
 		event->trs.card_data.reader = buf[pos++];
-		event->trs.card_data.status = buf[pos++];
+		event->trs.card_data.reader_status = buf[pos++];
 		apdu_len = len - pos;
 		if (apdu_len > (int)sizeof(event->trs.card_data.apdu.data)) {
 			LOG_ERR("TRS: R-APDU too large (%d); rejecting reply",
@@ -676,7 +676,7 @@ int osdp_trs_reply_decode(struct osdp_pd *pd, uint8_t *buf, int len,
 			return -1;
 		}
 		event->trs.pin_complete.reader = buf[pos++];
-		event->trs.pin_complete.status = buf[pos++];
+		event->trs.pin_complete.reader_status = buf[pos++];
 		event->trs.pin_complete.tries = buf[pos++];
 		break;
 	default:
@@ -790,7 +790,7 @@ int osdp_trs_reply_build(struct osdp_pd *pd, uint8_t *buf, int max_len)
 			return -1;
 		}
 		buf[len++] = reply->card_data.reader;
-		buf[len++] = reply->card_data.status;
+		buf[len++] = reply->card_data.reader_status;
 		memcpy(buf + len, reply->card_data.apdu.data, apdu_len);
 		len += apdu_len;
 		break;
@@ -799,7 +799,7 @@ int osdp_trs_reply_build(struct osdp_pd *pd, uint8_t *buf, int max_len)
 			return -1;
 		}
 		buf[len++] = reply->pin_complete.reader;
-		buf[len++] = reply->pin_complete.status;
+		buf[len++] = reply->pin_complete.reader_status;
 		buf[len++] = reply->pin_complete.tries;
 		break;
 	default:

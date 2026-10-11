@@ -631,7 +631,7 @@ class TrsCardData:
     reader: int = 0
     """Zero-based reader number."""
 
-    status: int = 0
+    reader_status: int = 0
     """Outcome of the exchange as the reader reports it; reader-defined."""
 
     apdu: bytes = b""
@@ -639,7 +639,7 @@ class TrsCardData:
 
     def __post_init__(self) -> None:
         check_range("reader", self.reader, UINT8_MAX)
-        check_range("status", self.status, UINT8_MAX)
+        check_range("reader_status", self.reader_status, UINT8_MAX)
         check_length("apdu", self.apdu, MAX_TRS_APDU_LEN)
 
 
@@ -659,7 +659,7 @@ class TrsPinComplete:
     reader: int = 0
     """Zero-based reader number."""
 
-    status: int = 0
+    reader_status: int = 0
     """Outcome of the PIN entry as the reader reports it; reader-defined."""
 
     tries: int = 0
@@ -667,7 +667,7 @@ class TrsPinComplete:
 
     def __post_init__(self) -> None:
         check_range("reader", self.reader, UINT8_MAX)
-        check_range("status", self.status, UINT8_MAX)
+        check_range("reader_status", self.reader_status, UINT8_MAX)
         check_range("tries", self.tries, UINT8_MAX)
 
 

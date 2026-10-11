@@ -87,7 +87,7 @@ static void trs_fill_response(struct test_trs_ctx *ctx)
 	resp->type = OSDP_EVENT_TRS;
 	resp->trs.reply = OSDP_TRS_REPLY_CARD_DATA;
 	resp->trs.card_data.reader = 0;
-	resp->trs.card_data.status = 0;
+	resp->trs.card_data.reader_status = 0;
 	resp->trs.card_data.apdu.length = sizeof(g_rsp_apdu);
 	memcpy(resp->trs.card_data.apdu.data, g_rsp_apdu, sizeof(g_rsp_apdu));
 }
@@ -1911,7 +1911,7 @@ static bool test_trs_unsolicited_xrd_out_of_session(void)
 			.reply = OSDP_TRS_REPLY_CARD_DATA,
 			.card_data = {
 				.reader = 0,
-				.status = 0,
+				.reader_status = 0,
 				.apdu = { .length = 2, .data = { 0x90, 0x00 } },
 			},
 		},

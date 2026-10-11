@@ -1476,14 +1476,14 @@ struct osdp_trs_card_present {
 
 struct osdp_trs_card_data {
 	uint8_t reader; /**< Reader number (0 = first, 1 = second) */
-	uint8_t status; /**< Result of the APDU exchange as reported by the reader
+	uint8_t reader_status; /**< Result of the APDU exchange as reported by the reader
 	                            *   (reader-defined; not standardized by OSDP) */
 	struct osdp_trs_apdu apdu; /**< R-APDU returned by the card */
 };
 
 struct osdp_trs_pin_complete {
 	uint8_t reader; /**< Reader number (0 = first, 1 = second) */
-	uint8_t status; /**< Result of the secure PIN entry sequence as reported by the
+	uint8_t reader_status; /**< Result of the secure PIN entry sequence as reported by the
 	             *   reader (reader-defined; not standardized by OSDP) */
 	uint8_t tries; /**< Number of PIN-entry attempts */
 };

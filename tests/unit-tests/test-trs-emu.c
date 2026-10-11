@@ -199,7 +199,7 @@ static int emu_pd_command_callback(void *arg, struct osdp_cmd *cmd)
 	} else {
 		resp->trs.reply = OSDP_TRS_REPLY_CARD_DATA;
 		resp->trs.card_data.reader = 0;
-		resp->trs.card_data.status = 0;
+		resp->trs.card_data.reader_status = 0;
 		resp->trs.card_data.apdu.length = rlen;
 	}
 	test_submit_event(ctx->pd_ctx, resp);

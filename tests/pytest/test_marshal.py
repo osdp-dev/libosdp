@@ -201,9 +201,9 @@ ALL_EVENTS = [
     events.TrsCardInfo(),
     events.TrsCardPresent(status=TrsCardStatus.PresentContactless),
     events.TrsCardPresent(status=TrsCardStatus.NotPresent),
-    events.TrsCardData(status=1, apdu=bytes([0x6F, 0x1A, 0x90, 0x00])),
+    events.TrsCardData(reader_status=1, apdu=bytes([0x6F, 0x1A, 0x90, 0x00])),
     events.TrsCardData(),
-    events.TrsPinComplete(reader=1, status=2, tries=3),
+    events.TrsPinComplete(reader=1, reader_status=2, tries=3),
     events.TrsError(code=0x6A),
 ]
 

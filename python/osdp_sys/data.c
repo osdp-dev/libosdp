@@ -985,7 +985,7 @@ static const struct pyosdp_field trs_card_present_fields[] = {
 
 static const struct pyosdp_field trs_card_data_fields[] = {
 	U8_FIELD(struct osdp_trs_card_data, reader),
-	U8_FIELD(struct osdp_trs_card_data, status),
+	U8_FIELD(struct osdp_trs_card_data, reader_status),
 	{
 		/* What the card returned, if anything, is the card's business */
 		.key = "apdu",
@@ -1001,7 +1001,7 @@ static const struct pyosdp_field trs_card_data_fields[] = {
 
 static const struct pyosdp_field trs_pin_complete_fields[] = {
 	U8_FIELD(struct osdp_trs_pin_complete, reader),
-	U8_FIELD(struct osdp_trs_pin_complete, status),
+	U8_FIELD(struct osdp_trs_pin_complete, reader_status),
 	U8_FIELD(struct osdp_trs_pin_complete, tries),
 	END_OF_FIELDS,
 };
