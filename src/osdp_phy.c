@@ -816,6 +816,17 @@ int osdp_phy_check_packet(struct osdp_pd *pd)
 	return ret;
 }
 
+static bool sc_handshake_type_matches_id(struct osdp_pd *pd, uint8_t scs,
+					 uint8_t id)
+{
+	if (is_pd_mode(pd)) {
+		return (scs == SCS_11 && id == CMD_CHLNG) ||
+		       (scs == SCS_13 && id == CMD_SCRYPT);
+	}
+	return (scs == SCS_12 && id == REPLY_CCRYPT) ||
+	       (scs == SCS_14 && id == REPLY_RMAC_I);
+}
+
 int osdp_phy_decode_packet(struct osdp_pd *pd, uint8_t **pkt_start)
 {
 	uint8_t *data, *mac, *buf = pd->packet_buf;
@@ -865,6 +876,18 @@ int osdp_phy_decode_packet(struct osdp_pd *pd, uint8_t **pkt_start)
 		}
 		data = pkt->data + pkt->data[0];
 		len -= pkt->data[0]; /* consume security block */
+		/* A handshake SCS type carries no MAC; in an active session it
+		 * is honoured only for the message that restarts the sequence,
+		 * else a peer could skip the MAC check by relabelling the SB. */
+		if (is_sc_active && pkt->data[1] <= SCS_14 &&
+		    !sc_handshake_type_matches_id(pd, pkt->data[1], data[0])) {
+			LOG_ERR("Unauthenticated %s(%02x) under SCS type %02x "
+				"in active SC", is_pd_mode(pd) ? "CMD" : "REPLY",
+				data[0], pkt->data[1]);
+			pd->reply_id = REPLY_NAK;
+			pd->nak_code = OSDP_PD_NAK_SC_COND;
+			return OSDP_ERR_PKT_NACK;
+		}
 	} else {
 		if (is_cp_mode(pd)) {
 			/**

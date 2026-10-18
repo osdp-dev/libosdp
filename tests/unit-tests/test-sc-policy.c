@@ -213,6 +213,65 @@ static uint8_t scp_reply_byte(struct osdp_pd *pd, int n)
 
 /* --- cases --- */
 
+/*
+ * Inject one hand-framed CP->PD packet while a secure session is active and
+ * return the PD's reply-ID byte. Sequence checking is disabled so the test
+ * isolates the security-block policy from the rolling sequence number.
+ */
+static uint8_t sc_active_inject(const uint8_t *sb, int sb_len, uint8_t cmd_id,
+				const uint8_t *data, int data_len)
+{
+	struct osdp *ctx = scp_pd_setup(scp_scbk, 0);
+	uint8_t pkt[SCP_BUF_MAX], reply;
+	struct osdp_pd *pd;
+	int len;
+
+	pd = osdp_to_pd(ctx, 0);
+	sc_activate(pd);
+	pd->sc_tstamp = osdp_millis_now();
+	SET_FLAG(pd, PD_FLAG_SKIP_SEQ_CHECK);
+	len = scp_build_cmd(1, sb, sb_len, cmd_id, data, data_len, pkt);
+	scp_exchange(ctx, pkt, len);
+	reply = scp_reply_byte(pd, 0);
+	osdp_pd_teardown((osdp_t *)ctx);
+	return reply;
+}
+
+/*
+ * v2.2 D.1.4: once a session is up, every message must carry a MAC (SCS_15+).
+ * A command wrapped in a handshake-only SCS type (<= SCS_14) is not MAC'd, so
+ * accepting it would let a peer execute an unauthenticated command by simply
+ * relabelling the security block. CMD_POLL is answered by the library itself
+ * (no app callback), so a REPLY_ACK here means the command executed.
+ */
+static bool sc_active_rejects_command_under_scs11(void)
+{
+	const uint8_t sb[] = { 2, SCS_11 };
+
+	return sc_active_inject(sb, sizeof(sb), CMD_POLL, NULL, 0) == REPLY_NAK;
+}
+
+static bool sc_active_rejects_command_under_scs13(void)
+{
+	const uint8_t sb[] = { 2, SCS_13 };
+
+	return sc_active_inject(sb, sizeof(sb), CMD_POLL, NULL, 0) == REPLY_NAK;
+}
+
+/*
+ * The flip side: a genuine CMD_CHLNG restarts the connection sequence and the
+ * spec allows it at any time, so the new policy must not reject SCS_11 when it
+ * actually carries the challenge. A keyed, capable PD answers with CCRYPT.
+ */
+static bool sc_active_allows_chlng_restart_under_scs11(void)
+{
+	const uint8_t sb[] = { 3, SCS_11, 1 }; /* select SCBK */
+	const uint8_t rnd[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
+
+	return sc_active_inject(sb, sizeof(sb), CMD_CHLNG, rnd, sizeof(rnd)) ==
+	       REPLY_CCRYPT;
+}
+
 static bool keyless_pd_disables_sc(void)
 {
 	struct osdp *ctx = scp_pd_setup(NULL, 0);
@@ -603,6 +662,12 @@ void run_sc_policy_tests(struct test *t)
 	ARG_UNUSED(t);
 #endif
 
+	TEST_CASE(t, "sc_active_rejects_command_under_scs11",
+		  sc_active_rejects_command_under_scs11());
+	TEST_CASE(t, "sc_active_rejects_command_under_scs13",
+		  sc_active_rejects_command_under_scs13());
+	TEST_CASE(t, "sc_active_allows_chlng_restart_under_scs11",
+		  sc_active_allows_chlng_restart_under_scs11());
 	TEST_CASE(t, "keyless_pd_disables_sc", keyless_pd_disables_sc());
 	TEST_CASE(t, "keyed_pd_is_not_in_install_mode",
 		  keyed_pd_is_not_in_install_mode());
