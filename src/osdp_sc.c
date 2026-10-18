@@ -122,12 +122,31 @@ int osdp_verify_pd_cryptogram(struct osdp_pd *pd)
 	return ret;
 }
 
-void osdp_compute_rmac_i(struct osdp_pd *pd)
+static void derive_rmac_i(struct osdp_pd *pd, uint8_t *out)
 {
 	/* rmac_i = AES-ECB( AES-ECB( cp_cryptogram, s_mac1 ), s_mac2 ) */
-	memcpy(pd->sc.r_mac, pd->sc.cp_cryptogram, 16);
-	osdp_encrypt(pd->sc.s_mac1, NULL, pd->sc.r_mac, 16);
-	osdp_encrypt(pd->sc.s_mac2, NULL, pd->sc.r_mac, 16);
+	memcpy(out, pd->sc.cp_cryptogram, 16);
+	osdp_encrypt(pd->sc.s_mac1, NULL, out, 16);
+	osdp_encrypt(pd->sc.s_mac2, NULL, out, 16);
+}
+
+void osdp_compute_rmac_i(struct osdp_pd *pd)
+{
+	derive_rmac_i(pd, pd->sc.r_mac);
+}
+
+int osdp_verify_rmac_i(struct osdp_pd *pd, const uint8_t *rmac_i)
+{
+	uint8_t expected[16];
+
+	derive_rmac_i(pd, expected);
+
+	int ret = osdp_ct_compare(rmac_i, expected, 16) == 0 ? 0 : -1;
+	if (ret == 0) {
+		memcpy(pd->sc.r_mac, expected, 16);
+	}
+	osdp_fill_zeros(expected, sizeof(expected));
+	return ret;
 }
 
 int osdp_decrypt_data(struct osdp_pd *pd, int is_cmd, uint8_t *data, int length)

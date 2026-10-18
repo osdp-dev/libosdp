@@ -857,6 +857,13 @@ int osdp_phy_decode_packet(struct osdp_pd *pd, uint8_t **pkt_start)
 			pd->nak_code = OSDP_PD_NAK_SC_COND;
 			return OSDP_ERR_PKT_NACK;
 		}
+		if (is_cp_mode(pd) && pkt->data[1] == SCS_14 &&
+		    pkt->data[2] != 1) {
+			LOG_ERR("PD rejected the secure channel handshake");
+			pd->reply_id = REPLY_NAK;
+			pd->nak_code = OSDP_PD_NAK_SC_COND;
+			return OSDP_ERR_PKT_NACK;
+		}
 		if (!is_sc_active && pkt->data[1] > SCS_14) {
 			LOG_ERR("Invalid SCS type (%x)", pkt->data[1]);
 			pd->reply_id = REPLY_NAK;

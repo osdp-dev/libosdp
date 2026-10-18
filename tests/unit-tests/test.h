@@ -395,6 +395,7 @@ void print_line_noise_stats();
 
 void run_cp_fsm_tests(struct test *t);
 void run_busy_tests(struct test *t);
+void run_sc_handshake_tests(struct test *t);
 void run_cp_phy_fsm_tests(struct test *t);
 void run_cp_phy_tests(struct test *t);
 void run_pd_phy_tests(struct test *t);

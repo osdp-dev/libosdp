@@ -957,7 +957,10 @@ static int cp_decode_response(struct osdp_pd *pd, uint8_t *buf, int len)
 		if (len != REPLY_RMAC_I_DATA_LEN) {
 			break;
 		}
-		memcpy(pd->sc.r_mac, buf + pos, 16);
+		if (osdp_verify_rmac_i(pd, buf + pos) != 0) {
+			LOG_ERR("Failed to verify RMAC_I");
+			return OSDP_CP_ERR_APP;
+		}
 		ret = OSDP_CP_ERR_NONE;
 		break;
 	default:

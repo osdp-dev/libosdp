@@ -23,6 +23,7 @@ test-codec-fuzz.c
 test-sc.c
 test-sc-sia-vectors.c
 test-sc-policy.c
+test-sc-handshake.c
 test-metrics.c
 test-trs.c
 test-trs-emu.c

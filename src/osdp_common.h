@@ -890,6 +890,7 @@ int osdp_verify_cp_cryptogram(struct osdp_pd *pd);
 void osdp_compute_pd_cryptogram(struct osdp_pd *pd);
 int osdp_verify_pd_cryptogram(struct osdp_pd *pd);
 void osdp_compute_rmac_i(struct osdp_pd *pd);
+int osdp_verify_rmac_i(struct osdp_pd *pd, const uint8_t *rmac_i);
 int osdp_decrypt_data(struct osdp_pd *pd, int is_cmd, uint8_t *data, int len);
 int osdp_encrypt_data(struct osdp_pd *pd, int is_cmd, uint8_t *data, int len);
 int osdp_compute_mac(struct osdp_pd *pd, int is_cmd, const uint8_t *data,
