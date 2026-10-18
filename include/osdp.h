@@ -1891,6 +1891,11 @@ struct osdp_event {
 };
 
 /**
+ * @brief Return value of a PD command callback that answers `osdp_BUSY`.
+ */
+#define OSDP_PD_CMD_BUSY 1
+
+/**
  * @brief Callback for PD command notifications. After it has been registered
  * with `osdp_pd_set_command_callback`, this method is invoked when the PD
  * receives a command from the CP.
@@ -1901,7 +1906,25 @@ struct osdp_event {
  *
  * @retval 0 if LibOSDP must send an `osdp_ACK` response.
  * @retval -ve if LibOSDP must send an `osdp_NAK` response.
- * @retval +ve is reserved.
+ * @retval OSDP_PD_CMD_BUSY if LibOSDP must send an `osdp_BUSY` response.
+ * @retval Other +ve values are reserved and send an `osdp_NAK` response.
+ *
+ * @note An app that cannot act on a command within the CP's reply timeout --
+ * one that must write a new key to flash before acknowledging a KEYSET, say --
+ * returns `OSDP_PD_CMD_BUSY`. The CP then repeats the command, unchanged,
+ * until it gets another answer or its retry budget runs out, and each repeat
+ * reaches this callback again. So the app starts the work on the first call,
+ * returns `OSDP_PD_CMD_BUSY` while it runs, and returns 0 or a NAK once it is
+ * done. A BUSY answer leaves the PD as it was before the command arrived: the
+ * sequence number does not advance and the secure channel is untouched. A
+ * reply event belongs with the call that does not return `OSDP_PD_CMD_BUSY`.
+ * The return value for `OSDP_CMD_COMSET_DONE` is ignored, since the reply to
+ * COMSET has already gone out by then. GENAUTH and CRAUTH arrive in fragments
+ * that a repeat cannot reassemble, so BUSY for them is sent as a NAK; reply
+ * to those on a later poll instead. OUTPUT, LED and BUZZER commands can carry
+ * several records, each a call of its own; BUSY is honoured only for the
+ * first, since a repeat would replay the records already applied, and is sent
+ * as a NAK for any later one.
  *
  * @note To select the NAK code, return the negated code; only the codes an
  * application can know are honoured:

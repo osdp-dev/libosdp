@@ -409,6 +409,10 @@ static bool do_command_callback(struct osdp_pd *pd, struct osdp_cmd *cmd)
 	if (validate_command(pd, cmd) && pd->command_callback) {
 		ret = pd->command_callback(pd->command_callback_arg, cmd);
 	}
+	if (ret == OSDP_PD_CMD_BUSY) {
+		pd->reply_id = REPLY_BUSY;
+		return false;
+	}
 	if (ret != 0) {
 		pd->reply_id = REPLY_NAK;
 		pd->nak_code = pd_nak_code_from_callback(pd, ret);
@@ -416,6 +420,22 @@ static bool do_command_callback(struct osdp_pd *pd, struct osdp_cmd *cmd)
 	}
 	osdp_metrics_report(pd, OSDP_METRIC_COMMAND);
 	return true;
+}
+
+/**
+ * OUT, LED and BUZ carry several records, handed to the app one at a time. A
+ * repeat would replay the records the app has already applied, so BUSY is
+ * honoured only for the first.
+ */
+static void pd_refuse_late_busy(struct osdp_pd *pd, int record)
+{
+	if (record > 0 && pd->reply_id == REPLY_BUSY) {
+		LOG_WRN("BUSY after record %d of %s would replay the ones "
+			"before it; sending NAK",
+			record, osdp_cmd_name(pd->cmd_id));
+		pd->reply_id = REPLY_NAK;
+		pd->nak_code = OSDP_PD_NAK_RECORD;
+	}
 }
 
 static int pd_cmd_cap_ok(struct osdp_pd *pd, struct osdp_cmd *cmd)
@@ -837,6 +857,7 @@ static int pd_decode_command(struct osdp_pd *pd, uint8_t *buf, int len)
 				break;
 			}
 			if (!do_command_callback(pd, &cmd)) {
+				pd_refuse_late_busy(pd, i);
 				break;
 			}
 		}
@@ -879,6 +900,7 @@ static int pd_decode_command(struct osdp_pd *pd, uint8_t *buf, int len)
 				break;
 			}
 			if (!do_command_callback(pd, &cmd)) {
+				pd_refuse_late_busy(pd, i);
 				break;
 			}
 		}
@@ -906,6 +928,7 @@ static int pd_decode_command(struct osdp_pd *pd, uint8_t *buf, int len)
 				break;
 			}
 			if (!do_command_callback(pd, &cmd)) {
+				pd_refuse_late_busy(pd, i);
 				break;
 			}
 		}
@@ -1149,6 +1172,15 @@ static int pd_decode_command(struct osdp_pd *pd, uint8_t *buf, int len)
 			break;
 		}
 		if (!do_command_callback(pd, &cmd)) {
+			/* A repeat would carry only this last fragment, which
+			 * cannot be reassembled once the engine is aborted. */
+			if (pd->reply_id == REPLY_BUSY) {
+				LOG_WRN("BUSY is not supported for %s; reply on a "
+					"later poll instead",
+					osdp_cmd_name(pd->cmd_id));
+				pd->reply_id = REPLY_NAK;
+				pd->nak_code = OSDP_PD_NAK_RECORD;
+			}
 			osdp_piv_abort(pd);
 			ret = OSDP_PD_ERR_REPLY;
 			break;
@@ -1240,8 +1272,10 @@ static int pd_decode_command(struct osdp_pd *pd, uint8_t *buf, int len)
 		cmd.keyset.length = buf[pos++];
 		memcpy(cmd.keyset.data, buf + pos, 16);
 		if (!do_command_callback(pd, &cmd)) {
-			pd->nak_code = OSDP_PD_NAK_SC_COND;
-			LOG_ERR("Keyset with SC inactive");
+			if (pd->reply_id != REPLY_BUSY) {
+				pd->nak_code = OSDP_PD_NAK_SC_COND;
+				LOG_ERR("Keyset rejected by the app");
+			}
 			break;
 		}
 		ret = OSDP_PD_ERR_NONE;
@@ -1731,7 +1765,10 @@ static int pd_send_reply(struct osdp_pd *pd)
 	if (ret < 0) {
 		return OSDP_PD_ERR_GENERIC;
 	}
-	pd->last_tx_len = (uint16_t)ret;
+	/* The CP repeats a command it got BUSY for under the same sequence
+	 * number, and that repeat must reach the app, not this cache. The
+	 * BUSY frame has also overwritten whatever reply the cache held. */
+	pd->last_tx_len = pd->reply_id == REPLY_BUSY ? 0 : (uint16_t)ret;
 	pd->last_cmd_id = (uint8_t)pd->cmd_id;
 	return OSDP_PD_ERR_NONE;
 }
@@ -1862,7 +1899,10 @@ static void osdp_pd_update(struct osdp_pd *pd)
 			notify_pd_status(pd, true);
 		}
 
-		if (ret == OSDP_PD_ERR_NONE && sc_is_active(pd)) {
+		/* A command the app is busy with passed the MAC check like any
+		 * other; the CP repeating it keeps the session alive. */
+		if ((ret == OSDP_PD_ERR_NONE || pd->reply_id == REPLY_BUSY) &&
+		    sc_is_active(pd)) {
 			pd->sc_tstamp = osdp_millis_now();
 		}
 
@@ -1887,6 +1927,9 @@ static void osdp_pd_update(struct osdp_pd *pd)
 		return;
 	}
 	if (ret == OSDP_PD_ERR_NONE) {
+		/* Taken now: the COMSET_DONE callback below rewrites reply_id. */
+		bool sent_busy = pd->reply_id == REPLY_BUSY;
+
 		if (pd->active_event) {
 			pd_complete_event(pd, pd->active_event, OSDP_COMPLETION_OK);
 			pd->active_event = NULL;
@@ -1921,7 +1964,11 @@ static void osdp_pd_update(struct osdp_pd *pd)
 			LOG_INF("COMSET Succeeded! New PD-Addr: %d; Baud: %" PRIu32,
 				pd->address, pd->baud_rate);
 		}
-		osdp_phy_progress_sequence(pd);
+		/* BUSY travels outside the sequence (v2.2 section 7.19); the
+		 * CP's repeat reuses the number this command came with. */
+		if (!sent_busy) {
+			osdp_phy_progress_sequence(pd);
+		}
 	} else {
 		if (pd->active_event) {
 			pd_complete_event(pd, pd->active_event, OSDP_COMPLETION_FAILED);
