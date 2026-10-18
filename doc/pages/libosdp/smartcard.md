@@ -200,6 +200,16 @@ struct osdp_cmd stop = { .id = OSDP_CMD_XWR, .trs = { .command = OSDP_TRS_CMD_ST
 osdp_cp_submit_command(ctx, pd_idx, &stop);
 ```
 
+### Answer ordering
+
+The card answer — an `OSDP_EVENT_TRS` reply carrying `OSDP_TRS_REPLY_CARD_DATA`
+— is always delivered to the event callback before the `SEND_APDU` command it
+answers completes. An application can therefore stash the answer in its event
+handler and read it in the command's completion handler, with no need to buffer
+replies and match them to commands by hand. The guarantee holds on both paths:
+the fast-card case, where the reader answers at once, and the slow-card case,
+where the answer rides out on a later poll.
+
 ### APDU capacity
 
 A C- or R-APDU is bounded by `OSDP_TRS_APDU_MAX_LEN` (default 258 — a 255-byte

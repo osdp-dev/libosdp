@@ -58,6 +58,13 @@ struct test_trs_ctx {
 	/* Written by the completion callback on the refresh thread. */
 	struct test_completion completion;
 
+	/* Order stamps proving the card-data event is delivered before the XWR
+	 * command completes. Both callbacks run on the CP refresh thread, so a
+	 * shared tick records their true order. */
+	int order_tick;
+	int card_data_order;
+	int xwr_complete_order;
+
 	/*
 	 * How the PD app answers a card scan. OSDP_TRS_CARD_STATUS_UNKNOWN
 	 * means "say nothing", which the CP reads as the reader declining the
@@ -111,6 +118,9 @@ static int trs_cp_event_callback(void *arg, int pd, struct osdp_event *ev)
 	if (ev->type == OSDP_EVENT_TRS) {
 		ctx->event_seen = true;
 		memcpy(&ctx->last_reply, &ev->trs, sizeof(ctx->last_reply));
+		if (ev->trs.reply == OSDP_TRS_REPLY_CARD_DATA) {
+			ctx->card_data_order = ++ctx->order_tick;
+		}
 		if (ev->trs.reply == OSDP_TRS_REPLY_CARD_PRESENT) {
 			if (ev->trs.card_present.status ==
 			    OSDP_TRS_CARD_NOT_PRESENT) {
@@ -136,6 +146,7 @@ static void trs_cp_completion_callback(void *arg, int pd,
 
 	ARG_UNUSED(pd);
 	if (cmd->id == OSDP_CMD_XWR) {
+		ctx->xwr_complete_order = ++ctx->order_tick;
 		test_completion_record(&ctx->completion, cmd->id, (int)status);
 	}
 
@@ -352,6 +363,37 @@ static bool wait_for_trs_completion(int timeout_sec)
 		usleep(1000 * 1000);
 	}
 	return false;
+}
+
+static bool wait_for_xwr_complete_order(int timeout_sec)
+{
+	int rc = 0;
+	while (rc++ < timeout_sec) {
+		if (g_trs.xwr_complete_order) {
+			return true;
+		}
+		usleep(1000 * 1000);
+	}
+	return false;
+}
+
+/* The card answer (OSDP_TRS_REPLY_CARD_DATA) must reach the app before the
+ * XWR command that asked for it completes, so an app can read the answer from
+ * its event handler and use it in its completion handler. */
+static bool trs_answer_precedes_completion(void)
+{
+	if (!wait_for_xwr_complete_order(10)) {
+		printf(SUB_2 "XWR completion not reported\n");
+		return false;
+	}
+	if (!g_trs.card_data_order || !g_trs.xwr_complete_order ||
+	    g_trs.card_data_order >= g_trs.xwr_complete_order) {
+		printf(SUB_2 "card-data event must precede XWR completion "
+		       "(event=%d completion=%d)\n",
+		       g_trs.card_data_order, g_trs.xwr_complete_order);
+		return false;
+	}
+	return true;
 }
 
 static uint8_t pd_trs_mode(void)
@@ -596,6 +638,8 @@ static bool test_trs_apdu_exchange()
 	g_trs.event_seen = false;
 	g_trs.cmd_seen = false;
 	g_trs.defer = false;
+	g_trs.card_data_order = 0;
+	g_trs.xwr_complete_order = 0;
 
 	/* Stack storage must outlive the submission; wait_for_trs_event()
 	 * below blocks here until the whole exchange completes. */
@@ -639,7 +683,7 @@ static bool test_trs_apdu_exchange()
 		return false;
 	}
 
-	return true;
+	return trs_answer_precedes_completion();
 }
 
 static bool test_trs_deferred_apdu()
@@ -653,6 +697,8 @@ static bool test_trs_deferred_apdu()
 	g_trs.event_seen = false;
 	g_trs.cmd_seen = false;
 	g_trs.defer = true;
+	g_trs.card_data_order = 0;
+	g_trs.xwr_complete_order = 0;
 
 	struct osdp_cmd cmd = {
 		.id = OSDP_CMD_XWR,
@@ -713,7 +759,7 @@ static bool test_trs_deferred_apdu()
 		return false;
 	}
 
-	return true;
+	return trs_answer_precedes_completion();
 }
 
 static bool wait_for_apdu_count(int want, int timeout_ms)
