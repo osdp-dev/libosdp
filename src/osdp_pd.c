@@ -614,6 +614,45 @@ static void pd_deliver_notification(struct osdp_pd *pd,
 	osdp_metrics_report(pd, OSDP_METRIC_EVENT);
 }
 
+static void pd_drop_staged_scbk(struct osdp_pd *pd)
+{
+	osdp_fill_zeros(pd->staged_scbk, sizeof(pd->staged_scbk));
+	osdp_fill_zeros(pd->staged_rnd_a, sizeof(pd->staged_rnd_a));
+	CLEAR_FLAG(pd, PD_FLAG_SCBK_STAGED);
+	CLEAR_FLAG(pd, PD_FLAG_SCBK_ATTEMPT);
+	CLEAR_FLAG(pd, PD_FLAG_SC_USE_STAGED);
+}
+
+static void pd_stage_scbk(struct osdp_pd *pd, const uint8_t *scbk)
+{
+	pd_drop_staged_scbk(pd);
+	memcpy(pd->staged_scbk, scbk, 16);
+	SET_FLAG(pd, PD_FLAG_SCBK_STAGED);
+}
+
+/*
+ * A CHLNG for a real key. The staged key gets one attempt, named by its
+ * RND.A: a CHLNG resent with the same RND.A (after a lost CCRYPT) is the
+ * same attempt and runs on the staged key again; a different RND.A means
+ * the attempt never produced a session, so the staged key is dropped and
+ * every later handshake runs on the main key.
+ */
+static void pd_pick_chlng_key(struct osdp_pd *pd)
+{
+	if (!ISSET_FLAG(pd, PD_FLAG_SCBK_STAGED)) {
+		return;
+	}
+	if (ISSET_FLAG(pd, PD_FLAG_SCBK_ATTEMPT) &&
+	    memcmp(pd->staged_rnd_a, pd->sc.cp_random, 8) != 0) {
+		LOG_WRN("Staged SCBK's attempt failed; reverting to main SCBK");
+		pd_drop_staged_scbk(pd);
+		return;
+	}
+	memcpy(pd->staged_rnd_a, pd->sc.cp_random, 8);
+	SET_FLAG(pd, PD_FLAG_SCBK_ATTEMPT);
+	SET_FLAG(pd, PD_FLAG_SC_USE_STAGED);
+}
+
 static void notify_pd_status(struct osdp_pd *pd, bool is_online)
 {
 	struct osdp_notification n = { .type = OSDP_NOTIFICATION_PD_STATUS };
@@ -674,6 +713,62 @@ static inline void pd_sc_deactivate(struct osdp_pd *pd)
 	if (was_active) {
 		notify_sc_status(pd);
 	}
+}
+
+/*
+ * The first MAC-verified command of a session settles the staged key,
+ * before that command is dispatched, so a KEYSET arriving as that command
+ * cannot overwrite a key not yet confirmed. A session on the main key after
+ * the staged key's attempt (a CP that asked for SCBK-D outside install
+ * mode, answered on the main key) shows the CP still holds main, so the
+ * staged key goes.
+ *
+ * A session on the staged key proves both sides hold it, and only then does
+ * the app see the KEYSET. Until the app has persisted the key, the command
+ * is answered with osdp_BUSY, which travels unsecured and so cannot tell
+ * the CP the new key is in use. If the app refuses the key, the PD keeps
+ * its main key and ends the session with a plaintext NAK: the CP sees no
+ * MAC'd reply on the staged key and settles back on main as well.
+ */
+static int pd_settle_staged_scbk(struct osdp_pd *pd, uint8_t cmd_id)
+{
+	struct osdp_cmd cmd = {
+		.id = OSDP_CMD_KEYSET,
+		.keyset = { .type = 1, .length = 16 },
+	};
+	bool accepted;
+
+	if (!ISSET_FLAG(pd, PD_FLAG_SCBK_STAGED) || sc_use_scbkd(pd)) {
+		return OSDP_PD_ERR_NONE;
+	}
+	if (!ISSET_FLAG(pd, PD_FLAG_SC_USE_STAGED)) {
+		if (ISSET_FLAG(pd, PD_FLAG_SCBK_ATTEMPT)) {
+			pd_drop_staged_scbk(pd);
+			LOG_WRN("Session on main SCBK; dropping staged SCBK");
+		}
+		return OSDP_PD_ERR_NONE;
+	}
+
+	memcpy(cmd.keyset.data, pd->staged_scbk, 16);
+	accepted = do_command_callback(pd, &cmd);
+	osdp_fill_zeros(cmd.keyset.data, 16);
+	if (accepted) {
+		memcpy(pd->sc.scbk, pd->staged_scbk, 16);
+		pd_drop_staged_scbk(pd);
+		LOG_INF("Staged SCBK confirmed");
+		return OSDP_PD_ERR_NONE;
+	}
+
+	pd->cmd_id = cmd_id;
+	if (pd->reply_id == REPLY_BUSY) {
+		return OSDP_PD_ERR_REPLY;
+	}
+	LOG_ERR("Staged SCBK rejected by the app; keeping main SCBK");
+	pd_drop_staged_scbk(pd);
+	pd_sc_deactivate(pd);
+	pd->reply_id = REPLY_NAK;
+	pd->nak_code = OSDP_PD_NAK_SC_COND;
+	return OSDP_PD_ERR_REPLY;
 }
 
 static int pd_decode_command(struct osdp_pd *pd, uint8_t *buf, int len)
@@ -1272,11 +1367,22 @@ static int pd_decode_command(struct osdp_pd *pd, uint8_t *buf, int len)
 			pd->nak_code = OSDP_PD_NAK_RECORD;
 			break;
 		}
-		cmd.id = OSDP_CMD_KEYSET;
 		cmd.keyset.type = buf[pos++];
 		cmd.keyset.length = buf[pos++];
+		/* A session on a real key stages the new one; the app sees it
+		 * once a session on it proves both sides hold it. A session on
+		 * SCBK-D has no key to fall back on, so there the app takes the
+		 * key now and it replaces the main key on the ACK. */
+		if (!sc_use_scbkd(pd)) {
+			pd_stage_scbk(pd, buf + pos);
+			ret = OSDP_PD_ERR_NONE;
+			pd->reply_id = REPLY_ACK;
+			break;
+		}
+		cmd.id = OSDP_CMD_KEYSET;
 		memcpy(cmd.keyset.data, buf + pos, 16);
 		if (!do_command_callback(pd, &cmd)) {
+			osdp_fill_zeros(cmd.keyset.data, 16);
 			if (pd->reply_id != REPLY_BUSY) {
 				pd->nak_code = OSDP_PD_NAK_SC_COND;
 				LOG_ERR("Keyset rejected by the app");
@@ -1285,7 +1391,9 @@ static int pd_decode_command(struct osdp_pd *pd, uint8_t *buf, int len)
 		}
 		ret = OSDP_PD_ERR_NONE;
 		pd->reply_id = REPLY_ACK;
+		pd_drop_staged_scbk(pd);
 		memcpy(pd->keyset_pending, cmd.keyset.data, 16);
+		osdp_fill_zeros(cmd.keyset.data, 16);
 		break;
 	case CMD_CHLNG:
 		if (len != CMD_CHLNG_DATA_LEN) {
@@ -1298,6 +1406,15 @@ static int pd_decode_command(struct osdp_pd *pd, uint8_t *buf, int len)
 		pd_sc_deactivate(pd);
 		osdp_sc_setup(pd);
 		memcpy(pd->sc.cp_random, buf + pos, 8);
+		/* A CHLNG for SCBK-D is answered on SCBK-D in install mode and
+		 * on the main key otherwise; neither is the staged key's
+		 * attempt, so neither uses it up nor fails it. */
+		if (sc_use_scbkd(pd) ||
+		    ISSET_FLAG(pd, PD_FLAG_PKT_ASKS_SCBKD)) {
+			CLEAR_FLAG(pd, PD_FLAG_SC_USE_STAGED);
+		} else {
+			pd_pick_chlng_key(pd);
+		}
 		pd->reply_id = REPLY_CCRYPT;
 		ret = OSDP_PD_ERR_NONE;
 		break;
@@ -1827,6 +1944,13 @@ static int pd_receive_and_process_command(struct osdp_pd *pd)
 		return OSDP_PD_ERR_GENERIC; /* fatal errors */
 	}
 
+	if (ISSET_FLAG(pd, PD_FLAG_PKT_SC_VERIFIED)) {
+		err = pd_settle_staged_scbk(pd, buf[0]);
+		if (err != OSDP_PD_ERR_NONE) {
+			return err;
+		}
+	}
+
 	return pd_decode_command(pd, buf, len);
 }
 
@@ -1939,10 +2063,17 @@ static void osdp_pd_update(struct osdp_pd *pd)
 			pd_complete_event(pd, pd->active_event, OSDP_COMPLETION_OK);
 			pd->active_event = NULL;
 		}
-		if (pd->cmd_id == CMD_KEYSET && pd->reply_id == REPLY_ACK) {
+		if (pd->cmd_id == CMD_KEYSET && pd->reply_id == REPLY_ACK &&
+		    sc_use_scbkd(pd)) {
 			memcpy(pd->sc.scbk, pd->keyset_pending, 16);
 			osdp_fill_zeros(pd->keyset_pending, 16);
 			CLEAR_FLAG(pd, PD_FLAG_SC_USE_SCBKD);
+			CLEAR_FLAG(pd, PD_FLAG_INSTALL_MODE);
+			pd_sc_deactivate(pd);
+		} else if (pd->cmd_id == CMD_KEYSET &&
+			   pd->reply_id == REPLY_ACK) {
+			/* The staged key waits for the next session to prove
+			 * it; this one, on the main key, ends here. */
 			CLEAR_FLAG(pd, PD_FLAG_INSTALL_MODE);
 			pd_sc_deactivate(pd);
 		} else if (pd->cmd_id == CMD_COMSET && pd->reply_id == REPLY_COM) {
@@ -2198,6 +2329,8 @@ void osdp_pd_teardown(osdp_t *ctx)
 	 * leaves the new SCBK parked here. It shares storage with nak_code and
 	 * comset_pending, so wiping the key wipes the whole union. */
 	osdp_fill_zeros(pd->keyset_pending, sizeof(pd->keyset_pending));
+	osdp_fill_zeros(pd->staged_scbk, sizeof(pd->staged_scbk));
+	osdp_fill_zeros(pd->staged_rnd_a, sizeof(pd->staged_rnd_a));
 
 	if (pd_ctx->channel.close) {
 		pd_ctx->channel.close(pd_ctx->channel.data);
@@ -2403,3 +2536,4 @@ int osdp_pd_flush_events(osdp_t *ctx)
 /* Export the PD frame codecs to out-of-module drivers (tests, embedders). */
 OSDP_TEST_ALIAS(pd_decode_command);
 OSDP_TEST_ALIAS(pd_build_reply);
+OSDP_TEST_ALIAS(pd_stage_scbk);

@@ -44,6 +44,8 @@ void osdp_compute_session_keys(struct osdp_pd *pd)
 
 	if (ISSET_FLAG(pd, PD_FLAG_SC_USE_SCBKD)) {
 		memcpy(scbk, osdp_scbk_default, 16);
+	} else if (ISSET_FLAG(pd, PD_FLAG_SC_USE_STAGED)) {
+		memcpy(scbk, pd->staged_scbk, 16);
 	} else {
 		memcpy(scbk, pd->sc.scbk, 16);
 	}

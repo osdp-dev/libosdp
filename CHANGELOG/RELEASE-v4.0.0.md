@@ -13,6 +13,12 @@ Release subject ## TODO
 
 - ## TODO
 
+## Migration notes
+
+- PD: a KEYSET on a real-key session reaches the command callback when a
+  session on the new key proves it, not when the command arrives. The callback
+  still means "persist this as the key in use".
+
 ## Changes
 
 - 3ab24c9 release: add two-phase prepare/publish workflow

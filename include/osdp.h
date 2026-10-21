@@ -1036,6 +1036,14 @@ struct osdp_cmd_comset {
  * SCBK-D and an all-zero key are refused: on the CP,
  * osdp_cp_submit_command() returns -1; on the PD, the command is NAKed with
  * OSDP_PD_NAK_RECORD before the command callback is called.
+ *
+ * On the PD, a KEYSET that arrives on a secure channel keyed with a real
+ * SCBK reaches the command callback only once a session on the new key has
+ * carried a MAC-verified command; until then the PD keeps using its current
+ * key. The callback persists the key, returning `OSDP_PD_CMD_BUSY` while the
+ * write runs; 0 makes it the key in use, and an error drops it. In install
+ * mode the callback is called when the command arrives. See
+ * <a href="https://doc.osdp.dev/libosdp/secure-channel">Secure Channel</a>.
  */
 struct osdp_cmd_keyset {
 	/**

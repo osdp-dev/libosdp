@@ -11,10 +11,12 @@ include_directories(${LIB_OSDP_INCLUDE_DIRS})
 include_directories(${LIB_OSDP_PRIVATE_INCLUDE_DIRS})
 
 # rebuild libosdp with test flag. Shorten the PD online timeout so
-# link-loss tests do not block for the production 8s window.
+# link-loss tests do not block for the production 8s window, and the SC
+# retry wait so a failed handshake is retried within a test's budget
+# instead of after the production 600s.
 set(LIB_OSDP_TEST osdptest)
 add_definitions(-DUNIT_TESTING -DOSDP_PD_ONLINE_TOUT_MS=1500
-		${LIB_OSDP_DEFINITIONS})
+		-DOSDP_PD_SC_RETRY_MS=3000 ${LIB_OSDP_DEFINITIONS})
 add_library(${LIB_OSDP_TEST} STATIC EXCLUDE_FROM_ALL
 	    ${LIB_OSDP_SOURCES} ${PROJECT_SOURCE_DIR}/src/osdp_file.c)
 

@@ -436,10 +436,12 @@ static inline __noreturn void die()
 #define PD_FLAG_TAMPER	       BIT(1) /* local tamper status */
 #define PD_FLAG_POWER	       BIT(2) /* local power status */
 #define PD_FLAG_R_TAMPER       BIT(3) /* reader tamper status */
+#define PD_FLAG_PKT_SC_VERIFIED BIT(4) /* this packet's MAC checked out */
 #define PD_FLAG_SKIP_SEQ_CHECK BIT(5) /* disable seq checks (debug) */
 #define PD_FLAG_SC_USE_SCBKD   BIT(6) /* in this SC attempt, use SCBKD */
 #define PD_FLAG_SC_ACTIVE      BIT(7) /* secure channel is active */
 #define PD_FLAG_PD_MODE	       BIT(8) /* device is setup as PD */
+#define PD_FLAG_PKT_ASKS_SCBKD BIT(9) /* this CHLNG asked for SCBK-D */
 #define PD_FLAG_PKT_SKIP_MARK  BIT(10) /* OPT_OSDP_SKIP_MARK_BYTE */
 #define PD_FLAG_PKT_HAS_MARK   BIT(11) /* Packet has mark byte */
 #define PD_FLAG_SC_DISABLED    BIT(12) /* no SCBK; this PD won't do OSDP-SC */
@@ -449,6 +451,9 @@ static inline __noreturn void die()
 #define PD_FLAG_TRS_CAPABLE    BIT(16) /* PD reported a smart card reader */
 #define PD_FLAG_TRS_ACTIVE     BIT(17) /* a TRS card session is in progress */
 #define PD_FLAG_SC_ESTABLISHED BIT(18) /* SC once came up on the real SCBK */
+#define PD_FLAG_SCBK_STAGED    BIT(19) /* staged_scbk holds a key */
+#define PD_FLAG_SCBK_ATTEMPT   BIT(20) /* staged_rnd_a names its one attempt */
+#define PD_FLAG_SC_USE_STAGED  BIT(21) /* in this SC attempt, use staged_scbk */
 
 /* PD Init flags */
 #define PD_FLAG_ENFORCE_SECURE  BIT(24) /* See: OSDP_FLAG_ENFORCE_SECURE */
@@ -759,6 +764,14 @@ struct osdp_pd {
 	enum osdp_mp_msg_type engine_cmd_mp_type;
 
 	struct osdp_secure_channel sc;   /* Secure Channel session context */
+	/*
+	 * A KEYSET key held beside sc.scbk until a session proves it, and the
+	 * RND.A of the one handshake allowed to try it. Kept out of sc, which
+	 * osdp_sc_setup() wipes at every CHLNG, and out of the keyset_pending
+	 * union, which the next command's NAK code overwrites.
+	 */
+	uint8_t staged_scbk[16];
+	uint8_t staged_rnd_a[8];
 	struct osdp_file *file;          /* File transfer context */
 	struct osdp_piv *piv;            /* Smartcard/PIV multipart context */
 	struct osdp_bio *bio;            /* Biometric read multipart context */

@@ -72,8 +72,9 @@ $(O)/pd_app.elf: $(O)/libosdp.a $(OBJ_PD_APP)
 .PHONY: unit-test
 # OSDP_PD_ONLINE_TOUT_MS override mirrors tests/unit-tests/CMakeLists.txt:
 # link-loss tests budget a 4000ms wait window, so the 8s production timeout
-# would guarantee failure.
-unit-test: CCFLAGS_EXTRA=-DUNIT_TESTING -DOSDP_PD_ONLINE_TOUT_MS=1500 -Iutils/include -Iinclude -Isrc -I$(O)
+# would guarantee failure. OSDP_PD_SC_RETRY_MS likewise brings a failed
+# handshake's retry inside a test's budget.
+unit-test: CCFLAGS_EXTRA=-DUNIT_TESTING -DOSDP_PD_ONLINE_TOUT_MS=1500 -DOSDP_PD_SC_RETRY_MS=3000 -Iutils/include -Iinclude -Isrc -I$(O)
 unit-test: $(O)/unit-test
 
 $(O)/unit-test: $(OBJ_TEST)

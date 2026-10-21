@@ -277,6 +277,10 @@ int test_setup_devices_ext(struct test *t, osdp_t **cp, osdp_t **pd,
 			   uint32_t cp_flags, uint32_t pd_flags);
 int test_setup_devices_plain(struct test *t, osdp_t **cp, osdp_t **pd,
 			     uint32_t cp_flags, uint32_t pd_flags);
+/* Like test_setup_devices_ext(), with each side's SCBK given; NULL for none. */
+int test_setup_devices_keys(struct test *t, osdp_t **cp, osdp_t **pd,
+			    uint32_t cp_flags, uint32_t pd_flags,
+			    const uint8_t *cp_scbk, const uint8_t *pd_scbk);
 bool test_wait_for_online(osdp_t *cp_ctx, int pd_idx, int timeout_sec);
 
 /*
@@ -396,6 +400,7 @@ void print_line_noise_stats();
 void run_cp_fsm_tests(struct test *t);
 void run_busy_tests(struct test *t);
 void run_sc_handshake_tests(struct test *t);
+void run_scbk_staging_tests(struct test *t);
 void run_cp_phy_fsm_tests(struct test *t);
 void run_cp_phy_tests(struct test *t);
 void run_pd_phy_tests(struct test *t);

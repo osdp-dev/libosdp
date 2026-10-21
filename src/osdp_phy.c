@@ -834,6 +834,9 @@ int osdp_phy_decode_packet(struct osdp_pd *pd, uint8_t **pkt_start)
 	struct osdp_packet_header *pkt;
 	bool is_sc_active = sc_is_active(pd);
 
+	CLEAR_FLAG(pd, PD_FLAG_PKT_SC_VERIFIED);
+	CLEAR_FLAG(pd, PD_FLAG_PKT_ASKS_SCBKD);
+
 	if (packet_has_mark(pd)) {
 		buf += 1;
 		len -= 1;
@@ -879,6 +882,11 @@ int osdp_phy_decode_packet(struct osdp_pd *pd, uint8_t **pkt_start)
 			 */
 			if (is_install_mode(pd) && pkt->data[2] == 0) {
 				SET_FLAG(pd, PD_FLAG_SC_USE_SCBKD);
+			}
+			/* Asked for, whether or not install mode honours it;
+			 * either way this handshake is no real-key attempt. */
+			if (pkt->data[1] == SCS_11 && pkt->data[2] == 0) {
+				SET_FLAG(pd, PD_FLAG_PKT_ASKS_SCBKD);
 			}
 		}
 		data = pkt->data + pkt->data[0];
@@ -984,6 +992,7 @@ int osdp_phy_decode_packet(struct osdp_pd *pd, uint8_t **pkt_start)
 			}
 			len += 1; /* put back cmd/reply ID */
 		}
+		SET_FLAG(pd, PD_FLAG_PKT_SC_VERIFIED);
 	}
 
 	if (is_data_trace_enabled(pd)) {

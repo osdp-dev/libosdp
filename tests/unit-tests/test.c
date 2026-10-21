@@ -1144,9 +1144,14 @@ static void test_default_event_completion_cb(void *arg,
 	test_event_free(ev);
 }
 
-static int test_setup_devices_impl(struct test *t, osdp_t **cp, osdp_t **pd,
-				   uint32_t cp_flags, uint32_t pd_flags,
-				   bool with_scbk)
+static const uint8_t test_harness_scbk[16] = {
+	0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+	0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f
+};
+
+int test_setup_devices_keys(struct test *t, osdp_t **cp, osdp_t **pd,
+			    uint32_t cp_flags, uint32_t pd_flags,
+			    const uint8_t *cp_scbk, const uint8_t *pd_scbk)
 {
 #ifndef OPT_OSDP_LOG_MINIMAL
 	osdp_logger_init("osdp", t->loglevel, NULL);
@@ -1166,10 +1171,6 @@ static int test_setup_devices_impl(struct test *t, osdp_t **cp, osdp_t **pd,
 	pktq_flush(&pd_to_cp_q);
 #endif
 
-	uint8_t scbk[16] = {
-		0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
-		0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f
-	};
 	/* mock application data */
 	struct osdp_channel cp_channel = {
 		.data = NULL,
@@ -1186,7 +1187,7 @@ static int test_setup_devices_impl(struct test *t, osdp_t **cp, osdp_t **pd,
 		.address = 101,
 		.baud_rate = 9600,
 		.flags = cp_flags,
-		.scbk = with_scbk ? scbk : NULL,
+		.scbk = cp_scbk,
 	};
 
 	*cp = osdp_cp_setup(&cp_channel, 1, &info_cp);
@@ -1230,7 +1231,7 @@ static int test_setup_devices_impl(struct test *t, osdp_t **cp, osdp_t **pd,
 			.firmware_version = 0x0A0B0C0D,
 		},
 		.cap = cap,
-		.scbk = scbk,
+		.scbk = pd_scbk,
 	};
 
 	*pd = (struct osdp *)osdp_pd_setup(&pd_channel, &info_pd);
@@ -1253,7 +1254,8 @@ static int test_setup_devices_impl(struct test *t, osdp_t **cp, osdp_t **pd,
 int test_setup_devices_ext(struct test *t, osdp_t **cp, osdp_t **pd,
 			   uint32_t cp_flags, uint32_t pd_flags)
 {
-	return test_setup_devices_impl(t, cp, pd, cp_flags, pd_flags, true);
+	return test_setup_devices_keys(t, cp, pd, cp_flags, pd_flags,
+				       test_harness_scbk, test_harness_scbk);
 }
 
 /* No SCBK on the CP: the link comes up and stays in plaintext, the way
@@ -1261,7 +1263,8 @@ int test_setup_devices_ext(struct test *t, osdp_t **cp, osdp_t **pd,
 int test_setup_devices_plain(struct test *t, osdp_t **cp, osdp_t **pd,
 			     uint32_t cp_flags, uint32_t pd_flags)
 {
-	return test_setup_devices_impl(t, cp, pd, cp_flags, pd_flags, false);
+	return test_setup_devices_keys(t, cp, pd, cp_flags, pd_flags, NULL,
+				       test_harness_scbk);
 }
 
 int test_setup_devices(struct test *t, osdp_t **cp, osdp_t **pd)

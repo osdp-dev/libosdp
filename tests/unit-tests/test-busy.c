@@ -468,10 +468,11 @@ static bool test_pd_app_busy_then_ack(void)
 }
 
 /*
- * KEYSET is what BUSY is for on a PD that stores its key: the key must be
- * written before the ACK. The old key stays in force until then, so every
- * repeat must still verify under the current session; after the ACK both
- * sides move to the new key and the secure channel comes back up with it.
+ * KEYSET is what BUSY is for on a PD that stores its key: the key reaches
+ * the app once a session on it proves it, and the app answers that
+ * session's first command with BUSY until the key is written. Every repeat
+ * must verify under that session, and the PD switches to the new key only
+ * when the app accepts it.
  */
 static bool test_pd_app_busy_keyset(void)
 {
@@ -486,8 +487,9 @@ static bool test_pd_app_busy_keyset(void)
 		0xb0, 0xb1, 0xb2, 0xb3, 0xb4, 0xb5, 0xb6, 0xb7,
 		0xb8, 0xb9, 0xba, 0xbb, 0xbc, 0xbd, 0xbe, 0xbf,
 	};
+	int i;
 
-	printf(SUB_1 "PD app busy on KEYSET, then ACK -- ");
+	printf(SUB_1 "PD app busy on a proven KEYSET -- ");
 
 	memcpy(cmd.keyset.data, key, sizeof(key));
 	g_ctx.busy_cmd_id = OSDP_CMD_KEYSET;
@@ -503,6 +505,8 @@ static bool test_pd_app_busy_keyset(void)
 		printf("KEYSET never completed!\n");
 		return false;
 	}
+	for (i = 0; i < 100 && g_ctx.busy_cmd_calls < 3; i++)
+		usleep(100 * 1000);
 	g_ctx.busy_cmd_id = 0;
 
 	if (test_completion_first_id(&g_ctx.completion) != OSDP_CMD_KEYSET ||
