@@ -2584,7 +2584,8 @@ static int cp_submit_command(struct osdp_pd *pd, const struct osdp_cmd *cmd)
 		}
 		return ret;
 	} else if (cmd->id == OSDP_CMD_KEYSET &&
-		   (cmd->keyset.type != 1 || !sc_is_active(pd))) {
+		   (cmd->keyset.type != 1 || !sc_is_active(pd) ||
+		    !osdp_scbk_is_usable(cmd->keyset.data))) {
 		LOG_ERR("Invalid keyset request");
 		return -1;
 	}
@@ -2715,6 +2716,7 @@ static int cp_add_pd(struct osdp *ctx, int num_pd, const osdp_pd_info_t *info_li
 	int i, old_num_pd;
 	struct osdp_pd *old_pd_array, *new_pd_array, *pd;
 	const osdp_pd_info_t *info;
+	const uint8_t *scbk;
 
 	assert(num_pd);
 	assert(info_list);
@@ -2751,8 +2753,13 @@ static int cp_add_pd(struct osdp *ctx, int num_pd, const osdp_pd_info_t *info_li
 		if (cp_setup_pd_rx_storage(ctx, pd, i + old_num_pd)) {
 			goto error;
 		}
-		if (info->scbk != NULL) {
-			memcpy(pd->sc.scbk, info->scbk, 16);
+		scbk = info->scbk;
+		if (scbk != NULL && !osdp_scbk_is_usable(scbk)) {
+			LOG_ERR("SCBK is SCBK-D or all zeros; ignoring it");
+			scbk = NULL;
+		}
+		if (scbk != NULL) {
+			memcpy(pd->sc.scbk, scbk, 16);
 			CLEAR_FLAG(pd, PD_FLAG_SC_DISABLED);
 		} else if (is_enforce_secure(pd)) {
 			LOG_PRINT("SCBK must be passed for each PD when"

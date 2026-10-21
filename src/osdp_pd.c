@@ -1267,6 +1267,11 @@ static int pd_decode_command(struct osdp_pd *pd, uint8_t *buf, int len)
 				" callback; rejecting new KEY");
 			break;
 		}
+		if (!osdp_scbk_is_usable(buf + pos + 2)) {
+			LOG_ERR("Keyset with SCBK-D or an all-zero key");
+			pd->nak_code = OSDP_PD_NAK_RECORD;
+			break;
+		}
 		cmd.id = OSDP_CMD_KEYSET;
 		cmd.keyset.type = buf[pos++];
 		cmd.keyset.length = buf[pos++];
@@ -2061,6 +2066,7 @@ osdp_t *osdp_pd_setup(struct osdp_channel *channel, const osdp_pd_info_t *info)
 	struct osdp_pd_cap *cap;
 	struct osdp_pd *pd;
 	struct osdp *ctx;
+	const uint8_t *scbk;
 
 	assert(info);
 	assert(channel);
@@ -2118,8 +2124,13 @@ osdp_t *osdp_pd_setup(struct osdp_channel *channel, const osdp_pd_info_t *info)
 		goto error;
 	}
 
-	if (info->scbk) {
-		memcpy(pd->sc.scbk, info->scbk, 16);
+	scbk = info->scbk;
+	if (scbk != NULL && !osdp_scbk_is_usable(scbk)) {
+		LOG_ERR("SCBK is SCBK-D or all zeros; ignoring it");
+		scbk = NULL;
+	}
+	if (scbk) {
+		memcpy(pd->sc.scbk, scbk, 16);
 	} else if (is_enforce_secure(pd)) {
 		LOG_ERR("SCBK must be provided in ENFORCE_SECURE");
 		goto error;

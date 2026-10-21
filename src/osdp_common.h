@@ -883,6 +883,7 @@ void osdp_fill_zeros(void *buf, int len);
 void osdp_crypt_teardown();
 
 /* --- from osdp_sc.c --- */
+bool osdp_scbk_is_usable(const uint8_t *scbk);
 void osdp_compute_scbk(struct osdp_pd *pd, uint8_t *master_key, uint8_t *scbk);
 void osdp_compute_session_keys(struct osdp_pd *pd);
 void osdp_compute_cp_cryptogram(struct osdp_pd *pd);

@@ -288,6 +288,38 @@ static bool keyless_pd_disables_sc(void)
 	return ok;
 }
 
+static bool unusable_main_key_is_treated_as_absent(const uint8_t *scbk)
+{
+	struct osdp *ctx = scp_pd_setup(scbk, 0);
+	struct osdp_pd *pd;
+	bool ok;
+
+	if (!ctx) {
+		return false;
+	}
+	pd = osdp_to_pd(ctx, 0);
+	ok = !sc_is_capable(pd) && !is_install_mode(pd) &&
+	     ISSET_FLAG(pd, PD_FLAG_SC_DISABLED);
+	osdp_pd_teardown((osdp_t *)ctx);
+	return ok;
+}
+
+static bool scbk_d_main_key_is_treated_as_absent(void)
+{
+	static const uint8_t scbk_d[16] = { 0x30, 0x31, 0x32, 0x33, 0x34, 0x35,
+					    0x36, 0x37, 0x38, 0x39, 0x3A, 0x3B,
+					    0x3C, 0x3D, 0x3E, 0x3F };
+
+	return unusable_main_key_is_treated_as_absent(scbk_d);
+}
+
+static bool zero_main_key_is_treated_as_absent(void)
+{
+	static const uint8_t zeros[16] = { 0 };
+
+	return unusable_main_key_is_treated_as_absent(zeros);
+}
+
 static bool install_mode_pd_keeps_sc(void)
 {
 	struct osdp *ctx = scp_pd_setup(NULL, OSDP_FLAG_INSTALL_MODE);
@@ -669,6 +701,10 @@ void run_sc_policy_tests(struct test *t)
 	TEST_CASE(t, "sc_active_allows_chlng_restart_under_scs11",
 		  sc_active_allows_chlng_restart_under_scs11());
 	TEST_CASE(t, "keyless_pd_disables_sc", keyless_pd_disables_sc());
+	TEST_CASE(t, "scbk_d_main_key_is_treated_as_absent",
+		  scbk_d_main_key_is_treated_as_absent());
+	TEST_CASE(t, "zero_main_key_is_treated_as_absent",
+		  zero_main_key_is_treated_as_absent());
 	TEST_CASE(t, "keyed_pd_is_not_in_install_mode",
 		  keyed_pd_is_not_in_install_mode());
 	TEST_CASE(t, "install_mode_pd_keeps_sc", install_mode_pd_keeps_sc());

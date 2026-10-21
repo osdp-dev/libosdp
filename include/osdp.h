@@ -444,6 +444,10 @@ typedef struct {
 	 * @ref OSDP_FLAG_INSTALL_MODE, which brings the channel up on SCBK-D
 	 * so a CP can provision the real key. Passing NULL with
 	 * @ref OSDP_FLAG_ENFORCE_SECURE fails setup.
+	 *
+	 * SCBK-D (the default key published in the spec) and an all-zero key
+	 * are not real keys: setup logs an error and treats them as NULL, so
+	 * the rules above for NULL apply.
 	 */
 	const uint8_t *scbk;
 } osdp_pd_info_t;
@@ -1028,6 +1032,10 @@ struct osdp_cmd_comset {
 
 /**
  * @brief This command transfers an encryption key from the CP to a PD.
+ *
+ * SCBK-D and an all-zero key are refused: on the CP,
+ * osdp_cp_submit_command() returns -1; on the PD, the command is NAKed with
+ * OSDP_PD_NAK_RECORD before the command callback is called.
  */
 struct osdp_cmd_keyset {
 	/**

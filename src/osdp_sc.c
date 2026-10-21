@@ -15,6 +15,17 @@ static const uint8_t osdp_scbk_default[16] = {
 	0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F
 };
 
+bool osdp_scbk_is_usable(const uint8_t *scbk)
+{
+	static const uint8_t zeros[16] = { 0 };
+
+	if (scbk == NULL) {
+		return false;
+	}
+	return memcmp(scbk, zeros, 16) != 0 &&
+	       memcmp(scbk, osdp_scbk_default, 16) != 0;
+}
+
 void osdp_compute_scbk(struct osdp_pd *pd, uint8_t *master_key, uint8_t *scbk)
 {
 	int i;

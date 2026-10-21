@@ -1096,6 +1096,36 @@ static bool test_keyset_command()
 	return wait_for_pd_online(5);
 }
 
+static bool test_keyset_unusable_key_refused()
+{
+	static const uint8_t scbk_d[16] = { 0x30, 0x31, 0x32, 0x33, 0x34, 0x35,
+					    0x36, 0x37, 0x38, 0x39, 0x3A, 0x3B,
+					    0x3C, 0x3D, 0x3E, 0x3F };
+	struct osdp_cmd cmd = {
+		.id = OSDP_CMD_KEYSET,
+		.keyset = {
+			.type = 1,
+			.length = 16,
+		},
+	};
+
+	printf(SUB_2 "testing key set refuses SCBK-D and all-zero keys\n");
+	reset_test_state();
+
+	memcpy(cmd.keyset.data, scbk_d, sizeof(scbk_d));
+	if (test_submit_command(g_test_ctx.cp_ctx, 0, &cmd)) {
+		printf(SUB_2 "SCBK-D keyset was accepted\n");
+		return false;
+	}
+
+	memset(cmd.keyset.data, 0, 16);
+	if (test_submit_command(g_test_ctx.cp_ctx, 0, &cmd)) {
+		printf(SUB_2 "all-zero keyset was accepted\n");
+		return false;
+	}
+	return true;
+}
+
 static bool test_tdset_invalid_time_naks()
 {
 	printf(SUB_2 "testing tdset command with invalid month NAKs\n");
@@ -1382,6 +1412,8 @@ void run_command_tests(struct test *t)
 	TEST_CASE(t, "comset_command", test_comset_command());
 	TEST_CASE(t, "status_command", test_status_command());
 	TEST_CASE(t, "keyset_command", test_keyset_command());
+	TEST_CASE(t, "keyset_unusable_key_refused",
+		  test_keyset_unusable_key_refused());
 	TEST_CASE(t, "mfg_command_simple", test_mfg_command_simple());
 	TEST_CASE(t, "mfg_command_with_reply", test_mfg_command_with_reply());
 	TEST_CASE(t, "mfg_command_inline_replies",
