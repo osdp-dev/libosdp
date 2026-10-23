@@ -1,6 +1,6 @@
 ---
-lastUpdated: 2026-08-20
-description: "Enable the OSDP secure channel in LibOSDP for encrypted, authenticated CP–PD links — covering SCBK keys, install mode, random-number requirements, and secure channel setup."
+lastUpdated: 2026-10-28
+description: "Enable the OSDP secure channel in LibOSDP for encrypted, authenticated CP–PD links — covering SCBK keys, install mode, key rotation, random-number requirements, and secure channel setup."
 ---
 # OSDP Secure Channel
 
@@ -163,6 +163,82 @@ responsible for storing and providing the correct SCBK on each call to
 In CP mode, the CP owns the SCBK, so the CP app already has the key. In PD
 mode, when the PD receives a new SCBK from the CP, the PD app gets a copy in
 the `OSDP_CMD_KEYSET` callback.
+
+## Key Rotation
+
+A CP rotates a PD's SCBK by sending it an `osdp_KEYSET` over a secure channel
+session. Neither side switches to the new key when the command is
+acknowledged: an acknowledgement that is lost on the wire, or a reset at the
+wrong moment, would otherwise leave the two sides on different keys with no
+way back. Instead, both sides hold the new key beside the current one, start
+a new session, and switch only once that session proves both of them have it.
+Until then each keeps using its current key, so a rotation that fails for any
+reason leaves the link where it was.
+
+This happens inside LibOSDP. What the application has to do is persist the
+key at the right moment, so that what it stores always includes the key the
+other side is using.
+
+### On the PD
+
+The `OSDP_CMD_KEYSET` callback is called once a session on the new key has
+proven it, not when the command arrives. That is the moment to write the key
+to storage as the key in use:
+
+- Return `OSDP_PD_CMD_BUSY` while the write runs. The CP repeats the command
+  and the callback is called again; BUSY never tells the CP the new key is in
+  use, so it keeps both keys until the write has landed.
+- Return 0 once it is written. The PD switches to the new key.
+- Return an error if the key cannot be stored. The PD stays on its current
+  key and ends the session, and the CP falls back to the current key too.
+
+A PD that resets before the callback simply boots on its stored key, which
+the CP still holds. A PD needs to store only one key.
+
+In install mode the callback is called when the command arrives, since there
+is no real key to fall back on, and the key is used from the next session.
+
+### On the CP
+
+The CP is the side that has to store two keys for a while, because the PD
+proves the new key first: a CP that resets between the PD switching and the
+CP learning of it must still have the new key. Keep two key slots per PD and
+an index naming the active one:
+
+1. Write the new key into the inactive slot, then submit the `KEYSET`. If the
+   write fails, do not submit.
+2. Wait for the command's completion. LibOSDP completes it only once a
+   session has settled the key, which may be well after the PD acknowledged
+   it.
+3. On `OSDP_COMPLETION_OK` the new key is in use: flip the active index. Keep
+   this to a single small write so the window in which a reset leaves storage
+   behind is as short as possible.
+4. On `OSDP_COMPLETION_FAILED` the PD stays on its current key: erase the
+   inactive slot.
+5. On `OSDP_COMPLETION_ABORTED` (the CP was torn down first) it is not known
+   which key the PD holds: keep both slots.
+
+LibOSDP refuses another `KEYSET` for that PD until the completion arrives.
+
+### CP Start-up
+
+If the inactive slot holds a key when the CP starts, the last rotation was
+never settled, and the PD may hold either key. Bring the PD up on the
+inactive key first; if the secure channel does not come up on it, bring it
+up on the active key. Whichever key the secure channel comes up on is the
+active key from then on, and the other slot is erased.
+
+Try the inactive key first. A PD that is still holding the new key beside its
+current one gives it exactly one handshake: offered the new key, it switches;
+offered the old key, it uses up that one attempt on a mismatch and only falls
+back after the CP's next handshake, which LibOSDP starts after a 10-minute
+wait.
+
+The secure channel coming up is reported by `OSDP_NOTIFICATION_SC_STATUS`
+(with `OSDP_FLAG_ENABLE_NOTIFICATION`) or `osdp_get_sc_status_mask()`. A
+handshake that fails on the wrong key is followed by one SCBK-Default attempt,
+which a PD outside install mode answers on its current key; the error it logs
+is expected here.
 
 ## Random Number Generation
 
