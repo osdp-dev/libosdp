@@ -26,6 +26,22 @@ bool osdp_scbk_is_usable(const uint8_t *scbk)
 	       memcmp(scbk, osdp_scbk_default, 16) != 0;
 }
 
+void osdp_drop_staged_scbk(struct osdp_pd *pd)
+{
+	osdp_fill_zeros(pd->staged_scbk, sizeof(pd->staged_scbk));
+	osdp_fill_zeros(pd->staged_rnd_a, sizeof(pd->staged_rnd_a));
+	CLEAR_FLAG(pd, PD_FLAG_SCBK_STAGED);
+	CLEAR_FLAG(pd, PD_FLAG_SCBK_ATTEMPT);
+	CLEAR_FLAG(pd, PD_FLAG_SC_USE_STAGED);
+}
+
+void osdp_stage_scbk(struct osdp_pd *pd, const uint8_t *scbk)
+{
+	osdp_drop_staged_scbk(pd);
+	memcpy(pd->staged_scbk, scbk, 16);
+	SET_FLAG(pd, PD_FLAG_SCBK_STAGED);
+}
+
 void osdp_compute_scbk(struct osdp_pd *pd, uint8_t *master_key, uint8_t *scbk)
 {
 	int i;

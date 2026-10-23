@@ -85,6 +85,31 @@ static inline void cp_complete_cmd(struct osdp_pd *pd,
 {
 	struct osdp *ctx = pd_to_osdp(pd);
 
+	/*
+	 * An app KEYSET that went out is held until a session settles the key
+	 * it staged; only then does the app learn whether that key is in use.
+	 * A failed one is held too: a NAK, a timeout and BUSY exhaustion all
+	 * look the same from here, and none shows the PD did not stage the
+	 * key. It also starts a new session now rather than whenever this one
+	 * ends, requested ahead of state_update()'s state checks so that it
+	 * pre-empts the offline dwell a hard failure would pick. One flushed
+	 * from the queue never reached the PD, so its key goes with it.
+	 */
+	if (cmd && cmd->id == OSDP_CMD_KEYSET &&
+	    ISSET_FLAG(pd, PD_FLAG_KEYSET_PENDING)) {
+		CLEAR_FLAG(pd, PD_FLAG_KEYSET_PENDING);
+		if (status == OSDP_COMPLETION_OK ||
+		    status == OSDP_COMPLETION_FAILED) {
+			if (status != OSDP_COMPLETION_OK) {
+				make_request(pd, CP_REQ_RESTART_SC);
+			}
+			pd->keyset_cmd = cmd;
+			return;
+		}
+		if (status == OSDP_COMPLETION_FLUSHED) {
+			osdp_drop_staged_scbk(pd);
+		}
+	}
 	if (!cmd || !ctx->command_completion_callback)
 		return;
 	/* Ownership of the command returns to the application here, so it is
@@ -537,6 +562,69 @@ static bool pd_id_known(const struct osdp_pd_id *id)
 	       id->serial_number || id->firmware_version;
 }
 
+/*
+ * Only the staged and the main key are candidates, the staged one first.
+ * The flags left set say which one matched; osdp_compute_session_keys()
+ * keys the rest of the session from them. A handshake on SCBK-D tries
+ * neither.
+ */
+static int cp_verify_pd_cryptogram(struct osdp_pd *pd)
+{
+	CLEAR_FLAG(pd, PD_FLAG_SCBK_ATTEMPT);
+	CLEAR_FLAG(pd, PD_FLAG_SC_USE_STAGED);
+	if (ISSET_FLAG(pd, PD_FLAG_SCBK_STAGED) && !sc_use_scbkd(pd)) {
+		SET_FLAG(pd, PD_FLAG_SCBK_ATTEMPT);
+		SET_FLAG(pd, PD_FLAG_SC_USE_STAGED);
+		osdp_compute_session_keys(pd);
+		if (osdp_verify_pd_cryptogram(pd) == 0) {
+			return 0;
+		}
+		CLEAR_FLAG(pd, PD_FLAG_SC_USE_STAGED);
+	}
+	osdp_compute_session_keys(pd);
+	return osdp_verify_pd_cryptogram(pd);
+}
+
+/* Hand the held KEYSET back to the app: OK when its key is now the main
+ * key, FAILED when the main key stays. */
+static void cp_settle_keyset(struct osdp_pd *pd,
+			     enum osdp_completion_status status)
+{
+	const struct osdp_cmd *cmd = pd->keyset_cmd;
+
+	osdp_drop_staged_scbk(pd);
+	pd->keyset_cmd = NULL;
+	cp_complete_cmd(pd, cmd, status);
+}
+
+/*
+ * The first MAC-verified reply of a session whose handshake tried the
+ * staged key settles it. A session on the staged key confirms it; one on
+ * the main key shows the PD still holds main, so the staged key goes. A
+ * failed handshake proves nothing: the PD may have confirmed the new key
+ * and lost its reply, and then holds only that one.
+ *
+ * Nothing settles while the KEYSET carrying the staged key is queued or on
+ * the wire: commands survive a restart, so that KEYSET can go out in a
+ * session that matched main, and the PD stages the key only once it gets
+ * it. Its completion starts a new session, which settles the key.
+ */
+static void cp_settle_staged_scbk(struct osdp_pd *pd)
+{
+	if (!ISSET_FLAG(pd, PD_FLAG_SCBK_ATTEMPT) ||
+	    ISSET_FLAG(pd, PD_FLAG_KEYSET_PENDING)) {
+		return;
+	}
+	if (ISSET_FLAG(pd, PD_FLAG_SC_USE_STAGED)) {
+		memcpy(pd->sc.scbk, pd->staged_scbk, 16);
+		LOG_INF("Staged SCBK confirmed");
+		cp_settle_keyset(pd, OSDP_COMPLETION_OK);
+	} else {
+		LOG_WRN("Session on main SCBK; dropping staged SCBK");
+		cp_settle_keyset(pd, OSDP_COMPLETION_FAILED);
+	}
+}
+
 static int cp_decode_response(struct osdp_pd *pd, uint8_t *buf, int len)
 {
 	int t, ret = OSDP_CP_ERR_GENERIC, pos = 0;
@@ -942,8 +1030,7 @@ static int cp_decode_response(struct osdp_pd *pd, uint8_t *buf, int len)
 		memcpy(pd->sc.pd_random, buf + pos + 8, 8);
 		memcpy(pd->sc.pd_cryptogram, buf + pos + 16, 16);
 		pos += 32;
-		osdp_compute_session_keys(pd);
-		if (osdp_verify_pd_cryptogram(pd) != 0) {
+		if (cp_verify_pd_cryptogram(pd) != 0) {
 			LOG_ERR("Failed to verify PD cryptogram");
 			return OSDP_CP_ERR_APP;
 		}
@@ -1094,6 +1181,12 @@ static int cp_process_reply(struct osdp_pd *pd)
 		return OSDP_CP_ERR_GENERIC;
 	}
 
+	/* Set by the phy only once a reply's MAC checks out, so never on
+	 * RMAC_I (SCS_14) or a plaintext BUSY. */
+	if (ISSET_FLAG(pd, PD_FLAG_PKT_SC_VERIFIED)) {
+		cp_settle_staged_scbk(pd);
+	}
+
 	return cp_decode_response(pd, buf, len);
 }
 
@@ -1159,8 +1252,14 @@ static int cp_translate_cmd(struct osdp_pd *pd, const struct osdp_cmd *cmd)
 	return -1;
 }
 
+/*
+ * The install-mode KEYSET sends the main key and commits it on both sides
+ * directly, so a staged key left beside it could later confirm itself over
+ * the key just provisioned.
+ */
 static void fill_local_keyset_cmd(struct osdp_pd *pd, struct osdp_cmd *cmd)
 {
+	cp_settle_keyset(pd, OSDP_COMPLETION_FAILED);
 	cmd->id = OSDP_CMD_KEYSET;
 	cmd->keyset.type = 1;
 	cmd->keyset.length = sizeof(pd->sc.scbk);
@@ -1682,24 +1781,19 @@ static void notify_sc_status(struct osdp_pd *pd)
 	osdp_metrics_report(pd, OSDP_METRIC_EVENT);
 }
 
+/*
+ * A KEYSET on SCBK-D is the CP's own, carrying its main key, which the PD
+ * commits directly. Any other was staged at submit and stays staged: both
+ * sides keep their main keys and a new session tries the staged one.
+ */
 static void cp_keyset_complete(struct osdp_pd *pd)
 {
-	const struct osdp_cmd *cmd = pd->active_cmd;
-
-	if (!sc_use_scbkd(pd)) {
-		if (!cmd || cmd->id != OSDP_CMD_KEYSET) {
-			LOG_ERR("Missing active keyset command");
-		} else {
-			memcpy(pd->sc.scbk, cmd->keyset.data, 16);
-		}
-	} else {
-		CLEAR_FLAG(pd, PD_FLAG_SC_USE_SCBKD);
-	}
+	CLEAR_FLAG(pd, PD_FLAG_SC_USE_SCBKD);
 	sc_deactivate(pd);
 	notify_sc_status(pd);
 	if (cp_is_online(pd)) {
 		make_request(pd, CP_REQ_RESTART_SC);
-		LOG_INF("SCBK set; restarting SC to verify new SCBK");
+		LOG_INF("KEYSET acknowledged; restarting SC on the staged SCBK");
 	}
 }
 
@@ -2106,6 +2200,13 @@ static void cp_state_change(struct osdp_pd *pd, enum osdp_cp_state_e next)
 		cp_trs_settle_answer(pd, OSDP_COMPLETION_FAILED);
 		break;
 	case OSDP_CP_STATE_SC_CHLNG:
+		/* A restart can arrive with the old session still up (a
+		 * MAC-verified NAK, a plaintext reply); the phy would frame
+		 * the CHLNG as a secure message of that session. */
+		if (sc_is_active(pd)) {
+			sc_deactivate(pd);
+			notify_sc_status(pd);
+		}
 		osdp_phy_state_reset(pd, true);
 		osdp_sc_setup(pd);
 		break;
@@ -2590,8 +2691,14 @@ static int cp_submit_command(struct osdp_pd *pd, const struct osdp_cmd *cmd)
 		return ret;
 	} else if (cmd->id == OSDP_CMD_KEYSET &&
 		   (cmd->keyset.type != 1 || !sc_is_active(pd) ||
+		    sc_use_scbkd(pd) ||
 		    !osdp_scbk_is_usable(cmd->keyset.data))) {
 		LOG_ERR("Invalid keyset request");
+		return -1;
+	} else if (cmd->id == OSDP_CMD_KEYSET &&
+		   (ISSET_FLAG(pd, PD_FLAG_SCBK_STAGED) ||
+		    ISSET_FLAG(pd, PD_FLAG_KEYSET_PENDING))) {
+		LOG_ERR("A staged SCBK is not settled yet; refusing KEYSET");
 		return -1;
 	}
 
@@ -2612,6 +2719,13 @@ static int cp_submit_command(struct osdp_pd *pd, const struct osdp_cmd *cmd)
 		return -1;
 	}
 #endif
+
+	/* Staged before it is queued, so the CP holds every key the PD may
+	 * come to hold from the moment the KEYSET can reach the wire. */
+	if (cmd->id == OSDP_CMD_KEYSET) {
+		osdp_stage_scbk(pd, cmd->keyset.data);
+		SET_FLAG(pd, PD_FLAG_KEYSET_PENDING);
+	}
 
 	return cp_cmd_enqueue(pd, cmd);
 }
@@ -2908,10 +3022,14 @@ void osdp_cp_teardown(osdp_t *ctx)
 		cp_trs_settle_answer(pd, OSDP_COMPLETION_ABORTED);
 		cp_complete_cmd(pd, pd->active_cmd, OSDP_COMPLETION_ABORTED);
 		pd->active_cmd = NULL;
+		cp_complete_cmd(pd, pd->keyset_cmd, OSDP_COMPLETION_ABORTED);
+		pd->keyset_cmd = NULL;
 		if (is_capture_enabled(pd)) {
 			osdp_packet_capture_finish(pd);
 		}
 		osdp_fill_zeros(&pd->sc, sizeof(struct osdp_secure_channel));
+		osdp_fill_zeros(pd->staged_scbk, sizeof(pd->staged_scbk));
+		osdp_fill_zeros(pd->staged_rnd_a, sizeof(pd->staged_rnd_a));
 
 #ifndef OPT_OSDP_STATIC
 		safe_free(pd->file);

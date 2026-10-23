@@ -18,6 +18,9 @@ Release subject ## TODO
 - PD: a KEYSET on a real-key session reaches the command callback when a
   session on the new key proves it, not when the command arrives. The callback
   still means "persist this as the key in use".
+- CP: a KEYSET completes when a session settles the new key, not on the ACK.
+  OK means the new key is in use; FAILED means the PD stays on its current
+  key.
 
 ## Changes
 

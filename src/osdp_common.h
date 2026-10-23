@@ -452,8 +452,11 @@ static inline __noreturn void die()
 #define PD_FLAG_TRS_ACTIVE     BIT(17) /* a TRS card session is in progress */
 #define PD_FLAG_SC_ESTABLISHED BIT(18) /* SC once came up on the real SCBK */
 #define PD_FLAG_SCBK_STAGED    BIT(19) /* staged_scbk holds a key */
-#define PD_FLAG_SCBK_ATTEMPT   BIT(20) /* staged_rnd_a names its one attempt */
+/* PD: staged_rnd_a names the staged key's one attempt. CP: this session's
+ * handshake tried staged_scbk, so its first verified reply settles it. */
+#define PD_FLAG_SCBK_ATTEMPT   BIT(20)
 #define PD_FLAG_SC_USE_STAGED  BIT(21) /* in this SC attempt, use staged_scbk */
+#define PD_FLAG_KEYSET_PENDING BIT(22) /* CP: app KEYSET not yet answered */
 
 /* PD Init flags */
 #define PD_FLAG_ENFORCE_SECURE  BIT(24) /* See: OSDP_FLAG_ENFORCE_SECURE */
@@ -772,6 +775,9 @@ struct osdp_pd {
 	 */
 	uint8_t staged_scbk[16];
 	uint8_t staged_rnd_a[8];
+	/* CP: the app KEYSET carrying staged_scbk, held from its exchange
+	 * until a session settles the key. */
+	const struct osdp_cmd *keyset_cmd;
 	struct osdp_file *file;          /* File transfer context */
 	struct osdp_piv *piv;            /* Smartcard/PIV multipart context */
 	struct osdp_bio *bio;            /* Biometric read multipart context */
@@ -897,6 +903,8 @@ void osdp_crypt_teardown();
 
 /* --- from osdp_sc.c --- */
 bool osdp_scbk_is_usable(const uint8_t *scbk);
+void osdp_drop_staged_scbk(struct osdp_pd *pd);
+void osdp_stage_scbk(struct osdp_pd *pd, const uint8_t *scbk);
 void osdp_compute_scbk(struct osdp_pd *pd, uint8_t *master_key, uint8_t *scbk);
 void osdp_compute_session_keys(struct osdp_pd *pd);
 void osdp_compute_cp_cryptogram(struct osdp_pd *pd);

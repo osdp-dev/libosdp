@@ -614,22 +614,6 @@ static void pd_deliver_notification(struct osdp_pd *pd,
 	osdp_metrics_report(pd, OSDP_METRIC_EVENT);
 }
 
-static void pd_drop_staged_scbk(struct osdp_pd *pd)
-{
-	osdp_fill_zeros(pd->staged_scbk, sizeof(pd->staged_scbk));
-	osdp_fill_zeros(pd->staged_rnd_a, sizeof(pd->staged_rnd_a));
-	CLEAR_FLAG(pd, PD_FLAG_SCBK_STAGED);
-	CLEAR_FLAG(pd, PD_FLAG_SCBK_ATTEMPT);
-	CLEAR_FLAG(pd, PD_FLAG_SC_USE_STAGED);
-}
-
-static void pd_stage_scbk(struct osdp_pd *pd, const uint8_t *scbk)
-{
-	pd_drop_staged_scbk(pd);
-	memcpy(pd->staged_scbk, scbk, 16);
-	SET_FLAG(pd, PD_FLAG_SCBK_STAGED);
-}
-
 /*
  * A CHLNG for a real key. The staged key gets one attempt, named by its
  * RND.A: a CHLNG resent with the same RND.A (after a lost CCRYPT) is the
@@ -645,7 +629,7 @@ static void pd_pick_chlng_key(struct osdp_pd *pd)
 	if (ISSET_FLAG(pd, PD_FLAG_SCBK_ATTEMPT) &&
 	    memcmp(pd->staged_rnd_a, pd->sc.cp_random, 8) != 0) {
 		LOG_WRN("Staged SCBK's attempt failed; reverting to main SCBK");
-		pd_drop_staged_scbk(pd);
+		osdp_drop_staged_scbk(pd);
 		return;
 	}
 	memcpy(pd->staged_rnd_a, pd->sc.cp_random, 8);
@@ -743,7 +727,7 @@ static int pd_settle_staged_scbk(struct osdp_pd *pd, uint8_t cmd_id)
 	}
 	if (!ISSET_FLAG(pd, PD_FLAG_SC_USE_STAGED)) {
 		if (ISSET_FLAG(pd, PD_FLAG_SCBK_ATTEMPT)) {
-			pd_drop_staged_scbk(pd);
+			osdp_drop_staged_scbk(pd);
 			LOG_WRN("Session on main SCBK; dropping staged SCBK");
 		}
 		return OSDP_PD_ERR_NONE;
@@ -754,7 +738,7 @@ static int pd_settle_staged_scbk(struct osdp_pd *pd, uint8_t cmd_id)
 	osdp_fill_zeros(cmd.keyset.data, 16);
 	if (accepted) {
 		memcpy(pd->sc.scbk, pd->staged_scbk, 16);
-		pd_drop_staged_scbk(pd);
+		osdp_drop_staged_scbk(pd);
 		LOG_INF("Staged SCBK confirmed");
 		return OSDP_PD_ERR_NONE;
 	}
@@ -764,7 +748,7 @@ static int pd_settle_staged_scbk(struct osdp_pd *pd, uint8_t cmd_id)
 		return OSDP_PD_ERR_REPLY;
 	}
 	LOG_ERR("Staged SCBK rejected by the app; keeping main SCBK");
-	pd_drop_staged_scbk(pd);
+	osdp_drop_staged_scbk(pd);
 	pd_sc_deactivate(pd);
 	pd->reply_id = REPLY_NAK;
 	pd->nak_code = OSDP_PD_NAK_SC_COND;
@@ -1374,7 +1358,7 @@ static int pd_decode_command(struct osdp_pd *pd, uint8_t *buf, int len)
 		 * SCBK-D has no key to fall back on, so there the app takes the
 		 * key now and it replaces the main key on the ACK. */
 		if (!sc_use_scbkd(pd)) {
-			pd_stage_scbk(pd, buf + pos);
+			osdp_stage_scbk(pd, buf + pos);
 			ret = OSDP_PD_ERR_NONE;
 			pd->reply_id = REPLY_ACK;
 			break;
@@ -1391,7 +1375,7 @@ static int pd_decode_command(struct osdp_pd *pd, uint8_t *buf, int len)
 		}
 		ret = OSDP_PD_ERR_NONE;
 		pd->reply_id = REPLY_ACK;
-		pd_drop_staged_scbk(pd);
+		osdp_drop_staged_scbk(pd);
 		memcpy(pd->keyset_pending, cmd.keyset.data, 16);
 		osdp_fill_zeros(cmd.keyset.data, 16);
 		break;
@@ -2536,4 +2520,3 @@ int osdp_pd_flush_events(osdp_t *ctx)
 /* Export the PD frame codecs to out-of-module drivers (tests, embedders). */
 OSDP_TEST_ALIAS(pd_decode_command);
 OSDP_TEST_ALIAS(pd_build_reply);
-OSDP_TEST_ALIAS(pd_stage_scbk);

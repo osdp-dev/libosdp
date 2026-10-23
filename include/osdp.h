@@ -1042,7 +1042,13 @@ struct osdp_cmd_comset {
  * carried a MAC-verified command; until then the PD keeps using its current
  * key. The callback persists the key, returning `OSDP_PD_CMD_BUSY` while the
  * write runs; 0 makes it the key in use, and an error drops it. In install
- * mode the callback is called when the command arrives. See
+ * mode the callback is called when the command arrives.
+ *
+ * On the CP, the KEYSET completes once a session has settled the key:
+ * `OSDP_COMPLETION_OK` when the new key is in use, `OSDP_COMPLETION_FAILED`
+ * when the PD stays on its current key, and `OSDP_COMPLETION_ABORTED` at
+ * teardown, before either is known. Another KEYSET for that PD is refused
+ * until then. See
  * <a href="https://doc.osdp.dev/libosdp/secure-channel">Secure Channel</a>.
  */
 struct osdp_cmd_keyset {
