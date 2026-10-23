@@ -669,6 +669,45 @@ out:
 	return rc;
 }
 
+/* A reply the secure channel rejects asks for a new handshake, not the
+ * offline dwell a hard failure would otherwise pick. */
+static int test_cp_bad_mac_reply_restarts_sc(struct osdp *ctx)
+{
+	struct osdp_pd *p = GET_CURRENT_PD(ctx);
+	static const uint8_t packet[] = {
+#ifndef OPT_OSDP_SKIP_MARK_BYTE
+		0xff,
+#endif
+		0x53, 0xe5, 0x0d, 0x00, 0x09, 0x02, 0x16,
+		0x40, 0x00, 0x00, 0x00, 0x00, 0x5a
+	};
+	int rc = -1;
+
+	printf(SUB_1 "Testing CP restarts SC on a bad reply MAC -- ");
+	reset_pd_packet_state(p);
+	memset(&p->sc, 0, sizeof(p->sc));
+	sc_activate(p);
+	SET_FLAG(p, PD_FLAG_SKIP_SEQ_CHECK);
+	p->request = 0;
+	p->phy_state = OSDP_CP_PHY_STATE_REPLY_WAIT;
+	p->phy_tstamp = osdp_millis_now();
+	p->resp_timeout_ms = OSDP_RESP_TOUT_MS;
+	osdp_rb_push_buf(p->rx_rb, (uint8_t *)packet, sizeof(packet));
+
+	test_cp_phy_state_update(p);
+	if (!(p->request & CP_REQ_RESTART_SC)) {
+		printf("failed! request=%#x\n", p->request);
+		goto out;
+	}
+	printf("success!\n");
+	rc = 0;
+out:
+	p->request = 0;
+	CLEAR_FLAG(p, PD_FLAG_SKIP_SEQ_CHECK);
+	p->phy_state = OSDP_CP_PHY_STATE_IDLE;
+	return rc;
+}
+
 static int test_phy_parse_hardcoded_plaintext_when_sc_active_reject(struct osdp *ctx)
 {
 	int err;
@@ -1769,6 +1808,7 @@ void run_cp_phy_tests(struct test *t)
 	DO_TEST(t, test_phy_parse_hardcoded_sc_inactive_scs16_reject);
 	DO_TEST(t, test_phy_parse_hardcoded_sc_active_invalid_mac_reject);
 	DO_TEST(t, test_cp_bad_mac_reply_notifies_sc_down);
+	DO_TEST(t, test_cp_bad_mac_reply_restarts_sc);
 	DO_TEST(t, test_phy_parse_hardcoded_plaintext_when_sc_active_reject);
 	DO_TEST(t,
 		test_phy_parse_hardcoded_plaintext_nak_when_sc_active_reject);

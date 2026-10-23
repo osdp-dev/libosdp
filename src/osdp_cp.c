@@ -1040,6 +1040,11 @@ static int cp_process_reply(struct osdp_pd *pd)
 	err = osdp_phy_check_packet(pd);
 	if (err == OSDP_ERR_PKT_NONE) {
 		len = osdp_phy_decode_packet(pd, &buf);
+		/* A reply the secure channel rejects fails in the decoder,
+		 * and needs the same handling as one the check rejects. */
+		if (len < 0) {
+			err = len;
+		}
 	}
 
 	/* The phy ends a session whose MAC or encryption no longer checks
