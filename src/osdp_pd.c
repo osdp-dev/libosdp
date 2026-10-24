@@ -758,6 +758,7 @@ static int pd_settle_staged_scbk(struct osdp_pd *pd, uint8_t cmd_id)
 static int pd_decode_command(struct osdp_pd *pd, uint8_t *buf, int len)
 {
 	int i, ret = OSDP_PD_ERR_GENERIC, pos = 0;
+	uint16_t size;
 	struct osdp_cmd cmd = {};
 
 	pd->reply_id = REPLY_NAK;
@@ -1171,7 +1172,18 @@ static int pd_decode_command(struct osdp_pd *pd, uint8_t *buf, int len)
 		if (len < CMD_ACURXSIZE_DATA_LEN) {
 			break;
 		}
-		pd->peer_rx_size = bread_u16_le(buf, &pos);
+		size = bread_u16_le(buf, &pos);
+		/* Too small to build any reply in: taking it would leave the
+		 * PD unable to answer at all. Keep what we had. */
+		if (size < OSDP_MINIMUM_PACKET_SIZE) {
+			LOG_ERR("ACU receive size %u is below the minimum %d",
+				size, OSDP_MINIMUM_PACKET_SIZE);
+			pd->reply_id = REPLY_NAK;
+			pd->nak_code = OSDP_PD_NAK_RECORD;
+			ret = OSDP_PD_ERR_REPLY;
+			break;
+		}
+		pd->peer_rx_size = size;
 		pd->reply_id = REPLY_ACK;
 		ret = OSDP_PD_ERR_NONE;
 		break;

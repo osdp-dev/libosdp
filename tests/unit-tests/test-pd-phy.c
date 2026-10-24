@@ -564,6 +564,43 @@ static int test_pd_phy_max_len_without_mark_accepted(struct osdp *ctx)
 	return 0;
 }
 
+extern int test_pd_decode_command(struct osdp_pd *pd, uint8_t *buf, int len);
+
+/*
+ * An ACU receive size too small to build any reply in is refused: taking it
+ * would leave the PD unable to answer anything after it.
+ */
+static int test_pd_acu_rx_size_below_minimum_refused(struct osdp *ctx)
+{
+	struct osdp_pd *p = osdp_to_pd(ctx, 0);
+	uint8_t too_small[] = { CMD_ACURXSIZE, 0x10, 0x00 };
+	uint8_t minimum[] = { CMD_ACURXSIZE, OSDP_MINIMUM_PACKET_SIZE & 0xff,
+			      OSDP_MINIMUM_PACKET_SIZE >> 8 };
+	int rc = -1;
+
+	printf(SUB_1 "Testing a too-small ACU receive size is refused -- ");
+
+	p->peer_rx_size = 0;
+	test_pd_decode_command(p, too_small, sizeof(too_small));
+	if (p->reply_id != REPLY_NAK || p->nak_code != OSDP_PD_NAK_RECORD ||
+	    p->peer_rx_size != 0) {
+		printf("accepted %u bytes\n", p->peer_rx_size);
+		goto out;
+	}
+
+	test_pd_decode_command(p, minimum, sizeof(minimum));
+	if (p->reply_id != REPLY_ACK ||
+	    p->peer_rx_size != OSDP_MINIMUM_PACKET_SIZE) {
+		printf("refused the minimum size\n");
+		goto out;
+	}
+	printf("success!\n");
+	rc = 0;
+out:
+	p->peer_rx_size = 0;
+	return rc;
+}
+
 void run_pd_phy_tests(struct test *t)
 {
 	printf("\nStarting pd_phy tests\n");
@@ -581,6 +618,7 @@ void run_pd_phy_tests(struct test *t)
 	DO_TEST(t, test_pd_phy_bad_mac_notifies_sc_down);
 	DO_TEST(t, test_pd_phy_max_len_with_mark_rejected);
 	DO_TEST(t, test_pd_phy_max_len_without_mark_accepted);
+	DO_TEST(t, test_pd_acu_rx_size_below_minimum_refused);
 
 	test_pd_phy_teardown(t);
 }
