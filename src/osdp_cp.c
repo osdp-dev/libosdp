@@ -1573,6 +1573,16 @@ static int cp_get_online_command(struct osdp_pd *pd)
 	const struct osdp_cmd *cmd;
 	int ret;
 
+	/*
+	 * A PD sizes its replies by its own buffer until told ours; one with
+	 * a larger buffer would otherwise send replies we have to drop. Sent
+	 * once online, so it rides the secure channel when there is one.
+	 */
+	if (!ISSET_FLAG(pd, PD_FLAG_RX_SIZE_SENT)) {
+		SET_FLAG(pd, PD_FLAG_RX_SIZE_SENT);
+		return CMD_ACURXSIZE;
+	}
+
 	if (cp_cmd_dequeue(pd, &cmd) == 0) {
 #ifdef OPT_BUILD_OSDP_TRS
 		if (cp_cmd_is_trs(cmd, OSDP_TRS_CMD_START)) {
@@ -1813,7 +1823,18 @@ static bool cp_check_online_response(struct osdp_pd *pd)
 		return true;
 	}
 
-	/* A NAK or no response is always an error */
+	/* A PD need not implement osdp_ACURXSIZE; one that declines it goes
+	 * on sizing replies by its own buffer, which is how it began. Any
+	 * code will do, unless it says the link itself is broken. */
+	if (pd->cmd_id == CMD_ACURXSIZE && pd->reply_id == REPLY_NAK &&
+	    pd->nak_code != OSDP_PD_NAK_SEQ_NUM &&
+	    pd->nak_code != OSDP_PD_NAK_SC_UNSUP &&
+	    pd->nak_code != OSDP_PD_NAK_SC_COND) {
+		LOG_INF("PD declined osdp_ACURXSIZE (NAK %d)", pd->nak_code);
+		return true;
+	}
+
+	/* Otherwise a NAK or no response is always an error */
 	if (pd->reply_id == REPLY_NAK || pd->reply_id == REPLY_INVALID) {
 		return false;
 	}
@@ -2152,6 +2173,8 @@ static void cp_state_change(struct osdp_pd *pd, enum osdp_cp_state_e next)
 	case OSDP_CP_STATE_INIT:
 		osdp_phy_state_reset(pd, true);
 		osdp_trs_probe_reset(pd);
+		/* The PD on the other end may have restarted, or been swapped */
+		CLEAR_FLAG(pd, PD_FLAG_RX_SIZE_SENT);
 		break;
 	case OSDP_CP_STATE_ONLINE:
 		CLEAR_FLAG(pd, PD_FLAG_TRS_ACTIVE);

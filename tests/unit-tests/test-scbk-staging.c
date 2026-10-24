@@ -76,7 +76,8 @@ struct stg_ctx {
 	atomic_bool force_restart;
 	atomic_bool restart_forced;
 
-	/* Command id of the first MAC'd command the CP sent; -1 for none. */
+	/* Command id of the first MAC'd command the CP sent, past the
+	 * osdp_ACURXSIZE that opens every link; -1 for none. */
 	atomic_int first_mac_cmd;
 
 	/* Key the CP submits in a KEYSET the moment the PD goes online. */
@@ -319,7 +320,8 @@ static enum test_channel_hook_verdict stg_hook(void *arg, bool cp_to_pd,
 			if (*out_len > 0)
 				return TEST_HOOK_REPLACE;
 		}
-		if (scs_type == 0x15 || scs_type == 0x17)
+		if ((scs_type == 0x15 || scs_type == 0x17) &&
+		    frame[id_off] != CMD_ACURXSIZE)
 			atomic_compare_exchange_strong(&g_stg.first_mac_cmd,
 						       &expect_none,
 						       frame[id_off]);

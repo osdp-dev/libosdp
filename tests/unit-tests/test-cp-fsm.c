@@ -18,6 +18,9 @@ extern enum osdp_cp_state_e test_get_next_err_state(struct osdp_pd *);
 int test_fsm_resp = 0;
 /* When set, every reply is a NAK(SEQ_NUM) regardless of the command sent. */
 static bool s_fsm_force_seq_nak;
+/* When set, osdp_ACURXSIZE is NAK'd, as by a PD that does not implement it. */
+static bool s_fsm_nak_rx_size;
+static int s_fsm_rx_size_count;
 #ifdef OPT_OSDP_RX_ZERO_COPY
 /* One canned reply is served per command; release_pkt marks it consumed so a
  * poll before the next command does not re-deliver a stale frame. */
@@ -43,6 +46,10 @@ int test_cp_fsm_send(void *data, uint8_t *buf, int len)
 		break;
 	case 0x62:
 		test_fsm_resp = 3;
+		break;
+	case CMD_ACURXSIZE:
+		s_fsm_rx_size_count++;
+		test_fsm_resp = s_fsm_nak_rx_size ? 4 : 1;
 		break;
 	default:
 		printf(SUB_1 "invalid ID:0x%02x\n", buf[cmd_id_offset
@@ -79,21 +86,23 @@ static int fsm_fill_response(uint8_t *buf)
 #endif
 		0x53, 0xe5, 0x08, 0x00, 0x06, 0x40, 0xb0, 0xf0
 	};
-	uint8_t resp_nak_seq[] = {
+	uint8_t resp_nak[] = {
 #ifndef OPT_OSDP_SKIP_MARK_BYTE
 		0xff,
 #endif
-		0x53, 0xe5, 0x09, 0x00, 0x06, 0x41, OSDP_PD_NAK_SEQ_NUM,
+		0x53, 0xe5, 0x09, 0x00, 0x06, 0x41, 0x00 /* code */,
 		0x00, 0x00 /* crc filled below */
 	};
+	int n = sizeof(resp_nak);
+	uint16_t crc;
 
-	if (s_fsm_force_seq_nak) {
-		int n = sizeof(resp_nak_seq);
-		uint16_t crc = osdp_compute_crc16(resp_nak_seq + (n - 9), 7);
-
-		resp_nak_seq[n - 2] = crc & 0xff;
-		resp_nak_seq[n - 1] = crc >> 8;
-		memcpy(buf, resp_nak_seq, n);
+	if (s_fsm_force_seq_nak || test_fsm_resp == 4) {
+		resp_nak[n - 3] = s_fsm_force_seq_nak ? OSDP_PD_NAK_SEQ_NUM :
+							OSDP_PD_NAK_CMD_UNKNOWN;
+		crc = osdp_compute_crc16(resp_nak + (n - 9), 7);
+		resp_nak[n - 2] = crc & 0xff;
+		resp_nak[n - 1] = crc >> 8;
+		memcpy(buf, resp_nak, n);
 		return n;
 	}
 
@@ -552,6 +561,87 @@ static bool test_cp_pd_id_notification(void)
 	return true;
 }
 
+/*
+ * A PD that does not implement osdp_ACURXSIZE NAKs it. That says nothing about
+ * the link, so the PD stays online, and is not asked again on this link.
+ */
+static bool test_cp_rx_size_nak_keeps_pd_online(struct test *t)
+{
+	struct osdp_pd *pd;
+	bool result = true;
+
+	printf(SUB_1 "a NAK'd osdp_ACURXSIZE keeps the PD online\n");
+
+	s_fsm_nak_rx_size = true;
+	s_fsm_rx_size_count = 0;
+	if (test_cp_fsm_setup(t)) {
+		s_fsm_nak_rx_size = false;
+		return false;
+	}
+	pd = GET_CURRENT_PD((struct osdp *)t->mock_data);
+
+	for (int i = 0; i < 300; i++) {
+		test_state_update(pd);
+		if (pd->state == OSDP_CP_STATE_OFFLINE) {
+			printf(SUB_2 "CP took the PD offline\n");
+			result = false;
+			break;
+		}
+		usleep(1000);
+	}
+	if (result && pd->state != OSDP_CP_STATE_ONLINE) {
+		printf(SUB_2 "CP never got the PD online\n");
+		result = false;
+	}
+	if (result && s_fsm_rx_size_count != 1) {
+		printf(SUB_2 "osdp_ACURXSIZE sent %d times, want 1\n",
+		       s_fsm_rx_size_count);
+		result = false;
+	}
+
+	test_cp_fsm_teardown(t);
+	s_fsm_nak_rx_size = false;
+	return result;
+}
+
+/* Over a real link, the PD learns the CP's receive size, secure channel and all */
+static bool test_cp_tells_pd_its_rx_size(struct test *t)
+{
+	osdp_t *cp_ctx, *pd_ctx;
+	struct osdp_pd *pd;
+	int cp_runner, pd_runner;
+	bool result = false;
+
+	printf(SUB_1 "the CP tells the PD its receive size\n");
+
+	if (test_setup_devices(t, &cp_ctx, &pd_ctx)) {
+		return false;
+	}
+	pd = GET_CURRENT_PD(TO_OSDP(pd_ctx));
+	cp_runner = async_runner_start(cp_ctx, osdp_cp_refresh);
+	pd_runner = async_runner_start(pd_ctx, osdp_pd_refresh);
+
+	if (!test_wait_for_online(cp_ctx, 0, 10)) {
+		printf(SUB_2 "PD never came online\n");
+		goto out;
+	}
+	for (int i = 0; i < 200 && pd->peer_rx_size == 0; i++) {
+		usleep(10 * 1000);
+	}
+	if (pd->peer_rx_size != OSDP_PACKET_BUF_SIZE) {
+		printf(SUB_2 "PD holds receive size %u, want %d\n",
+		       pd->peer_rx_size, OSDP_PACKET_BUF_SIZE);
+		goto out;
+	}
+	result = true;
+out:
+	async_runner_stop(cp_runner);
+	async_runner_stop(pd_runner);
+	osdp_cp_teardown(cp_ctx);
+	osdp_pd_teardown(pd_ctx);
+	return result;
+}
+
 void run_cp_fsm_tests(struct test *t)
 {
 	int result = true;
@@ -565,6 +655,10 @@ void run_cp_fsm_tests(struct test *t)
 	test_cp_transition_table_purity(t);
 	TEST_REPORT(t, test_cp_pd_id_notification());
 
+	TEST_REPORT(t, test_cp_rx_size_nak_keeps_pd_online(t));
+	TEST_REPORT(t, test_cp_tells_pd_its_rx_size(t));
+
+	s_fsm_rx_size_count = 0;
 	if (test_cp_fsm_setup(t))
 		return;
 
@@ -586,6 +680,9 @@ void run_cp_fsm_tests(struct test *t)
 	printf(SUB_1 "state_update test %s\n", result ? "succeeded" : "failed");
 
 	TEST_REPORT(t, result);
+
+	printf(SUB_1 "osdp_ACURXSIZE sent once per link\n");
+	TEST_REPORT(t, s_fsm_rx_size_count == 1);
 
 	TEST_REPORT(t, test_cp_seq_nak_link_reset(ctx));
 

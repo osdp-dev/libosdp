@@ -2188,9 +2188,9 @@ int osdp_pd_submit_event(osdp_t *ctx, const struct osdp_event *event);
  * APDU answer, so a reader should bound what it takes from the card by this,
  * and answer a longer one with a TRS error report of its own.
  *
- * A CP that never sends osdp_ACURXSIZE (LibOSDP's own does not) is assumed to
- * take packets as large as this build's, so a PD with a larger buffer than
- * its CP can still send a reply the CP drops.
+ * A CP that never sends osdp_ACURXSIZE (LibOSDP's own sends it once online) is
+ * assumed to take packets as large as this build's, so a PD with a larger
+ * buffer than such a CP can still send a reply the CP drops.
  *
  * The value can change when the CP announces its receive size, so ask again
  * for each answer rather than caching it.

@@ -597,12 +597,17 @@ static bool test_event_reply_build_failure_completes()
 	reset_test_state();
 	test_completion_reset(&g_ev_compl);
 
+	/* The CP's osdp_ACURXSIZE would overwrite the clamp; let it land first */
+	pd = osdp_to_pd(g_test_ctx.pd_ctx, 0);
+	for (int i = 0; i < 200 && pd->peer_rx_size == 0; i++) {
+		usleep(10 * 1000);
+	}
+
 	if (!test_submit_event(g_test_ctx.pd_ctx, &bad_event)) {
 		printf(SUB_2 "failed to submit event\n");
 		return false;
 	}
 
-	pd = osdp_to_pd(g_test_ctx.pd_ctx, 0);
 	pd->peer_rx_size = 8;
 
 	if (!test_completion_wait(&g_ev_compl, 1, 5)) {
