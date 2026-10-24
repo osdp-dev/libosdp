@@ -81,6 +81,10 @@ struct test_trs_ctx {
 	/* PD side: OSDP_NOTIFICATION_TRS_STATUS seen, in order */
 	enum osdp_trs_session_status_e pd_status[8];
 	int pd_status_count;
+
+	/* When non-zero, the card answers with an R-APDU this long instead of
+	 * g_rsp_apdu */
+	int rsp_len;
 };
 
 static struct test_trs_ctx g_trs = { 0 };
@@ -95,6 +99,13 @@ static void trs_fill_response(struct test_trs_ctx *ctx)
 	resp->trs.reply = OSDP_TRS_REPLY_CARD_DATA;
 	resp->trs.card_data.reader = 0;
 	resp->trs.card_data.reader_status = 0;
+	if (ctx->rsp_len != 0) {
+		resp->trs.card_data.apdu.length = ctx->rsp_len;
+		for (int i = 0; i < ctx->rsp_len; i++) {
+			resp->trs.card_data.apdu.data[i] = (uint8_t)i;
+		}
+		return;
+	}
 	resp->trs.card_data.apdu.length = sizeof(g_rsp_apdu);
 	memcpy(resp->trs.card_data.apdu.data, g_rsp_apdu, sizeof(g_rsp_apdu));
 }
@@ -684,6 +695,59 @@ static bool test_trs_apdu_exchange()
 	}
 
 	return trs_answer_precedes_completion();
+}
+
+/*
+ * The PD's R-APDU limit is the real boundary: one byte more is refused at
+ * submit, where the app can still answer otherwise, and exactly that many
+ * reach the CP. Past it the reply would not build, and the PD would leave the
+ * CP's command unanswered.
+ */
+static bool test_trs_pd_max_apdu_len(void)
+{
+	struct osdp_event too_long = { .type = OSDP_EVENT_TRS };
+	int max_len;
+	bool ok = true;
+
+	printf(SUB_2 "testing TRS R-APDU limit on the PD\n");
+
+	max_len = osdp_pd_trs_get_max_apdu_len(g_trs.pd_ctx);
+	if (max_len <= 0 || max_len > OSDP_TRS_APDU_MAX_LEN) {
+		printf(SUB_2 "implausible max R-APDU length %d\n", max_len);
+		return false;
+	}
+
+	too_long.trs.reply = OSDP_TRS_REPLY_CARD_DATA;
+	too_long.trs.card_data.apdu.length = (uint16_t)(max_len + 1);
+	if (osdp_pd_submit_event(g_trs.pd_ctx, &too_long) == 0) {
+		printf(SUB_2 "R-APDU of max+1 bytes must be refused\n");
+		return false;
+	}
+
+	g_trs.rsp_len = max_len;
+	g_trs.event_seen = false;
+	g_trs.defer = false;
+	struct osdp_cmd cmd = {
+		.id = OSDP_CMD_XWR,
+		.trs = {
+			.command = OSDP_TRS_CMD_SEND_APDU,
+			.apdu = { .length = sizeof(g_req_apdu) },
+		},
+	};
+	memcpy(cmd.trs.apdu.data, g_req_apdu, sizeof(g_req_apdu));
+
+	if (!test_submit_command(g_trs.cp_ctx, 0, &cmd) ||
+	    !wait_for_trs_event(10)) {
+		printf(SUB_2 "max-length R-APDU did not arrive\n");
+		ok = false;
+	} else if (g_trs.last_reply.reply != OSDP_TRS_REPLY_CARD_DATA ||
+		   g_trs.last_reply.card_data.apdu.length != max_len) {
+		printf(SUB_2 "CP got a %d-byte R-APDU, want %d\n",
+		       g_trs.last_reply.card_data.apdu.length, max_len);
+		ok = false;
+	}
+	g_trs.rsp_len = 0;
+	return ok;
 }
 
 static bool test_trs_deferred_apdu()
@@ -2682,6 +2746,7 @@ void run_trs_tests(struct test *t)
 	result &= test_trs_pin_entry_too_big_for_packet();
 	result &= test_trs_pin_entry_layout_unrepresentable();
 	result &= test_trs_apdu_exchange();
+	result &= test_trs_pd_max_apdu_len();
 	result &= test_trs_deferred_apdu();
 	result &= test_trs_deferred_apdu_holds_band();
 	result &= test_trs_apdu_nak_keeps_session();

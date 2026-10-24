@@ -2171,9 +2171,37 @@ int osdp_pd_set_event_completion_callback(osdp_t *ctx,
  * @note A card read in any format other than @c OSDP_CARD_FMT_RAW_UNSPECIFIED
  * or @c OSDP_CARD_FMT_RAW_WIEGAND is rejected; LibOSDP does not support
  * osdp_FMT.
+ *
+ * @note A TRS card-data reply whose R-APDU is longer than
+ * osdp_pd_trs_get_max_apdu_len() is rejected: the CP could not receive it.
  */
 OSDP_EXPORT
 int osdp_pd_submit_event(osdp_t *ctx, const struct osdp_event *event);
+
+/**
+ * @brief Get the longest R-APDU this PD can send the CP in one TRS card-data
+ * reply.
+ *
+ * The reply has to fit the smaller of this build's @c OSDP_PACKET_BUF_SIZE and
+ * the receive buffer the CP announced with osdp_ACURXSIZE, less the framing the
+ * R-APDU travels inside. That is often well short of a full 256-byte short
+ * APDU answer, so a reader should bound what it takes from the card by this,
+ * and answer a longer one with a TRS error report of its own.
+ *
+ * A CP that never sends osdp_ACURXSIZE (LibOSDP's own does not) is assumed to
+ * take packets as large as this build's, so a PD with a larger buffer than
+ * its CP can still send a reply the CP drops.
+ *
+ * The value can change when the CP announces its receive size, so ask again
+ * for each answer rather than caching it.
+ *
+ * @param ctx OSDP context
+ *
+ * @retval >0 Maximum R-APDU length in bytes
+ * @retval -1 on failure (TRS support not compiled in, or bad args)
+ */
+OSDP_EXPORT
+int osdp_pd_trs_get_max_apdu_len(const osdp_t *ctx);
 
 /**
  * @brief Deletes all events from the PD's event queue.

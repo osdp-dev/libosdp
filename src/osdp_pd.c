@@ -2477,7 +2477,31 @@ int osdp_pd_submit_event(osdp_t *ctx, const struct osdp_event *event)
 		return -1;
 	}
 
+#ifdef OPT_BUILD_OSDP_TRS
+	/* Accepted, it would fail to build into a reply, and the PD would
+	 * answer the CP's poll with nothing at all. */
+	if (event->type == OSDP_EVENT_TRS &&
+	    event->trs.reply == OSDP_TRS_REPLY_CARD_DATA &&
+	    event->trs.card_data.apdu.length > osdp_trs_max_apdu_len(pd)) {
+		LOG_ERR("Event: TRS R-APDU of %d bytes; the CP takes at most %d",
+			event->trs.card_data.apdu.length,
+			osdp_trs_max_apdu_len(pd));
+		return -1;
+	}
+#endif
+
 	return pd_event_enqueue(pd, event);
+}
+
+int osdp_pd_trs_get_max_apdu_len(const osdp_t *ctx)
+{
+	input_check(ctx);
+#ifdef OPT_BUILD_OSDP_TRS
+	return osdp_trs_max_apdu_len(osdp_to_pd(ctx, 0));
+#else
+	LOG_PRINT("TRS support not built in");
+	return -1;
+#endif
 }
 
 /*
