@@ -613,6 +613,11 @@ int osdp_trs_reply_decode(struct osdp_pd *pd, uint8_t *buf, int len,
 		       prot_data_len);
 		pos += prot_data_len;
 		trs_scan_note_card(pd, true);
+		/* A sighting the scan did not ask for still outdates what it
+		 * last heard: an app may start a band on it before the scan
+		 * asks, and once the card has gone, the field the scan finds
+		 * empty again is the only word that it left. */
+		pd->trs.scan.last_status = OSDP_TRS_CARD_STATUS_UNKNOWN;
 		break;
 	case REPLY_CARD_PRESENT:
 		event->trs.reply = OSDP_TRS_REPLY_CARD_PRESENT;

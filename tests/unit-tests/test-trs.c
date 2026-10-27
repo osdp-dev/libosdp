@@ -1649,6 +1649,56 @@ static bool test_trs_wire_card_present_decode(void)
 	return true;
 }
 
+/*
+ * A reader that announces its card as transparent mode opens lets the app start
+ * a band on it before the scan asks. The scan last heard the field empty, and
+ * once the card has gone it hears that again: it is still news, as the card was
+ * seen in between, and the only word the app gets that the card left.
+ */
+static bool test_trs_wire_scan_departure_after_card_info(void)
+{
+	struct osdp ctx;
+	struct osdp_pd pd;
+	struct osdp_event ev;
+	uint8_t absent[] = { 0x01, 0x01, 0x00, 0x00 };
+	uint8_t card_info[] = { 0x00, 0x02, 0x00, 0x01, 0x04,
+				0x00, 0x11, 0x22, 0x33, 0x44 };
+
+	printf(SUB_2 "testing TRS wire: departure after an announced card\n");
+	trs_wire_pd_init(&ctx, &pd, TRS_MODE_01);
+	pd.trs.scan.enabled = true;
+	pd.trs.probe = true;
+	pd.trs.scan.last_status = OSDP_TRS_CARD_STATUS_UNKNOWN;
+
+	pd.trs.scan.asking = true;
+	if (osdp_trs_reply_decode(&pd, absent, sizeof(absent), &ev) !=
+	    OSDP_TRS_REPLY_ACTION_DISPATCH) {
+		printf(SUB_2
+		       "an empty field must be reported the first time\n");
+		return false;
+	}
+	if (osdp_trs_reply_decode(&pd, absent, sizeof(absent), &ev) !=
+	    OSDP_TRS_REPLY_ACTION_NONE) {
+		printf(SUB_2 "an empty field must not be reported again\n");
+		return false;
+	}
+
+	pd.trs.scan.asking = false;
+	if (osdp_trs_reply_decode(&pd, card_info, sizeof(card_info), &ev) !=
+	    OSDP_TRS_REPLY_ACTION_DISPATCH) {
+		printf(SUB_2 "the card's announcement must be dispatched\n");
+		return false;
+	}
+
+	pd.trs.scan.asking = true;
+	if (osdp_trs_reply_decode(&pd, absent, sizeof(absent), &ev) !=
+	    OSDP_TRS_REPLY_ACTION_DISPATCH) {
+		printf(SUB_2 "the card's departure must be reported\n");
+		return false;
+	}
+	return true;
+}
+
 /* Table 74: Mode-1 Error reply (osdp_PR01ERROR) = [01 00 error-code] */
 static bool test_trs_wire_error_build(void)
 {
@@ -2721,6 +2771,7 @@ void run_trs_tests(struct test *t)
 	result &= test_trs_wire_mode_report();
 	result &= test_trs_wire_card_present_build();
 	result &= test_trs_wire_card_present_decode();
+	result &= test_trs_wire_scan_departure_after_card_info();
 	result &= test_trs_wire_error_build();
 	result &= test_trs_wire_cmd_decode_actions();
 	result &= test_trs_wire_mode_gating();
