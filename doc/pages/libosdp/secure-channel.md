@@ -238,7 +238,13 @@ The secure channel coming up is reported by `OSDP_NOTIFICATION_SC_STATUS`
 (with `OSDP_FLAG_ENABLE_NOTIFICATION`) or `osdp_get_sc_status_mask()`. A
 handshake that fails on the wrong key is followed by one SCBK-Default attempt,
 which a PD outside install mode answers on its current key; the error it logs
-is expected here.
+is expected here. The PD then comes online without a secure channel
+(`OSDP_NOTIFICATION_PD_STATUS`), or goes offline under ENFORCE_SECURE.
+
+To move to the other key without restarting the CP, disable the PD with
+`osdp_cp_disable_pd()`, wait for `osdp_cp_is_pd_enabled()` to return false,
+give it the key with `osdp_cp_set_scbk()` and enable it again with
+`osdp_cp_enable_pd()`. The PD starts over from INIT on that key.
 
 ## Random Number Generation
 

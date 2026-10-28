@@ -812,6 +812,8 @@ static bool held_keyset_survives_disable(struct test *t)
 		usleep(100 * 1000);
 	if (test_completion_count(&g_stg.completion) != 0)
 		return stg_end(false, "disabling the PD completed the KEYSET");
+	if (osdp_cp_set_scbk(g_stg.cp_ctx, 0, K3) == 0)
+		return stg_end(false, "SCBK replaced under a held KEYSET");
 	atomic_store(&g_stg.drop_all_ccrypt, false);
 	if (osdp_cp_enable_pd(g_stg.cp_ctx, 0))
 		return stg_end(false, "enable failed");
@@ -819,6 +821,46 @@ static bool held_keyset_survives_disable(struct test *t)
 		return stg_end(false, "KEYSET did not fail");
 	if (!stg_settled_on(stg_pd(), K1) || !stg_settled_on(stg_cp_pd(), K1))
 		return stg_end(false, "both sides are not on K1");
+	return stg_end(true, NULL);
+}
+
+/* A CP whose key the PD does not hold moves to another one by disabling
+ * the PD, setting the key and enabling it again, as a CP does at start-up
+ * when a rotation never settled. */
+static bool cp_retries_on_another_key(struct test *t)
+{
+	static const uint8_t scbk_d[16] = { 0x30, 0x31, 0x32, 0x33, 0x34, 0x35,
+					    0x36, 0x37, 0x38, 0x39, 0x3a, 0x3b,
+					    0x3c, 0x3d, 0x3e, 0x3f };
+	uint8_t online = 0;
+	int i;
+
+	stg_begin(t, "a disabled PD comes back up on another SCBK");
+	if (stg_start(K2, K1, NULL))
+		return stg_end(false, "setup failed");
+	for (i = 0; i < 100 && !(online & 1); i++) {
+		usleep(100 * 1000);
+		osdp_get_status_mask(g_stg.cp_ctx, &online);
+	}
+	if (!(online & 1) || stg_secure_online())
+		return stg_end(false, "PD did not come online without SC");
+	if (osdp_cp_set_scbk(g_stg.cp_ctx, 0, K1) == 0)
+		return stg_end(false, "SCBK replaced on an enabled PD");
+	if (osdp_cp_disable_pd(g_stg.cp_ctx, 0))
+		return stg_end(false, "disable failed");
+	for (i = 0; i < 50 && osdp_cp_is_pd_enabled(g_stg.cp_ctx, 0); i++)
+		usleep(100 * 1000);
+	if (osdp_cp_is_pd_enabled(g_stg.cp_ctx, 0))
+		return stg_end(false, "PD was never disabled");
+	if (osdp_cp_set_scbk(g_stg.cp_ctx, 0, scbk_d) == 0)
+		return stg_end(false, "SCBK-D accepted as an SCBK");
+	if (osdp_cp_set_scbk(g_stg.cp_ctx, 0, K1) ||
+	    osdp_cp_enable_pd(g_stg.cp_ctx, 0))
+		return stg_end(false, "setting K1 and enabling failed");
+	if (!stg_wait_for_secure_online(10))
+		return stg_end(false, "K1 never came up");
+	if (!stg_settled_on(stg_cp_pd(), K1))
+		return stg_end(false, "CP is not on K1");
 	return stg_end(true, NULL);
 }
 
@@ -913,6 +955,7 @@ void run_scbk_staging_tests(struct test *t)
 		  cp_refuses_keyset_while_staged(t));
 	TEST_CASE(t, "held_keyset_survives_disable",
 		  held_keyset_survives_disable(t));
+	TEST_CASE(t, "cp_retries_on_another_key", cp_retries_on_another_key(t));
 	TEST_CASE(t, "teardown_aborts_held_keyset",
 		  teardown_aborts_held_keyset(t));
 	TEST_CASE(t, "install_mode_keyset_commits_directly",

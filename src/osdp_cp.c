@@ -3428,6 +3428,34 @@ bool osdp_cp_is_pd_enabled(const osdp_t *ctx, int pd_idx)
 	return pd->state != OSDP_CP_STATE_DISABLED;
 }
 
+int osdp_cp_set_scbk(osdp_t *ctx, int pd_idx, const uint8_t *scbk)
+{
+	input_check(ctx, pd_idx);
+	struct osdp_pd *pd = osdp_to_pd(ctx, pd_idx);
+
+	if (pd->state != OSDP_CP_STATE_DISABLED ||
+	    test_request(pd, CP_REQ_ENABLE)) {
+		LOG_ERR("The SCBK can only be set while the PD is disabled");
+		return -1;
+	}
+	if (ISSET_FLAG(pd, PD_FLAG_SC_DISABLED)) {
+		LOG_ERR("PD was set up without an SCBK");
+		return -1;
+	}
+	/* A held KEYSET settles against the key it was sent under. */
+	if (ISSET_FLAG(pd, PD_FLAG_SCBK_STAGED) ||
+	    ISSET_FLAG(pd, PD_FLAG_KEYSET_PENDING)) {
+		LOG_ERR("A KEYSET has not completed; refusing SCBK");
+		return -1;
+	}
+	if (!osdp_scbk_is_usable(scbk)) {
+		LOG_ERR("SCBK is SCBK-D or all zeros");
+		return -1;
+	}
+	memcpy(pd->sc.scbk, scbk, sizeof(pd->sc.scbk));
+	return 0;
+}
+
 /* Export the CP command queue and state machine to the unit tests. */
 OSDP_TEST_ALIAS(cp_cmd_enqueue);
 OSDP_TEST_ALIAS(cp_phy_state_update);

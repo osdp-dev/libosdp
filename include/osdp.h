@@ -2609,6 +2609,26 @@ int osdp_cp_enable_pd(osdp_t *ctx, int pd);
 OSDP_EXPORT
 bool osdp_cp_is_pd_enabled(const osdp_t *ctx, int pd);
 
+/**
+ * @brief Replace the SCBK a disabled PD comes up on when it is enabled again.
+ *
+ * For a CP that must try one key and then another, such as at start-up after
+ * a key rotation that never settled: disable the PD, wait for
+ * osdp_cp_is_pd_enabled() to return false, set the key and enable the PD.
+ *
+ * @param ctx OSDP context
+ * @param pd PD offset (0-indexed) of this PD in `osdp_pd_info_t *` passed to
+ * osdp_cp_setup()
+ * @param scbk The 16-byte key. SCBK-D and an all-zero key are refused.
+ *
+ * @retval 0 on success
+ * @retval -1 on failure: the PD is not disabled or is being enabled, it was
+ * set up without an SCBK, a KEYSET for it has not completed, or the key is
+ * refused.
+ */
+OSDP_EXPORT
+int osdp_cp_set_scbk(osdp_t *ctx, int pd, const uint8_t *scbk);
+
 /* ------------------------------- */
 /*          Common Methods         */
 /* ------------------------------- */
