@@ -1500,4 +1500,31 @@ static inline struct osdp_rb *pd_rx_rb_alloc(void)
 }
 #endif /* OPT_OSDP_RX_ZERO_COPY */
 
+#ifdef OPT_OSDP_STATIC
+/*
+ * Static pools of per-PD feature state (file transfer, PIV, BIO) hold a run of
+ * CP-mode slots followed by OSDP_STATIC_PD_MODE_SLOTS for the PD context. A CP
+ * and a PD context can live in one process, and both number their PDs from 0,
+ * so indexing by pd->idx alone would hand the PD context the CP's PD 0 slot.
+ * An exclusive-role build never has both at once and needs no extra slot.
+ */
+#ifdef OPT_OSDP_EXCLUSIVE_ROLE
+#define OSDP_STATIC_PD_MODE_SLOTS 0
+#else
+#define OSDP_STATIC_PD_MODE_SLOTS 1
+#endif
+
+/* Returns the pool index for pd, or -1 when the pool has no slot for it. */
+static inline int osdp_static_slot_idx(struct osdp_pd *pd, int cp_slots)
+{
+	if (OSDP_STATIC_PD_MODE_SLOTS && is_pd_mode(pd)) {
+		return cp_slots;
+	}
+	if (pd->idx < 0 || pd->idx >= cp_slots) {
+		return -1;
+	}
+	return pd->idx;
+}
+#endif /* OPT_OSDP_STATIC */
+
 #endif /* _OSDP_COMMON_H_ */

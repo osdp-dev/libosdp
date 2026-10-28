@@ -45,8 +45,23 @@ add_executable(${OSDP_UNIT_TEST}_zc EXCLUDE_FROM_ALL ${OSDP_UNIT_TEST_SRC})
 target_link_libraries(${OSDP_UNIT_TEST}_zc
 	${LIB_OSDP_TEST_ZC} utils ${LIB_OSDP_LIBRARIES} pthread)
 
+# Static-allocation lane. OPT_OSDP_STATIC carves every context and every PD's
+# feature state out of fixed pools, which the CP and PD contexts the harness
+# runs in one process must not share. OSDP_STATIC_SUITES are the suites that
+# drive those per-PD pools end to end; some other suites set up a second CP or
+# PD context, which static mode cannot hold alongside the harness pair.
+set(OSDP_STATIC_SUITES file_tx piv bio)
+set(LIB_OSDP_TEST_STATIC osdptest_static)
+add_library(${LIB_OSDP_TEST_STATIC} STATIC EXCLUDE_FROM_ALL ${LIB_OSDP_SOURCES})
+target_compile_definitions(${LIB_OSDP_TEST_STATIC} PUBLIC OPT_OSDP_STATIC=1)
+
+add_executable(${OSDP_UNIT_TEST}_static EXCLUDE_FROM_ALL ${OSDP_UNIT_TEST_SRC})
+target_link_libraries(${OSDP_UNIT_TEST}_static
+	${LIB_OSDP_TEST_STATIC} utils ${LIB_OSDP_LIBRARIES} pthread)
+
 if (OPT_BUILD_SANITIZER)
-	foreach(tgt ${OSDP_UNIT_TEST} ${OSDP_UNIT_TEST}_zc ${LIB_OSDP_TEST_ZC})
+	foreach(tgt ${OSDP_UNIT_TEST} ${OSDP_UNIT_TEST}_zc ${LIB_OSDP_TEST_ZC}
+		    ${OSDP_UNIT_TEST}_static ${LIB_OSDP_TEST_STATIC})
 		target_compile_options(${tgt} PRIVATE
 			-fsanitize=address,undefined,leak
 		)
@@ -98,6 +113,13 @@ add_test(NAME osdp_unit_test_zc_build
 set_tests_properties(osdp_unit_test_zc_build PROPERTIES
 	FIXTURES_SETUP osdp_unit_test_zc_built
 )
+add_test(NAME osdp_unit_test_static_build
+	COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}
+		--target ${OSDP_UNIT_TEST}_static --config $<CONFIG>
+)
+set_tests_properties(osdp_unit_test_static_build PROPERTIES
+	FIXTURES_SETUP osdp_unit_test_static_built
+)
 
 # Suites that assert real-time protocol timing (file-transfer completion
 # windows, retransmit/link-loss budgets) are unreliable under heavy CPU
@@ -132,10 +154,23 @@ foreach(_suite ${OSDP_SUITES} ${OSDP_SUITES_ZC_ONLY})
 	endif()
 endforeach()
 
+foreach(_suite ${OSDP_STATIC_SUITES})
+	add_test(NAME ut_static_${_suite}
+		COMMAND ${OSDP_UNIT_TEST}_static ${_suite}
+		WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+	)
+	set_tests_properties(ut_static_${_suite} PROPERTIES
+		FIXTURES_REQUIRED osdp_unit_test_static_built
+	)
+	if(_suite IN_LIST OSDP_SERIAL_SUITES)
+		set_tests_properties(ut_static_${_suite} PROPERTIES RUN_SERIAL TRUE)
+	endif()
+endforeach()
+
 # `check` / `check-ut` stay as the single convenience wrapper around ctest.
 add_custom_target(check
 	COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure -R "^ut_"
-	DEPENDS ${OSDP_UNIT_TEST} ${OSDP_UNIT_TEST}_zc
+	DEPENDS ${OSDP_UNIT_TEST} ${OSDP_UNIT_TEST}_zc ${OSDP_UNIT_TEST}_static
 	USES_TERMINAL
 )
 add_custom_target(check-ut

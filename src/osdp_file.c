@@ -625,16 +625,17 @@ int osdp_file_tx_command(struct osdp_pd *pd, int file_id, uint32_t flags)
 /* --- Exported Methods --- */
 
 #ifdef OPT_OSDP_STATIC
+/* CP-mode PDs that can transfer files; the PD context's slot is extra. */
 #ifndef OSDP_FILE_STATIC_SLOTS
 #define OSDP_FILE_STATIC_SLOTS OSDP_CP_MAX_PDS
 #endif
-static inline struct osdp_file *file_static_slot_get(int pd_idx)
+static inline struct osdp_file *file_static_slot_get(struct osdp_pd *pd)
 {
-	static struct osdp_file g_osdp_file_slots[OSDP_FILE_STATIC_SLOTS];
-	if (pd_idx < 0 || pd_idx >= OSDP_FILE_STATIC_SLOTS) {
-		return NULL;
-	}
-	return &g_osdp_file_slots[pd_idx];
+	static struct osdp_file g_osdp_file_slots[OSDP_FILE_STATIC_SLOTS +
+						  OSDP_STATIC_PD_MODE_SLOTS];
+	int i = osdp_static_slot_idx(pd, OSDP_FILE_STATIC_SLOTS);
+
+	return i < 0 ? NULL : &g_osdp_file_slots[i];
 }
 #endif /* OPT_OSDP_STATIC */
 
@@ -649,7 +650,7 @@ int osdp_file_register_ops(osdp_t *ctx, int pd_idx,
 
 	if (!pd->file) {
 #ifdef OPT_OSDP_STATIC
-		pd->file = file_static_slot_get(pd_idx);
+		pd->file = file_static_slot_get(pd);
 		if (pd->file == NULL) {
 			LOG_PRINT("No static osdp_file slot for pd_idx=%d",
 				  pd_idx);

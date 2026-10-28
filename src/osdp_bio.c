@@ -17,16 +17,17 @@ _Static_assert(REPLY_BIOREADR_DATA_LEN == OSDP_MP_HDR_SIZE(OSDP_MP_W16),
 	       "BIOREADR header and W16 multipart header must be the same size");
 
 #ifdef OPT_OSDP_STATIC
+/* CP-mode PDs that can run BIO; the PD context's slot is extra. */
 #ifndef OSDP_BIO_STATIC_SLOTS
 #define OSDP_BIO_STATIC_SLOTS OSDP_CP_MAX_PDS
 #endif
-static inline struct osdp_bio *bio_static_slot_get(int pd_idx)
+static inline struct osdp_bio *bio_static_slot_get(struct osdp_pd *pd)
 {
-	static struct osdp_bio g_osdp_bio_slots[OSDP_BIO_STATIC_SLOTS];
-	if (pd_idx < 0 || pd_idx >= OSDP_BIO_STATIC_SLOTS) {
-		return NULL;
-	}
-	return &g_osdp_bio_slots[pd_idx];
+	static struct osdp_bio g_osdp_bio_slots[OSDP_BIO_STATIC_SLOTS +
+						OSDP_STATIC_PD_MODE_SLOTS];
+	int i = osdp_static_slot_idx(pd, OSDP_BIO_STATIC_SLOTS);
+
+	return i < 0 ? NULL : &g_osdp_bio_slots[i];
 }
 #endif /* OPT_OSDP_STATIC */
 
@@ -34,7 +35,7 @@ static struct osdp_bio *bio_get(struct osdp_pd *pd)
 {
 	if (!pd->bio) {
 #ifdef OPT_OSDP_STATIC
-		pd->bio = bio_static_slot_get(pd->idx);
+		pd->bio = bio_static_slot_get(pd);
 		if (pd->bio) {
 			memset(pd->bio, 0, sizeof(struct osdp_bio));
 		}

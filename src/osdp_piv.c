@@ -77,16 +77,17 @@ static const struct piv_family *family_by_wire_cmd(uint8_t wire_cmd)
 }
 
 #ifdef OPT_OSDP_STATIC
+/* CP-mode PDs that can run PIV; the PD context's slot is extra. */
 #ifndef OSDP_PIV_STATIC_SLOTS
 #define OSDP_PIV_STATIC_SLOTS OSDP_CP_MAX_PDS
 #endif
-static inline struct osdp_piv *piv_static_slot_get(int pd_idx)
+static inline struct osdp_piv *piv_static_slot_get(struct osdp_pd *pd)
 {
-	static struct osdp_piv g_osdp_piv_slots[OSDP_PIV_STATIC_SLOTS];
-	if (pd_idx < 0 || pd_idx >= OSDP_PIV_STATIC_SLOTS) {
-		return NULL;
-	}
-	return &g_osdp_piv_slots[pd_idx];
+	static struct osdp_piv g_osdp_piv_slots[OSDP_PIV_STATIC_SLOTS +
+						OSDP_STATIC_PD_MODE_SLOTS];
+	int i = osdp_static_slot_idx(pd, OSDP_PIV_STATIC_SLOTS);
+
+	return i < 0 ? NULL : &g_osdp_piv_slots[i];
 }
 #endif /* OPT_OSDP_STATIC */
 
@@ -94,7 +95,7 @@ static struct osdp_piv *piv_get(struct osdp_pd *pd)
 {
 	if (!pd->piv) {
 #ifdef OPT_OSDP_STATIC
-		pd->piv = piv_static_slot_get(pd->idx);
+		pd->piv = piv_static_slot_get(pd);
 		if (pd->piv) {
 			memset(pd->piv, 0, sizeof(struct osdp_piv));
 		}
