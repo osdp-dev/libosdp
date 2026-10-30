@@ -28,7 +28,6 @@ usage() {
 	  --lib-only                   Only build the library
 	  --bare-metal                 Enable bare-metal build paths
 	  --use-32bit-tick-t           Use uint32_t tick_t (requires --bare-metal)
-	  --enable-trs                 Enable Transparent Reader Support (TRS)
 	  --cross-compile PREFIX       Use to pass a compiler prefix
 	  --prefix PATH                Install path prefix (default: /usr)
 	  --build-dir                  Build output directory (default: ./build)
@@ -58,7 +57,6 @@ while [ $# -gt 0 ]; do
 	--lib-only)            LIB_ONLY=1;;
 	--bare-metal)          BARE_METAL=1;;
 	--use-32bit-tick-t)    USE_32BIT_TICK_T=1;;
-	--enable-trs)          ENABLE_TRS=1;;
 	--build-dir)           BUILD_DIR=$2; shift;;
 	-d|--debug)            DEBUG=1;;
 	-f|--force)            FORCE=1;;
@@ -133,10 +131,6 @@ if [[ ! -z "${USE_32BIT_TICK_T}" ]]; then
 		exit 1
 	fi
 	CCFLAGS+=" -DUSE_32BIT_TICK_T"
-fi
-
-if [[ ! -z "${ENABLE_TRS}" ]]; then
-	CCFLAGS+=" -DOPT_BUILD_OSDP_TRS"
 fi
 
 ## Repo meta data
@@ -230,7 +224,7 @@ fi
 ## Declare sources
 LIBOSDP_SOURCES+=" src/osdp_common.c src/osdp_phy.c src/osdp_sc.c src/osdp_file.c src/osdp_pd.c"
 LIBOSDP_SOURCES+=" src/osdp_cp.c src/osdp_metrics.c src/osdp_multipart.c"
-LIBOSDP_SOURCES+=" src/osdp_piv.c src/osdp_bio.c"
+LIBOSDP_SOURCES+=" src/osdp_piv.c src/osdp_bio.c src/osdp_trs.c"
 LIBOSDP_SOURCES+=" utils/src/list.c utils/src/queue.c utils/src/utils.c"
 LIBOSDP_SOURCES+=" utils/src/disjoint_set.c utils/src/crc16.c"
 if [[ -z "${LOG_MINIMAL}" ]]; then
@@ -247,10 +241,6 @@ if [[ ! -z "${PACKET_TRACE}" ]] || [[ ! -z "${DATA_TRACE}" ]]; then
 fi
 
 TARGETS="cp_app pd_app"
-
-if [[ ! -z "${ENABLE_TRS}" ]]; then
-	LIBOSDP_SOURCES+=" src/osdp_trs.c"
-fi
 
 # Suite source files come from the shared manifest so the lean and CMake
 # builds never drift; see tests/unit-tests/test-sources.list.

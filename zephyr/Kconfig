@@ -104,14 +104,6 @@ config LIBOSDP_DATA_TRACE
 		Trace command/reply data buffers for diagnostics.
 		Enables PCAP capture support via osdp_diag.
 
-config LIBOSDP_TRS
-	bool "Transparent Reader Support (TRS)"
-	default n
-	help
-		Build Transparent Reader Support: osdp_XWR / osdp_XRD, which
-		let a CP talk to a smart card through the PD (APDU exchange,
-		card scan, secure PIN entry).
-
 config OSDP_UART_BAUD_RATE
 	int "OSDP UART baud rate"
 	default 115200

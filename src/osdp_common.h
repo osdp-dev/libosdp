@@ -476,13 +476,11 @@ static inline __noreturn void die()
 #define CP_REQ_OFFLINE	  0x00000004
 #define CP_REQ_DISABLE	  0x00000008
 #define CP_REQ_ENABLE	  0x00000010
-#ifdef OPT_BUILD_OSDP_TRS
 /* Open a TRS session: OPEN for an app band (a START was dequeued), SCAN for a
  * library-initiated presence probe. Posted by the online command selector and
  * consumed like every other transition request in state_update(). */
 #define CP_REQ_TRS_OPEN 0x00000020
 #define CP_REQ_TRS_SCAN 0x00000040
-#endif
 
 #define TRS_MODE_00 0x00
 #define TRS_MODE_01 0x01
@@ -514,7 +512,6 @@ enum osdp_cp_state_e {
 	OSDP_CP_STATE_SENTINEL
 };
 
-#ifdef OPT_BUILD_OSDP_TRS
 enum trs_state_e {
 	TRS_STATE_SET_MODE, /* CP negotiating TRS mode 01 with PD */
 	TRS_STATE_XMIT, /* session up; draining app APDU commands */
@@ -599,7 +596,6 @@ struct osdp_trs {
 		tick_t ask_tstamp; /* when this probe last asked */
 	} scan;
 };
-#endif
 
 enum osdp_pkt_errors_e {
 	OSDP_ERR_PKT_NONE = 0,
@@ -783,9 +779,7 @@ struct osdp_pd {
 	struct osdp_piv *piv;            /* Smartcard/PIV multipart context */
 	struct osdp_bio *bio;            /* Biometric read multipart context */
 	struct osdp_metrics metrics;     /* link/protocol health counters */
-#ifdef OPT_BUILD_OSDP_TRS
 	struct osdp_trs trs; /* TRS mode context (embedded) */
-#endif
 
 	/* PD command callback to app with opaque arg pointer as passed by app */
 	void *command_callback_arg;
@@ -831,11 +825,9 @@ void osdp_keyset_complete(struct osdp_pd *pd);
 void cp_complete_engine_cmd(struct osdp_pd *pd, const struct osdp_cmd *cmd,
 			    enum osdp_completion_status status);
 
-#ifdef OPT_BUILD_OSDP_TRS
 /* --- from osdp_trs.c --- */
 enum osdp_cp_state_e osdp_trs_state_update(struct osdp_pd *pd);
 enum osdp_cp_state_e osdp_trs_state_update_err(struct osdp_pd *pd);
-#endif
 
 /* --- from osdp_phy.c --- */
 int osdp_phy_packet_init(struct osdp_pd *p, uint8_t *buf, int max_len);
@@ -1120,26 +1112,6 @@ static inline bool trs_active(struct osdp_pd *pd)
 	return ISSET_FLAG(pd, PD_FLAG_TRS_ACTIVE);
 }
 
-static inline void trs_set_reply_error(struct osdp_pd *pd, bool error)
-{
-#ifdef OPT_BUILD_OSDP_TRS
-	pd->trs.reply_error = error;
-#else
-	ARG_UNUSED(pd);
-	ARG_UNUSED(error);
-#endif
-}
-
-static inline bool trs_reply_error(struct osdp_pd *pd)
-{
-#ifdef OPT_BUILD_OSDP_TRS
-	return pd->trs.reply_error;
-#else
-	ARG_UNUSED(pd);
-	return false;
-#endif
-}
-
 /*
  * A TRS session runs on top of an established link: the PD is still online,
  * just busy with a card. Use this over a bare `state == ONLINE` test wherever
@@ -1147,12 +1119,10 @@ static inline bool trs_reply_error(struct osdp_pd *pd)
  */
 static inline bool cp_state_is_online(enum osdp_cp_state_e state)
 {
-#ifdef OPT_BUILD_OSDP_TRS
 	if (state == OSDP_CP_STATE_TRS_SETUP ||
 	    state == OSDP_CP_STATE_TRS_RUN) {
 		return true;
 	}
-#endif
 	return state == OSDP_CP_STATE_ONLINE;
 }
 

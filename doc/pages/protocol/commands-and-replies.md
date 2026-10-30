@@ -112,7 +112,7 @@ tunnelling ISO 7816 APDUs to the reader (IEC 60839-11-5). LibOSDP implements it
 on both roles: the CP opens a card session, exchanges APDUs, can run secure PIN
 entry, and closes the session. See
 [Smartcard Commands](/libosdp/smartcard#transparent-reader-support-trs) for the
-API. TRS is built when LibOSDP is compiled with `OPT_BUILD_OSDP_TRS`.
+API.
 
 **Multi-part `REPLY_BIOREADR`.** By default a biometric read reply must fit in a
 single packet. When both roles set `OSDP_FLAG_BIOREADR_MULTIPART`, LibOSDP can

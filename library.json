@@ -14,7 +14,6 @@
     "srcFilter": [
       "+<**/*.c>",
       "-<osdp_diag.c>",
-      "-<osdp_trs.c>",
       "-<crypto/mbedtls.c>",
       "-<crypto/openssl.c>",
       "-<crypto/psa.c>",

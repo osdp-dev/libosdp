@@ -90,19 +90,6 @@ jobs:
     - name: Run unit-tests
       run: cmake --build . --parallel 7 --target check
 
-  # TRS is off in the default config, so Test above does not reach the
-  # transparent reader sources or their tests.
-  TestTRS:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v7
-      with:
-        submodules: recursive
-    - name: Configure
-      run: cmake -DCMAKE_BUILD_TYPE=Debug -DOPT_BUILD_OSDP_TRS=ON .
-    - name: Run unit-tests
-      run: cmake --build . --parallel 7 --target check
-
   CheckPatch:
     runs-on: ubuntu-latest
     steps:

@@ -169,6 +169,7 @@ lib_sources = [
     "src/osdp_multipart.c",
     "src/osdp_piv.c",
     "src/osdp_bio.c",
+    "src/osdp_trs.c",
     "src/osdp_pd.c",
     "src/osdp_cp.c",
     "src/osdp_metrics.c",
@@ -212,8 +213,6 @@ other_files = [
     "utils/include/utils/pcap_gen.h",
     "utils/src/pcap_gen.c",
 
-    # Optional when TRS is enabled
-    "src/osdp_trs.c",
 ]
 
 # LICENSE lives at the repo root; vendor a copy so wheel/sdist builds
@@ -222,7 +221,6 @@ license_file = "LICENSE"
 
 definitions = [
     "OPT_OSDP_PACKET_TRACE",
-    "OPT_BUILD_OSDP_TRS",
     # "OPT_OSDP_DATA_TRACE",
     # "OPT_OSDP_SKIP_MARK_BYTE",
 ]
@@ -240,11 +238,6 @@ if ("OPT_OSDP_PACKET_TRACE" in definitions or
     source_files += [
         "src/osdp_diag.c",
         "utils/src/pcap_gen.c",
-    ]
-
-if "OPT_BUILD_OSDP_TRS" in definitions:
-    source_files += [
-        "src/osdp_trs.c",
     ]
 
 source_files = add_prefix_to_path(source_files, "vendor")

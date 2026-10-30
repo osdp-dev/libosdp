@@ -2198,7 +2198,7 @@ int osdp_pd_submit_event(osdp_t *ctx, const struct osdp_event *event);
  * @param ctx OSDP context
  *
  * @retval >0 Maximum R-APDU length in bytes
- * @retval -1 on failure (TRS support not compiled in, or bad args)
+ * @retval -1 on failure (bad args)
  */
 OSDP_EXPORT
 int osdp_pd_trs_get_max_apdu_len(const osdp_t *ctx);
@@ -2419,7 +2419,7 @@ int osdp_cp_flush_commands(osdp_t *ctx, int pd);
  * @param params Scan cadence; NULL (or zero fields) selects the defaults
  *
  * @retval 0 on success
- * @retval -1 on failure (TRS support not compiled in, or bad args)
+ * @retval -1 on failure (bad args)
  */
 OSDP_EXPORT
 int osdp_cp_trs_scan_enable(osdp_t *ctx, int pd,
@@ -2434,7 +2434,7 @@ int osdp_cp_trs_scan_enable(osdp_t *ctx, int pd,
  * osdp_cp_setup()
  *
  * @retval 0 on success
- * @retval -1 on failure (TRS support not compiled in, or bad args)
+ * @retval -1 on failure (bad args)
  */
 OSDP_EXPORT
 int osdp_cp_trs_scan_disable(osdp_t *ctx, int pd);
@@ -2463,7 +2463,7 @@ int osdp_cp_trs_scan_disable(osdp_t *ctx, int pd);
  * osdp_cp_setup()
  *
  * @retval >0 Maximum C-APDU length in bytes
- * @retval -1 on failure (TRS support not compiled in, or bad args)
+ * @retval -1 on failure (bad args)
  */
 OSDP_EXPORT
 int osdp_cp_trs_get_max_apdu_len(const osdp_t *ctx, int pd);
@@ -2727,8 +2727,6 @@ const char *osdp_get_source_info();
 #define OSDP_ABI_OPT_RX_ZERO_COPY 0x00000001
 /** @brief osdp_abi_info::options bit: built with OPT_OSDP_LOG_MINIMAL */
 #define OSDP_ABI_OPT_LOG_MINIMAL 0x00000002
-/** @brief osdp_abi_info::options bit: built with OPT_BUILD_OSDP_TRS */
-#define OSDP_ABI_OPT_TRS 0x00000004
 
 /**
  * @brief Binary interface of a LibOSDP build.

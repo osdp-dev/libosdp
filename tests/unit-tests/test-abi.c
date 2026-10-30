@@ -18,9 +18,6 @@ static uint32_t options_this_build_was_compiled_with(void)
 #ifdef OPT_OSDP_LOG_MINIMAL
 	options |= OSDP_ABI_OPT_LOG_MINIMAL;
 #endif
-#ifdef OPT_BUILD_OSDP_TRS
-	options |= OSDP_ABI_OPT_TRS;
-#endif
 	return options;
 }
 

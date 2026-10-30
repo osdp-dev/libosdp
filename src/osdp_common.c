@@ -426,9 +426,6 @@ void osdp_get_abi_info(struct osdp_abi_info *info)
 #ifdef OPT_OSDP_LOG_MINIMAL
 	full.options |= OSDP_ABI_OPT_LOG_MINIMAL;
 #endif
-#ifdef OPT_BUILD_OSDP_TRS
-	full.options |= OSDP_ABI_OPT_TRS;
-#endif
 	full.sizeof_cmd = sizeof(struct osdp_cmd);
 	full.sizeof_event = sizeof(struct osdp_event);
 	full.sizeof_channel = sizeof(struct osdp_channel);

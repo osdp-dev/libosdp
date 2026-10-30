@@ -130,8 +130,6 @@ If the PD firmware understands the card, the PIV commands keep the CP simple.
 When the CP application must own the card conversation — nonstandard applets,
 multi-step protocols, PIN ceremonies — TRS hands it the raw card channel.
 
-TRS is compiled in when LibOSDP is built with `OPT_BUILD_OSDP_TRS`.
-
 ### The command surface
 
 The CP drives a card through `OSDP_CMD_XWR` commands, each carrying a

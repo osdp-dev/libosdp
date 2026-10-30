@@ -212,11 +212,8 @@ jobs:
         run: cmake -B build -DOPT_OSDP_LIB_ONLY=ON .
       - name: Compile core for arm-none-eabi
         run: |
-          # osdp_trs.c is only built with TRS on; the header stubs it otherwise.
           for f in src/*.c; do
-            extra=()
-            if [ "$f" = src/osdp_trs.c ]; then extra=(-DOPT_BUILD_OSDP_TRS); fi
-            arm-none-eabi-gcc -c -o /dev/null "$f" "${extra[@]}" \
+            arm-none-eabi-gcc -c -o /dev/null "$f" \
               -Iinclude -Isrc -Isrc/crypto -Iutils/include -Ibuild/include \
               -std=c11 -Wall -Wextra -Wformat=2 -Werror \
               -Wno-unused-parameter -Wno-format-nonliteral

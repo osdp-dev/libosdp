@@ -663,21 +663,11 @@ static void notify_trs_status(struct osdp_pd *pd,
 	pd_deliver_notification(pd, &n);
 }
 
-static inline uint8_t pd_trs_mode(struct osdp_pd *pd)
-{
-#ifdef OPT_BUILD_OSDP_TRS
-	return pd->trs.mode;
-#else
-	ARG_UNUSED(pd);
-	return 0;
-#endif
-}
-
 /* The CP moves the reader in and out of transparent mode with a mode-set,
  * and out of it by restarting the link; tell the app on each change. */
 static void pd_notify_trs_mode_change(struct osdp_pd *pd, uint8_t was)
 {
-	uint8_t mode = pd_trs_mode(pd);
+	uint8_t mode = pd->trs.mode;
 
 	if (mode == was) {
 		return;
@@ -1284,7 +1274,7 @@ static int pd_decode_command(struct osdp_pd *pd, uint8_t *buf, int len)
 	}
 	case CMD_XWR: {
 		const struct osdp_event *trs_event;
-		uint8_t trs_mode = pd_trs_mode(pd);
+		uint8_t trs_mode = pd->trs.mode;
 		int trs_ret;
 
 		if (!pd_cmd_cap_ok(pd, NULL)) {
@@ -1894,7 +1884,7 @@ static int pd_send_reply(struct osdp_pd *pd)
 static int pd_receive_and_process_command(struct osdp_pd *pd)
 {
 	bool sc_was_active = sc_is_active(pd);
-	uint8_t trs_mode = pd_trs_mode(pd);
+	uint8_t trs_mode = pd->trs.mode;
 	int err, len = 0;
 	uint8_t *buf;
 
@@ -2489,7 +2479,6 @@ int osdp_pd_submit_event(osdp_t *ctx, const struct osdp_event *event)
 		return -1;
 	}
 
-#ifdef OPT_BUILD_OSDP_TRS
 	/* Accepted, it would fail to build into a reply, and the PD would
 	 * answer the CP's poll with nothing at all. */
 	if (event->type == OSDP_EVENT_TRS &&
@@ -2500,7 +2489,6 @@ int osdp_pd_submit_event(osdp_t *ctx, const struct osdp_event *event)
 			osdp_trs_max_apdu_len(pd));
 		return -1;
 	}
-#endif
 
 	return pd_event_enqueue(pd, event);
 }
@@ -2508,12 +2496,7 @@ int osdp_pd_submit_event(osdp_t *ctx, const struct osdp_event *event)
 int osdp_pd_trs_get_max_apdu_len(const osdp_t *ctx)
 {
 	input_check(ctx);
-#ifdef OPT_BUILD_OSDP_TRS
 	return osdp_trs_max_apdu_len(osdp_to_pd(ctx, 0));
-#else
-	LOG_PRINT("TRS support not built in");
-	return -1;
-#endif
 }
 
 /*

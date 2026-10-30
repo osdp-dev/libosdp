@@ -432,8 +432,8 @@ void run_codec_fuzz_tests(struct test *t);
 void run_sc_tests(struct test *t);
 void run_vector_tests(struct test *t);
 void run_sc_policy_tests(struct test *t);
-void run_trs_tests(struct test *t); /* no-op unless OPT_BUILD_OSDP_TRS */
-void run_trs_emu_tests(struct test *t); /* no-op unless OPT_BUILD_OSDP_TRS */
+void run_trs_tests(struct test *t);
+void run_trs_emu_tests(struct test *t);
 void run_pd_zc_tests(struct test *t); /* no-op unless OPT_OSDP_RX_ZERO_COPY */
 
 #define printf(...) test_printf(__VA_ARGS__)

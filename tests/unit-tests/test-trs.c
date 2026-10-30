@@ -9,8 +9,6 @@
 #include "osdp_trs.h"
 #include "test.h"
 
-#ifdef OPT_BUILD_OSDP_TRS
-
 /*
  * Drives a full library-managed TRS session over the mock channel:
  *   CP submits OSDP_CMD_XWR(send-apdu) -> library runs mode-set handshake ->
@@ -2851,14 +2849,3 @@ void run_trs_tests(struct test *t)
 	printf(SUB_1 "TRS tests %s\n", result ? "succeeded" : "failed");
 	TEST_REPORT(t, result);
 }
-
-#else /* OPT_BUILD_OSDP_TRS */
-
-/* TRS-only suite: compiles to a no-op when TRS support is not built in, so the
- * file can sit in the shared source list without a link dependency. */
-void run_trs_tests(struct test *t)
-{
-	ARG_UNUSED(t);
-}
-
-#endif /* OPT_BUILD_OSDP_TRS */

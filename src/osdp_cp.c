@@ -71,13 +71,11 @@ static int cp_cmd_dequeue(struct osdp_pd *pd, const struct osdp_cmd **cmd)
 	return 0;
 }
 
-#ifdef OPT_BUILD_OSDP_TRS
 /* TRS session markers are consumed by the library; they never go on the wire */
 static bool cp_cmd_is_trs(const struct osdp_cmd *cmd, enum osdp_trs_cmd_e which)
 {
 	return cmd->id == OSDP_CMD_XWR && cmd->trs.command == which;
 }
-#endif
 
 static inline void cp_complete_cmd(struct osdp_pd *pd,
 				   const struct osdp_cmd *cmd,
@@ -131,7 +129,6 @@ void cp_complete_engine_cmd(struct osdp_pd *pd, const struct osdp_cmd *cmd,
 static void cp_trs_settle_answer(struct osdp_pd *pd,
 				 enum osdp_completion_status status)
 {
-#ifdef OPT_BUILD_OSDP_TRS
 	const struct osdp_cmd *cmd = pd->trs.answer_cmd;
 
 	if (cmd == NULL) {
@@ -140,17 +137,12 @@ static void cp_trs_settle_answer(struct osdp_pd *pd,
 	pd->trs.answer_cmd = NULL;
 	cp_complete_cmd(pd, cmd, status);
 	cp_cmd_free(pd, cmd);
-#else
-	ARG_UNUSED(pd);
-	ARG_UNUSED(status);
-#endif
 }
 
 /* Whether @reply answers the card command the band is holding for */
 static bool cp_trs_reply_answers(struct osdp_pd *pd,
 				 enum osdp_trs_reply_e reply)
 {
-#ifdef OPT_BUILD_OSDP_TRS
 	const struct osdp_cmd *cmd = pd->trs.answer_cmd;
 
 	if (cmd == NULL) {
@@ -168,11 +160,6 @@ static bool cp_trs_reply_answers(struct osdp_pd *pd,
 	default:
 		return false;
 	}
-#else
-	ARG_UNUSED(pd);
-	ARG_UNUSED(reply);
-	return false;
-#endif
 }
 
 /* Which multipart family an engine-owned command's operation belongs to; the
@@ -1004,15 +991,15 @@ static int cp_decode_response(struct osdp_pd *pd, uint8_t *buf, int len)
 		if (ret < 0) {
 			break;
 		}
-		trs_set_reply_error(pd,
-			ret == OSDP_TRS_REPLY_ACTION_DISPATCH_ERROR);
+		pd->trs.reply_error =
+			ret == OSDP_TRS_REPLY_ACTION_DISPATCH_ERROR;
 		if (ret != OSDP_TRS_REPLY_ACTION_NONE) {
 			cp_dispatch_event(pd, &event);
 		}
 		if (pd->cmd_id == CMD_POLL &&
 		    ret != OSDP_TRS_REPLY_ACTION_NONE &&
 		    cp_trs_reply_answers(pd, event.trs.reply)) {
-			cp_trs_settle_answer(pd, trs_reply_error(pd) ?
+			cp_trs_settle_answer(pd, pd->trs.reply_error ?
 						 OSDP_COMPLETION_FAILED :
 						 OSDP_COMPLETION_OK);
 		}
@@ -1485,7 +1472,6 @@ static int cp_setup_active_cmd(struct osdp_pd *pd, const struct osdp_cmd *cmd)
 	return ret;
 }
 
-#ifdef OPT_BUILD_OSDP_TRS
 /* Consume a command the library handles itself; nothing goes on the wire */
 static void cp_discard_cmd(struct osdp_pd *pd, const struct osdp_cmd *cmd,
 			   enum osdp_completion_status status)
@@ -1540,7 +1526,6 @@ static void cp_flush_trs_band(struct osdp_pd *pd)
 		pd->trs.band_open = false;
 	}
 }
-#endif
 
 /* Poll only as often as OSDP_PD_POLL_TIMEOUT_MS allows; -1 means "not yet" */
 static int cp_get_poll_command(struct osdp_pd *pd)
@@ -1584,7 +1569,6 @@ static int cp_get_online_command(struct osdp_pd *pd)
 	}
 
 	if (cp_cmd_dequeue(pd, &cmd) == 0) {
-#ifdef OPT_BUILD_OSDP_TRS
 		if (cp_cmd_is_trs(cmd, OSDP_TRS_CMD_START)) {
 			/* Open a TRS session; the transition runs through the
 			 * usual request path, nothing goes on the wire now. */
@@ -1592,7 +1576,6 @@ static int cp_get_online_command(struct osdp_pd *pd)
 			make_request(pd, CP_REQ_TRS_OPEN);
 			return -1;
 		}
-#endif
 		return cp_setup_active_cmd(pd, cmd);
 	}
 
@@ -1611,7 +1594,6 @@ static int cp_get_online_command(struct osdp_pd *pd)
 		return ret;
 	}
 
-#ifdef OPT_BUILD_OSDP_TRS
 	/* Sitting after the staged engines above pauses the presence scan for
 	 * as long as any of them has work; a queued band parks it via
 	 * trs.band_open, which is set at submit time. */
@@ -1619,12 +1601,10 @@ static int cp_get_online_command(struct osdp_pd *pd)
 		make_request(pd, CP_REQ_TRS_SCAN);
 		return -1;
 	}
-#endif
 
 	return cp_get_poll_command(pd);
 }
 
-#ifdef OPT_BUILD_OSDP_TRS
 static void notify_trs_status(struct osdp_pd *pd,
 			      enum osdp_trs_session_status_e status);
 
@@ -1721,7 +1701,6 @@ static int cp_get_trs_command(struct osdp_pd *pd)
 		return cp_get_poll_command(pd);
 	}
 }
-#endif
 
 static void notify_pd_status(struct osdp_pd *pd, bool is_online)
 {
@@ -1755,7 +1734,6 @@ static void notify_pd_id(struct osdp_pd *pd)
 	osdp_metrics_report(pd, OSDP_METRIC_EVENT);
 }
 
-#ifdef OPT_BUILD_OSDP_TRS
 static void notify_trs_status(struct osdp_pd *pd,
 			      enum osdp_trs_session_status_e status)
 {
@@ -1772,7 +1750,6 @@ static void notify_trs_status(struct osdp_pd *pd,
 	ctx->event_callback(ctx->event_callback_arg, pd->idx, &evt);
 	osdp_metrics_report(pd, OSDP_METRIC_EVENT);
 }
-#endif
 
 static void notify_sc_status(struct osdp_pd *pd)
 {
@@ -1912,7 +1889,7 @@ static bool cp_check_online_response(struct osdp_pd *pd)
 		/* An XRD error report is a valid reply, but it says the card
 		 * transaction failed; see the soft-failure handling in
 		 * state_update(). */
-		return pd->reply_id == REPLY_XRD && !trs_reply_error(pd);
+		return pd->reply_id == REPLY_XRD && !pd->trs.reply_error;
 	default:
 		LOG_ERR("Unexpected respose: CMD: %s(%02x) REPLY: %s(%02x)",
 			osdp_cmd_name(pd->cmd_id), pd->cmd_id,
@@ -1938,11 +1915,9 @@ static inline int state_get_cmd(struct osdp_pd *pd)
 		return CMD_KEYSET;
 	case OSDP_CP_STATE_ONLINE:
 		return cp_get_online_command(pd);
-#ifdef OPT_BUILD_OSDP_TRS
 	case OSDP_CP_STATE_TRS_SETUP:
 	case OSDP_CP_STATE_TRS_RUN:
 		return cp_get_trs_command(pd);
-#endif
 	default:
 		return -1;
 	}
@@ -1965,11 +1940,9 @@ static inline bool state_check_reply(struct osdp_pd *pd)
 		return pd->reply_id == REPLY_ACK;
 	case OSDP_CP_STATE_ONLINE:
 		return cp_check_online_response(pd);
-#ifdef OPT_BUILD_OSDP_TRS
 	case OSDP_CP_STATE_TRS_SETUP:
 	case OSDP_CP_STATE_TRS_RUN:
 		return cp_check_online_response(pd);
-#endif
 	default:
 		return false;
 	}
@@ -2178,7 +2151,6 @@ static void cp_state_change(struct osdp_pd *pd, enum osdp_cp_state_e next)
 		break;
 	case OSDP_CP_STATE_ONLINE:
 		CLEAR_FLAG(pd, PD_FLAG_TRS_ACTIVE);
-#ifdef OPT_BUILD_OSDP_TRS
 		/* End of a TRS session: the PD never left online, so what the
 		 * app is told here is the session outcome. */
 		if (cur == OSDP_CP_STATE_TRS_SETUP ||
@@ -2204,7 +2176,6 @@ static void cp_state_change(struct osdp_pd *pd, enum osdp_cp_state_e next)
 						      OSDP_TRS_SESSION_CLOSED);
 			break;
 		}
-#endif
 		LOG_INF("Online; %s SC", sc_is_active(pd) ? "With" : "Without");
 		break;
 	case OSDP_CP_STATE_OFFLINE:
@@ -2242,7 +2213,6 @@ static void cp_state_change(struct osdp_pd *pd, enum osdp_cp_state_e next)
 		osdp_phy_state_reset(pd, true);
 		LOG_INF("PD disabled; going offline until re-enabled");
 		break;
-#ifdef OPT_BUILD_OSDP_TRS
 	case OSDP_CP_STATE_TRS_SETUP:
 		pd->trs.state = TRS_STATE_SET_MODE;
 		pd->trs.mode = TRS_MODE_00; /* until the PD accepts mode 01 */
@@ -2263,7 +2233,6 @@ static void cp_state_change(struct osdp_pd *pd, enum osdp_cp_state_e next)
 			notify_trs_status(pd, OSDP_TRS_SESSION_OPENED);
 		}
 		break;
-#endif
 	default:
 		break;
 	}
@@ -2290,7 +2259,6 @@ static void cp_state_change(struct osdp_pd *pd, enum osdp_cp_state_e next)
  */
 static bool cp_trs_cmd_is_app_owned(struct osdp_pd *pd)
 {
-#ifdef OPT_BUILD_OSDP_TRS
 	/*
 	 * The presence scan's card scan runs in TRS_STATE_XMIT too, but it is
 	 * the library's own question -- nobody queued it and nobody is waiting
@@ -2298,10 +2266,6 @@ static bool cp_trs_cmd_is_app_owned(struct osdp_pd *pd)
 	 * that fact rather than being written off as one failed app command.
 	 */
 	return pd->trs.state == TRS_STATE_XMIT && !pd->trs.scan.asking;
-#else
-	ARG_UNUSED(pd);
-	return false;
-#endif
 }
 
 static bool cp_cmd_is_app_owned(struct osdp_pd *pd)
@@ -2386,7 +2350,7 @@ static bool cp_cmd_failure_is_soft(struct osdp_pd *pd)
 	/* Likewise for a card command the reader answered with an error report:
 	 * that transaction failed, but the card session is still up. */
 	if (pd->cmd_id == CMD_XWR && pd->reply_id == REPLY_XRD &&
-	    trs_reply_error(pd)) {
+	    pd->trs.reply_error) {
 		return true;
 	}
 
@@ -2411,7 +2375,6 @@ static bool cp_cmd_failure_is_soft(struct osdp_pd *pd)
  */
 static bool cp_trs_park_answer(struct osdp_pd *pd)
 {
-#ifdef OPT_BUILD_OSDP_TRS
 	if (pd->cmd_id != CMD_XWR || pd->reply_id != REPLY_ACK ||
 	    pd->active_cmd == NULL || !cp_trs_cmd_is_app_owned(pd)) {
 		return false;
@@ -2419,10 +2382,6 @@ static bool cp_trs_park_answer(struct osdp_pd *pd)
 	pd->trs.answer_cmd = pd->active_cmd;
 	pd->trs.answer_tstamp = osdp_millis_now();
 	return true;
-#else
-	ARG_UNUSED(pd);
-	return false;
-#endif
 }
 
 static void state_update(struct osdp_pd *pd)
@@ -2430,9 +2389,7 @@ static void state_update(struct osdp_pd *pd)
 	int err;
 	bool status;
 	enum osdp_cp_state_e next, cur = pd->state;
-#ifdef OPT_BUILD_OSDP_TRS
 	bool trs_probe_open = false;
-#endif
 
 	if (cp_phy_running(pd)) {
 		err = cp_phy_state_update(pd);
@@ -2512,7 +2469,6 @@ static void state_update(struct osdp_pd *pd)
 		 * pick (and any pending session-scoped request): reconnect
 		 * from scratch via the OFFLINE dwell. */
 		next = OSDP_CP_STATE_OFFLINE;
-#ifdef OPT_BUILD_OSDP_TRS
 	} else if (cur == OSDP_CP_STATE_TRS_SETUP ||
 		   cur == OSDP_CP_STATE_TRS_RUN) {
 		/* TRS runs a nested sub-FSM; advancing it mutates pd->trs, so it
@@ -2523,7 +2479,6 @@ static void state_update(struct osdp_pd *pd)
 		if (osdp_trs_scan_declined(pd)) {
 			notify_trs_status(pd, OSDP_TRS_SCAN_NO_DEPARTURE);
 		}
-#endif
 	} else {
 		next = get_next_state(pd, err);
 		cp_transition_effects(pd, cur, next, err);
@@ -2538,7 +2493,6 @@ static void state_update(struct osdp_pd *pd)
 				LOG_INF("Going offline due to request");
 				next = OSDP_CP_STATE_OFFLINE;
 			}
-#ifdef OPT_BUILD_OSDP_TRS
 			/* A START was dequeued, or a presence probe fell due:
 			 * open a TRS session. SCAN also carries the probe flag
 			 * so the entry bookkeeping below can strip the app-band
@@ -2550,7 +2504,6 @@ static void state_update(struct osdp_pd *pd)
 				next = OSDP_CP_STATE_TRS_SETUP;
 				trs_probe_open = true;
 			}
-#endif
 		}
 	}
 
@@ -2571,16 +2524,13 @@ static void state_update(struct osdp_pd *pd)
 	if (cur != next) {
 		cp_state_change(pd, next);
 	}
-#ifdef OPT_BUILD_OSDP_TRS
 	if (trs_probe_open && next == OSDP_CP_STATE_TRS_SETUP) {
 		/* A probe undoes the app-band bookkeeping the TRS_SETUP entry
 		 * just set up: no band to flush, no session notifications. */
 		osdp_trs_probe_note_open(pd);
 	}
-#endif
 }
 
-#ifdef OPT_BUILD_OSDP_TRS
 /*
  * Decide whether a command may join the queue, and move the band with it. The
  * band boundary is a position in the queue, so it is decided here -- at the tail
@@ -2644,7 +2594,6 @@ static int cp_band_admit(struct osdp_pd *pd, const struct osdp_cmd *cmd)
 	}
 	return 0;
 }
-#endif
 
 static int cp_submit_command(struct osdp_pd *pd, const struct osdp_cmd *cmd)
 {
@@ -2726,22 +2675,15 @@ static int cp_submit_command(struct osdp_pd *pd, const struct osdp_cmd *cmd)
 	}
 
 	if (cmd->id == OSDP_CMD_XWR) {
-#ifdef OPT_BUILD_OSDP_TRS
 		if (!trs_capable(pd)) {
 			LOG_ERR("PD has no smart-card support; dropping XWR");
 			return -1;
 		}
-#else
-		LOG_ERR("TRS support not enabled in this build");
-		return -1;
-#endif
 	}
 
-#ifdef OPT_BUILD_OSDP_TRS
 	if (cp_band_admit(pd, cmd)) {
 		return -1;
 	}
-#endif
 
 	/* Staged before it is queued, so the CP holds every key the PD may
 	 * come to hold from the moment the KEYSET can reach the wire. */
@@ -3217,7 +3159,6 @@ int osdp_cp_flush_commands(osdp_t *ctx, int pd_idx)
 	cp_ctx->running = true;
 	count = cp_drain_queue(pd, OSDP_COMPLETION_FLUSHED);
 	cp_ctx->running = was_running;
-#ifdef OPT_BUILD_OSDP_TRS
 	/*
 	 * The band markers went out with the queue, so the tail is now wherever
 	 * the state machine is: still inside a session that only a STOP can
@@ -3225,7 +3166,6 @@ int osdp_cp_flush_commands(osdp_t *ctx, int pd_idx)
 	 */
 	pd->trs.band_open = ISSET_FLAG(pd, PD_FLAG_TRS_ACTIVE) &&
 			    pd->trs.stop_pending;
-#endif
 	return count;
 }
 
@@ -3233,7 +3173,6 @@ int osdp_cp_trs_scan_enable(osdp_t *ctx, int pd_idx,
 			    const struct osdp_trs_scan_params *params)
 {
 	input_check(ctx, pd_idx);
-#ifdef OPT_BUILD_OSDP_TRS
 	struct osdp_pd *pd = osdp_to_pd(ctx, pd_idx);
 	struct osdp_trs *trs = &pd->trs;
 
@@ -3261,17 +3200,11 @@ int osdp_cp_trs_scan_enable(osdp_t *ctx, int pd_idx,
 		osdp_trs_scan_note_capability(pd);
 	}
 	return 0;
-#else
-	ARG_UNUSED(params);
-	LOG_PRINT("TRS support not built in");
-	return -1;
-#endif
 }
 
 int osdp_cp_trs_scan_disable(osdp_t *ctx, int pd_idx)
 {
 	input_check(ctx, pd_idx);
-#ifdef OPT_BUILD_OSDP_TRS
 	struct osdp_pd *pd = osdp_to_pd(ctx, pd_idx);
 
 	/* A probe in flight winds down on its own: with the scan off,
@@ -3281,21 +3214,12 @@ int osdp_cp_trs_scan_disable(osdp_t *ctx, int pd_idx)
 	pd->trs.scan.holding = false;
 	pd->trs.scan.backoff_ms = 0;
 	return 0;
-#else
-	LOG_PRINT("TRS support not built in");
-	return -1;
-#endif
 }
 
 int osdp_cp_trs_get_max_apdu_len(const osdp_t *ctx, int pd_idx)
 {
 	input_check(ctx, pd_idx);
-#ifdef OPT_BUILD_OSDP_TRS
 	return osdp_trs_max_apdu_len(osdp_to_pd(ctx, pd_idx));
-#else
-	LOG_PRINT("TRS support not built in");
-	return -1;
-#endif
 }
 
 int osdp_cp_get_pd_id(const osdp_t *ctx, int pd_idx, struct osdp_pd_id *id)

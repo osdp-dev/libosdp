@@ -32,8 +32,6 @@ enum osdp_trs_reply_action_e {
 	OSDP_TRS_REPLY_ACTION_DISPATCH_ERROR,
 };
 
-#ifdef OPT_BUILD_OSDP_TRS
-
 /* @cmd is the app's card command, or NULL for a library-driven session step */
 int osdp_trs_cmd_build(struct osdp_pd *pd, const struct osdp_cmd *cmd,
 		       uint8_t *buf, int max_len);
@@ -71,102 +69,5 @@ bool osdp_trs_scan_declined(struct osdp_pd *pd);
 
 /* PD role: drop transparent mode when the CP link goes away */
 void osdp_trs_pd_reset(struct osdp_pd *pd);
-
-#else /* OPT_BUILD_OSDP_TRS */
-
-static inline int osdp_trs_cmd_build(struct osdp_pd *pd,
-				     const struct osdp_cmd *cmd, uint8_t *buf,
-				     int max_len)
-{
-	ARG_UNUSED(pd);
-	ARG_UNUSED(cmd);
-	ARG_UNUSED(buf);
-	ARG_UNUSED(max_len);
-	return -1;
-}
-static inline int osdp_trs_reply_decode(struct osdp_pd *pd, uint8_t *buf,
-					int len, struct osdp_event *event)
-{
-	ARG_UNUSED(pd);
-	ARG_UNUSED(buf);
-	ARG_UNUSED(len);
-	ARG_UNUSED(event);
-	return -1;
-}
-static inline int osdp_trs_reply_build(struct osdp_pd *pd, uint8_t *buf, int max_len)
-{
-	ARG_UNUSED(pd);
-	ARG_UNUSED(buf);
-	ARG_UNUSED(max_len);
-	return -1;
-}
-static inline int osdp_trs_cmd_decode(struct osdp_pd *pd, struct osdp_cmd *cmd,
-				      uint8_t *buf, int len)
-{
-	ARG_UNUSED(pd);
-	ARG_UNUSED(cmd);
-	ARG_UNUSED(buf);
-	ARG_UNUSED(len);
-	return -1;
-}
-static inline bool osdp_trs_scan_probe_due(struct osdp_pd *pd)
-{
-	ARG_UNUSED(pd);
-	return false;
-}
-static inline bool osdp_trs_probe_expired(struct osdp_pd *pd)
-{
-	ARG_UNUSED(pd);
-	return true;
-}
-static inline void osdp_trs_probe_note_open(struct osdp_pd *pd)
-{
-	ARG_UNUSED(pd);
-}
-static inline void osdp_trs_probe_note_run(struct osdp_pd *pd)
-{
-	ARG_UNUSED(pd);
-}
-static inline void osdp_trs_probe_adopted(struct osdp_pd *pd)
-{
-	ARG_UNUSED(pd);
-}
-static inline bool osdp_trs_probe_close(struct osdp_pd *pd)
-{
-	ARG_UNUSED(pd);
-	return false;
-}
-static inline void osdp_trs_probe_reset(struct osdp_pd *pd)
-{
-	ARG_UNUSED(pd);
-}
-static inline void osdp_trs_scan_note_activity(struct osdp_pd *pd)
-{
-	ARG_UNUSED(pd);
-}
-static inline void osdp_trs_scan_note_capability(struct osdp_pd *pd)
-{
-	ARG_UNUSED(pd);
-}
-static inline bool osdp_trs_scan_ask_due(struct osdp_pd *pd)
-{
-	ARG_UNUSED(pd);
-	return false;
-}
-static inline void osdp_trs_scan_note_ask(struct osdp_pd *pd)
-{
-	ARG_UNUSED(pd);
-}
-static inline bool osdp_trs_scan_declined(struct osdp_pd *pd)
-{
-	ARG_UNUSED(pd);
-	return false;
-}
-static inline void osdp_trs_pd_reset(struct osdp_pd *pd)
-{
-	ARG_UNUSED(pd);
-}
-
-#endif /* OPT_BUILD_OSDP_TRS */
 
 #endif /* _OSDP_TRS_H_ */

@@ -9,8 +9,6 @@
 #include "test.h"
 #include "emu-card.h"
 
-#ifdef OPT_BUILD_OSDP_TRS
-
 /*
  * End-to-end TRS scenarios against an emulated ISO 7816 PIV card sitting
  * behind the PD's app layer, modeled on the workflows (and failure modes)
@@ -780,12 +778,3 @@ void run_trs_emu_tests(struct test *t)
 	       result ? "succeeded" : "failed");
 	TEST_REPORT(t, result);
 }
-
-#else /* OPT_BUILD_OSDP_TRS */
-
-void run_trs_emu_tests(struct test *t)
-{
-	ARG_UNUSED(t);
-}
-
-#endif /* OPT_BUILD_OSDP_TRS */
