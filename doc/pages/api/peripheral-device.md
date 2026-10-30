@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-10-24
+lastUpdated: 2026-10-29
 description: "LibOSDP peripheral device (PD) C API — implement an OSDP PD, advertise capabilities, respond to control panel commands, and report events."
 ---
 # Peripheral Device
@@ -74,6 +74,14 @@ once.
 :::
 
 <!-- doxygen:function:osdp_pd_flush_events -->
+
+A PD that bridges a smart-card reader answers each card command with an
+`OSDP_EVENT_TRS` event (see
+[Transparent Reader Support](/libosdp/smartcard#transparent-reader-support-trs)),
+and bounds the
+card answers it relays by:
+
+<!-- doxygen:function:osdp_pd_trs_get_max_apdu_len -->
 
 ### Event Completion
 

@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-10-24
+lastUpdated: 2026-10-29
 description: "LibOSDP Python commands reference — every command dataclass a control panel sends to a PD (LED, buzzer, output, text, keyset, comset, manufacturer, file transfer, status, biometrics) and its fields."
 ---
 # Commands
@@ -125,6 +125,26 @@ reply. See [Smartcard Commands](/libosdp/smartcard) for the full flow.
 <!-- pydoc:class:commands.GenAuth -->
 
 <!-- pydoc:class:commands.CrAuth -->
+
+### Transparent Reader (TRS)
+
+Drive a smart card directly: a `TrsStart` opens a card session, `TrsSendApdu`,
+`TrsEnterPin` and `TrsCardScan` work inside it, and `TrsStop` closes it. See
+[Transparent Reader Support](/libosdp/smartcard#transparent-reader-support-trs).
+
+<!-- pydoc:class:commands.TrsStart -->
+
+<!-- pydoc:class:commands.TrsSendApdu -->
+
+<!-- pydoc:class:commands.TrsEnterPin -->
+
+<!-- pydoc:class:commands.TrsPinBlock -->
+
+<!-- pydoc:class:commands.TrsPinLengthField -->
+
+<!-- pydoc:class:commands.TrsCardScan -->
+
+<!-- pydoc:class:commands.TrsStop -->
 
 ### Status
 

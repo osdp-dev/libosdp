@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-07-15
+lastUpdated: 2026-10-29
 description: "LibOSDP Python control panel (CP) reference — the ControlPanel class, its lifecycle, event and command-completion handlers, secure-channel waits, and PD management methods."
 ---
 # Control Panel
@@ -112,6 +112,17 @@ options at runtime.
 To send a file to a PD, register a [`FileOps`](/python/api#file-transfer)
 implementation with `register_file_ops(address, fops)`, then submit a
 `commands.FileTransfer`. Progress is readable via `get_file_tx_status(address)`.
+
+## Smart cards (TRS)
+
+To talk to a smart card on the reader, open a session with
+`commands.TrsStart`, exchange APDUs with `commands.TrsSendApdu`, and close it
+with `commands.TrsStop`; each answer arrives as an `events.TrsCardData`.
+`trs_scan_enable(address)` has the library watch for cards between sessions,
+which then arrive as `events.TrsCardInfo`, and `trs_get_max_apdu_len(address)`
+says how large an APDU the link can carry. See
+[Transparent Reader Support](/libosdp/smartcard#transparent-reader-support-trs)
+for the whole flow, with a worked Python example.
 
 ## See also
 

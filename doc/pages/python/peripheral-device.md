@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-08-20
+lastUpdated: 2026-10-29
 description: "LibOSDP Python peripheral device (PD) reference — the PeripheralDevice class, its lifecycle, the command-handler contract for accepting, answering, or NAKing commands, and reporting events."
 ---
 # Peripheral Device
@@ -92,6 +92,13 @@ def on_event_complete(event, status):
 
 pd.set_event_completion_handler(on_event_complete)
 ```
+
+A PD that bridges a smart-card reader advertises `Capability.SmartCard` and
+answers each `commands.TrsSendApdu` by submitting an `events.TrsCardData` (or
+`events.TrsError`) — from inside the command handler to reply at once,
+returning `None`, or later for the answer to ride out on a poll. A card
+arriving in the field is reported with `events.TrsCardInfo`. See
+[Transparent Reader Support](/libosdp/smartcard#transparent-reader-support-trs).
 
 ## Install mode and secure channel
 

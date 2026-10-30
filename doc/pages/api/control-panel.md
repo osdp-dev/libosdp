@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-10-24
+lastUpdated: 2026-10-29
 description: "LibOSDP control panel (CP) C API — set up an OSDP control panel, register peripheral devices, send commands, track completion, and handle events."
 ---
 # Control Panel
@@ -98,6 +98,21 @@ ownership. The callback reports the outcome as an `osdp_completion_status`.
 <!-- doxygen:function:osdp_cp_set_command_completion_callback -->
 
 <!-- doxygen:enum:osdp_completion_status -->
+
+## Transparent Reader Support
+
+A card session is an ordinary run of `OSDP_CMD_XWR` commands (see
+[Transparent Reader Support](/libosdp/smartcard#transparent-reader-support-trs)).
+These calls cover what sits around it: finding out a card is there, and how
+large an APDU the link can carry.
+
+<!-- doxygen:struct:osdp_trs_scan_params:members -->
+
+<!-- doxygen:function:osdp_cp_trs_scan_enable -->
+
+<!-- doxygen:function:osdp_cp_trs_scan_disable -->
+
+<!-- doxygen:function:osdp_cp_trs_get_max_apdu_len -->
 
 ## Get PD Capability
 

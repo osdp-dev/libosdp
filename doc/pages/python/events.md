@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-07-18
+lastUpdated: 2026-10-29
 description: "LibOSDP Python events reference — every event dataclass a peripheral device reports to a control panel (card read, key press, biometrics, status, manufacturer, notification) and its fields."
 ---
 # Events
@@ -74,6 +74,24 @@ or later for delivery on a subsequent poll.
 <!-- pydoc:class:events.GenAuth -->
 
 <!-- pydoc:class:events.CrAuth -->
+
+### Transparent Reader (TRS)
+
+What a reader reports about a smart card: one arriving (`TrsCardInfo`), its
+presence (`TrsCardPresent`), the card's answer to an APDU (`TrsCardData`), a PIN
+entry finishing (`TrsPinComplete`), or an exchange the reader could not do
+(`TrsError`). On the PD side, submit these to answer a TRS command. See
+[Transparent Reader Support](/libosdp/smartcard#transparent-reader-support-trs).
+
+<!-- pydoc:class:events.TrsCardInfo -->
+
+<!-- pydoc:class:events.TrsCardPresent -->
+
+<!-- pydoc:class:events.TrsCardData -->
+
+<!-- pydoc:class:events.TrsPinComplete -->
+
+<!-- pydoc:class:events.TrsError -->
 
 ## Status and manufacturer
 

@@ -1,6 +1,6 @@
 ---
-lastUpdated: 2026-10-24
-description: "LibOSDP command structure reference — the osdp_cmd data structures and enums used to send OSDP commands such as LED, buzzer, output, text, biometric, and key-set to a PD."
+lastUpdated: 2026-10-29
+description: "LibOSDP command structure reference — the osdp_cmd data structures and enums used to send OSDP commands such as LED, buzzer, output, text, biometric, key-set and transparent-reader (TRS) to a PD."
 ---
 # Application Commands
 
@@ -90,6 +90,26 @@ for how keying and install mode work.
 To abort a transfer in progress, call
 [`osdp_cp_cancel`](/api/control-panel#commands) with
 `OSDP_MP_MSG_FILE_TRANSFER`.
+
+## Transparent Reader Command
+
+`OSDP_CMD_XWR` carries a `struct osdp_trs_cmd` that drives a smart card through
+the reader. See [Transparent Reader Support](/libosdp/smartcard#transparent-reader-support-trs)
+for how a card session is put together.
+
+<!-- doxygen:struct:osdp_trs_cmd:members -->
+
+<!-- doxygen:enum:osdp_trs_cmd_e -->
+
+<!-- doxygen:struct:osdp_trs_apdu:members -->
+
+<!-- doxygen:define:OSDP_TRS_APDU_MAX_LEN -->
+
+<!-- doxygen:struct:osdp_trs_pin_entry:members -->
+
+<!-- doxygen:enum:osdp_trs_pin_format_e -->
+
+<!-- doxygen:enum:osdp_trs_pin_complete_e -->
 
 ## Status Report Command
 

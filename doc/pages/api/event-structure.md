@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-07-18
+lastUpdated: 2026-10-29
 description: "LibOSDP event structure reference — the osdp_event data structures and enums a peripheral device uses to report card reads, key presses, biometrics, status, and notifications to the CP."
 ---
 # Application Events
@@ -55,6 +55,31 @@ A `REPLY_BIOREADR` template normally has to fit in one packet. Setting
 template across fragments — a non-conforming, opt-in extension. See
 [Multi-part Messages](/protocol/multipart#the-special-case-biometric-read-replies).
 
+## Transparent Reader Event
+
+`OSDP_EVENT_TRS` carries a `struct osdp_trs_reply`: a card arriving, its
+presence changing, a card's answer to an APDU, a PIN entry finishing, or a
+reader error. On a PD, submit one to answer an `OSDP_CMD_XWR`. See
+[Transparent Reader Support](/libosdp/smartcard#transparent-reader-support-trs).
+
+<!-- doxygen:struct:osdp_trs_reply:members -->
+
+<!-- doxygen:enum:osdp_trs_reply_e -->
+
+<!-- doxygen:struct:osdp_trs_card_info:members -->
+
+<!-- doxygen:enum:osdp_trs_card_protocol_e -->
+
+<!-- doxygen:struct:osdp_trs_card_present:members -->
+
+<!-- doxygen:enum:osdp_trs_card_status_e -->
+
+<!-- doxygen:struct:osdp_trs_card_data:members -->
+
+<!-- doxygen:struct:osdp_trs_pin_complete:members -->
+
+<!-- doxygen:struct:osdp_trs_error:members -->
+
 ## Status Report Request Event
 
 <!-- doxygen:struct:osdp_status_report:members -->
@@ -69,3 +94,10 @@ state changes to the application through these structures.
 <!-- doxygen:struct:osdp_notification:members -->
 
 <!-- doxygen:enum:osdp_notification_type -->
+
+`OSDP_NOTIFICATION_TRS_STATUS` reports a transparent-reader session's
+life-cycle, and the presence scan's own state:
+
+<!-- doxygen:struct:osdp_notification_trs_status:members -->
+
+<!-- doxygen:enum:osdp_trs_session_status_e -->
