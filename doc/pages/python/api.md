@@ -1,6 +1,6 @@
 ---
-lastUpdated: 2026-08-20
-description: "LibOSDP Python API reference — PDInfo, the PD capabilities model, the Channel transport, KeyStore, file transfer, errors, and the enumerations shared across the bindings."
+lastUpdated: 2026-10-29
+description: "LibOSDP Python API reference — PDInfo, the PD capabilities model, the Channel transport, KeyStore, file transfer, logging, errors, and the enumerations shared across the bindings."
 ---
 # API Reference
 
@@ -96,6 +96,26 @@ reports progress.
 handshakes, and command/event totals — read with `get_metrics`.
 
 <!-- pydoc:class:types.Metrics:fields -->
+
+## Logging
+
+The library logs to stderr, filtered by the `log_level` a `ControlPanel` or
+`PeripheralDevice` is created with. `set_log_handler(handler)` routes those
+messages to `handler(pd_address, level, message, file, line)` instead —
+`pd_address` is -1 for messages not about a PD — and `set_log_handler(None)`
+goes back to stderr. The setting is process-wide.
+
+```python
+import logging
+from osdp import LogLevel, set_log_handler
+
+log = logging.getLogger("osdp")
+LEVELS = {LogLevel.Debug: logging.DEBUG, LogLevel.Info: logging.INFO,
+          LogLevel.Notice: logging.INFO, LogLevel.Warning: logging.WARNING}
+
+set_log_handler(lambda pd, level, message, file, line:
+                log.log(LEVELS.get(level, logging.ERROR), "%s", message))
+```
 
 ## Errors
 

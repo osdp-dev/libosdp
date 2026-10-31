@@ -103,6 +103,18 @@ def test_hotplug_enable_after_disable():
 
     assert cp.is_pd_enabled(secure_pd_addr) == True, "PD should be enabled after enable_pd"
 
+def test_hotplug_set_scbk_only_while_disabled():
+    assert cp.is_pd_enabled(secure_pd_addr)
+    assert not cp.set_scbk(secure_pd_addr, key), \
+        "set_scbk must refuse a PD that is being polled"
+
+    cp.disable_pd(secure_pd_addr)
+    time.sleep(0.5)
+    assert cp.set_scbk(secure_pd_addr, key)
+    assert cp.enable_pd(secure_pd_addr)
+    assert cp.sc_wait(secure_pd_addr, timeout=10), \
+        "PD did not come back on the key set while it was disabled"
+
 def test_hotplug_command_blocking():
     assert cp.is_pd_enabled(secure_pd_addr) == True
 

@@ -384,6 +384,39 @@ static PyObject *pyosdp_cp_enable_pd(pyosdp_cp_t *self, PyObject *args)
 	Py_RETURN_TRUE;
 }
 
+#define pyosdp_cp_set_scbk_doc                                                 \
+	"set_scbk(pd, scbk) -> bool\n"                                         \
+	"\n"                                                                   \
+	"Replace a disabled PD's 16-byte SCBK before enabling it again."
+static PyObject *pyosdp_cp_set_scbk(pyosdp_cp_t *self, PyObject *args)
+{
+	int pd, len;
+	PyObject *obj;
+	uint8_t *scbk;
+
+	if (!PyArg_ParseTuple(args, "IO", &pd, &obj)) {
+		PyErr_SetString(PyExc_ValueError, "Invalid arguments");
+		return NULL;
+	}
+
+	if (pd < 0 || pd >= self->num_pd) {
+		PyErr_SetString(PyExc_ValueError, "Invalid PD offset");
+		return NULL;
+	}
+
+	if (pyosdp_parse_bytes(obj, &scbk, &len, false))
+		return NULL;
+	if (len != 16) {
+		PyErr_SetString(PyExc_ValueError, "scbk must be exactly 16 bytes");
+		return NULL;
+	}
+
+	if (osdp_cp_set_scbk(self->ctx, pd, scbk))
+		Py_RETURN_FALSE;
+
+	Py_RETURN_TRUE;
+}
+
 #define pyosdp_cp_is_pd_enabled_doc "is_pd_enabled(pd) -> bool"
 static PyObject *pyosdp_cp_is_pd_enabled(pyosdp_cp_t *self, PyObject *args)
 {
@@ -750,6 +783,8 @@ static PyMethodDef pyosdp_cp_tp_methods[] = {
 	  METH_VARARGS, pyosdp_cp_enable_pd_doc },
 	{ "is_pd_enabled", (PyCFunction)pyosdp_cp_is_pd_enabled,
 	  METH_VARARGS, pyosdp_cp_is_pd_enabled_doc },
+	{ "set_scbk", (PyCFunction)pyosdp_cp_set_scbk,
+	  METH_VARARGS, pyosdp_cp_set_scbk_doc },
 	{ "trs_scan_enable", (PyCFunction)pyosdp_cp_trs_scan_enable,
 	  METH_VARARGS, pyosdp_cp_trs_scan_enable_doc },
 	{ "trs_scan_disable", (PyCFunction)pyosdp_cp_trs_scan_disable,

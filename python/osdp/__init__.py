@@ -26,6 +26,7 @@ from . import commands, enums, events
 from .channel import Channel
 from .commands import Command
 from .control_panel import CommandCompletionHandler, ControlPanel, EventHandler
+from .log import LogHandler, set_log_handler
 from .enums import (
     BioFormat,
     BioStatus,
@@ -88,6 +89,7 @@ __all__ = [
     "ControlPanel",
     "PeripheralDevice",
     "KeyStore",
+    "set_log_handler",
     # payload unions
     "Command",
     "Event",
@@ -96,6 +98,7 @@ __all__ = [
     "CommandHandler",
     "EventCompletionHandler",
     "EventHandler",
+    "LogHandler",
     # descriptors
     "FileOps",
     "FileTxStatus",

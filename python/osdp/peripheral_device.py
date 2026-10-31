@@ -193,6 +193,19 @@ class PeripheralDevice:
         with self.lock:
             return self.ctx.flush_events()
 
+    def trs_get_max_apdu_len(self) -> int:
+        """Longest R-APDU an `events.TrsCardData` can carry to the CP.
+
+        The smaller of this build's packet size and the receive size the CP
+        announced, less framing. It changes when the CP announces its
+        receive size, so ask again for each answer. A longer card answer is
+        refused at submission; answer with an `events.TrsError` instead.
+
+        @see osdp_pd_trs_get_max_apdu_len
+        """
+        with self.lock:
+            return self.ctx.trs_get_max_apdu_len()
+
     def get_command(self, timeout: float = 5) -> Command | None:
         """Pop the next command from the CP, or None if none arrives in time.
 

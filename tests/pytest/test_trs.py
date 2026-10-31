@@ -181,6 +181,7 @@ def run_band(*card_commands):
 def test_trs_is_advertised():
     assert cp.check_capability(pd_addr, Capability.SmartCard) == (1, 1)
     assert 0 < cp.trs_get_max_apdu_len(pd_addr) <= commands.MAX_TRS_APDU_LEN
+    assert 0 < pd.trs_get_max_apdu_len() <= events.MAX_TRS_APDU_LEN
 
 
 def test_trs_band_send_apdu():

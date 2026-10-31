@@ -316,6 +316,19 @@ class ControlPanel:
         with self.lock:
             return bool(self.ctx.is_pd_enabled(pd))
 
+    def set_scbk(self, address: int, scbk: bytes) -> bool:
+        """Replace a disabled PD's secure channel base key (16 bytes).
+
+        How a CP tries another key after a key rotation that never settled:
+        disable the PD, set the key, enable it again. Returns False if the
+        PD is not disabled.
+
+        @see osdp_cp_set_scbk
+        """
+        pd = self.pd_addr.index(address)
+        with self.lock:
+            return bool(self.ctx.set_scbk(pd, scbk))
+
     # -- file transfer ------------------------------------------------------
 
     def register_file_ops(self, address: int, fops: FileOps) -> bool:

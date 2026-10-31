@@ -130,6 +130,15 @@ static PyObject *pyosdp_pd_flush_events(pyosdp_pd_t *self)
 	return Py_BuildValue("I", ret);
 }
 
+#define pyosdp_pd_trs_get_max_apdu_len_doc                                     \
+	"trs_get_max_apdu_len() -> int\n"                                      \
+	"\n"                                                                   \
+	"Longest R-APDU this PD can send the CP in one TRS card-data reply."
+static PyObject *pyosdp_pd_trs_get_max_apdu_len(pyosdp_pd_t *self)
+{
+	return Py_BuildValue("i", osdp_pd_trs_get_max_apdu_len(self->ctx));
+}
+
 /*
  * The handler returns a (status, reply) tuple. A status of zero with a reply
  * dict makes that dict the inline reply to this command; a negative status is
@@ -527,6 +536,8 @@ static PyMethodDef pyosdp_pd_tp_methods[] = {
 	  METH_NOARGS, pyosdp_pd_is_online_doc },
 	{ "flush_events", (PyCFunction)pyosdp_pd_flush_events,
 	  METH_NOARGS, pyosdp_pd_flush_events_doc },
+	{ "trs_get_max_apdu_len", (PyCFunction)pyosdp_pd_trs_get_max_apdu_len,
+	  METH_NOARGS, pyosdp_pd_trs_get_max_apdu_len_doc },
 	{ NULL, NULL, 0, NULL } /* Sentinel */
 };
 

@@ -302,6 +302,43 @@ void pyosdp_add_module_constants(PyObject *module)
 #undef ADD_CONST
 }
 
+/*
+ * The library keeps one logger: printing to stderr at a level, or handing
+ * every message to a callback unfiltered. With a Python handler installed the
+ * level is applied here instead, so that set_loglevel() -- which each new CP
+ * or PD calls -- keeps routing to the handler rather than back to stderr.
+ */
+static PyObject *g_log_handler;
+static int g_log_level = OSDP_LOG_INFO;
+
+static void pyosdp_log_trampoline(int pd, int log_level, const char *msg,
+				  const char *file, unsigned long line)
+{
+	PyGILState_STATE gil;
+	PyObject *ret;
+
+	if (log_level > g_log_level)
+		return;
+
+	gil = PyGILState_Ensure();
+	if (g_log_handler) {
+		ret = PyObject_CallFunction(g_log_handler, "iiszk", pd,
+					    log_level, msg, file, line);
+		if (ret == NULL)
+			PyErr_Print();
+		Py_XDECREF(ret);
+	}
+	PyGILState_Release(gil);
+}
+
+static void pyosdp_apply_log_config(void)
+{
+	if (g_log_handler)
+		osdp_set_log_callback(pyosdp_log_trampoline);
+	else
+		osdp_logger_init("pyosdp", g_log_level, NULL);
+}
+
 #define pyosdp_set_loglevel_doc                                                \
 	"set_loglevel(level) -> None\n"                                        \
 	"\n"                                                                   \
@@ -320,7 +357,37 @@ static PyObject *pyosdp_set_loglevel(void *self, PyObject *args)
 		return NULL;
 	}
 
-	osdp_logger_init("pyosdp", log_level, NULL);
+	g_log_level = log_level;
+	pyosdp_apply_log_config();
+
+	Py_RETURN_NONE;
+}
+
+#define pyosdp_set_log_handler_doc                                             \
+	"set_log_handler(handler) -> None\n"                                   \
+	"\n"                                                                   \
+	"Route library log messages to handler(pd, level, msg, file, line)\n"  \
+	"instead of stderr; None restores stderr. pd is -1 for messages not\n" \
+	"about a PD."
+static PyObject *pyosdp_set_log_handler(void *self, PyObject *args)
+{
+	PyObject *handler;
+
+	if (!PyArg_ParseTuple(args, "O", &handler))
+		return NULL;
+
+	if (handler != Py_None && !PyCallable_Check(handler)) {
+		PyErr_SetString(PyExc_TypeError, "handler must be callable");
+		return NULL;
+	}
+
+	Py_XDECREF(g_log_handler);
+	g_log_handler = NULL;
+	if (handler != Py_None) {
+		Py_INCREF(handler);
+		g_log_handler = handler;
+	}
+	pyosdp_apply_log_config();
 
 	Py_RETURN_NONE;
 }
@@ -328,6 +395,8 @@ static PyObject *pyosdp_set_loglevel(void *self, PyObject *args)
 static PyMethodDef pyosdp_nodule_methods[] = {
 	{ "set_loglevel", (PyCFunction)pyosdp_set_loglevel, METH_VARARGS,
 	  pyosdp_set_loglevel_doc },
+	{ "set_log_handler", (PyCFunction)pyosdp_set_log_handler, METH_VARARGS,
+	  pyosdp_set_log_handler_doc },
 	{ NULL, NULL, 0, NULL } /* Sentinel */
 };
 
