@@ -43,6 +43,11 @@ public:
 		return osdp_get_source_info();
 	}
 
+	void get_abi_info(struct osdp_abi_info *info)
+	{
+		osdp_get_abi_info(info);
+	}
+
 	void get_status_mask(uint8_t *bitmask)
 	{
 		osdp_get_status_mask(_ctx, bitmask);
@@ -167,6 +172,26 @@ public:
 	{
 		return osdp_cp_is_pd_enabled(_ctx, pd);
 	}
+
+	int set_scbk(int pd, const uint8_t *scbk)
+	{
+		return osdp_cp_set_scbk(_ctx, pd, scbk);
+	}
+
+	int trs_scan_enable(int pd, const struct osdp_trs_scan_params *params)
+	{
+		return osdp_cp_trs_scan_enable(_ctx, pd, params);
+	}
+
+	int trs_scan_disable(int pd)
+	{
+		return osdp_cp_trs_scan_disable(_ctx, pd);
+	}
+
+	int trs_get_max_apdu_len(int pd)
+	{
+		return osdp_cp_trs_get_max_apdu_len(_ctx, pd);
+	}
 };
 
 class OSDP_EXPORT PeripheralDevice : public Common {
@@ -223,6 +248,11 @@ public:
 	int flush_events()
 	{
 		return osdp_pd_flush_events(_ctx);
+	}
+
+	int trs_get_max_apdu_len()
+	{
+		return osdp_pd_trs_get_max_apdu_len(_ctx);
 	}
 };
 
