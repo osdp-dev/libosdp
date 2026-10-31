@@ -21,6 +21,8 @@ from .enums import (
     LogLevel,
     MpMsgType,
     NotificationType,
+    TrsFailReason,
+    TrsSessionStatus,
 )
 from .errors import TrsSessionError
 from .events import Event, Notification
@@ -79,6 +81,7 @@ class _TrsExchange:
     def __init__(self, command: Command) -> None:
         self.command = command
         self.answer: Event | None = None
+        self.failure: TrsFailReason | None = None
         self.status: CompletionStatus | None = None
         self.done = threading.Event()
 
@@ -166,6 +169,14 @@ class ControlPanel:
         decoded = decode_event(event)
         if isinstance(decoded, Notification):
             self._track_notification(pd, decoded)
+            exchange = self._trs_exchange[pd]
+            if (
+                exchange is not None
+                and decoded.type is NotificationType.TrsStatus
+                and decoded.trs_status is TrsSessionStatus.Failed
+            ):
+                # Sent ahead of the completions it settles
+                exchange.failure = decoded.trs_fail_reason
             if not self._forward_notifications[pd]:
                 # This one was only ever ours; the caller did not ask to see
                 # library notifications.
@@ -524,7 +535,9 @@ class ControlPanel:
         if exchange.status is CompletionStatus.Ok and answer is not None:
             return answer
         code = answer.code if isinstance(answer, events.TrsError) else None
-        raise TrsSessionError("card exchange failed", exchange.status, code)
+        raise TrsSessionError(
+            "card exchange failed", exchange.status, code, exchange.failure
+        )
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -636,7 +649,9 @@ class TrsSession:
             self.address, commands.TrsStart(reader=self.reader), None
         )
         if start.status is not CompletionStatus.Ok:
-            raise TrsSessionError("card session did not open", start.status)
+            raise TrsSessionError(
+                "card session did not open", start.status, None, start.failure
+            )
         return self
 
     def __exit__(self, *exc_info: object) -> None:

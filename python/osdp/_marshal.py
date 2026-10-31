@@ -149,7 +149,14 @@ def _notification_payload(x) -> Payload:
             "firmware_version": x.firmware_version,
         }
     if x.type == NotificationType.TrsStatus:
-        return {"type": x.type, "status": x.status, "reader": x.reader}
+        # Only the CP-side Notification says why a session failed
+        return {
+            "type": x.type,
+            "status": x.status,
+            "reader": x.reader,
+            "reason": getattr(x, "reason", 0),
+            "nak_code": getattr(x, "nak_code", 0),
+        }
     return {"type": x.type}
 
 
@@ -175,6 +182,11 @@ def _notification_from_payload(cls, p: Payload):
             serial_number=p.get("serial_number", 0),
             firmware_version=p.get("firmware_version", 0),
         )
+    if (
+        kwargs["type"] == NotificationType.TrsStatus
+        and "reason" in cls.__dataclass_fields__
+    ):
+        kwargs.update(reason=p.get("reason", 0), nak_code=p.get("nak_code", 0))
     return cls(**kwargs)
 
 

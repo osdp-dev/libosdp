@@ -524,6 +524,30 @@ class TrsSessionStatus(IntEnum):
     """PD only: the CP ended its transaction with the card. Disconnect it."""
 
 
+class TrsFailReason(IntEnum):
+    """Why a TRS card session failed, carried by a TrsStatus notification
+    whose status is Failed.
+
+    @see osdp_trs_fail_reason_e
+    """
+
+    NoFailure = _sys.TRS_FAIL_NONE
+    """Not a failure."""
+
+    Refused = _sys.TRS_FAIL_REFUSED
+    """The reader stayed in its default mode."""
+
+    Nak = _sys.TRS_FAIL_NAK
+    """A command of the session was NAKed; the notification's nak_code says
+    why."""
+
+    NoReply = _sys.TRS_FAIL_NO_REPLY
+    """A command of the session drew no usable reply."""
+
+    LinkDown = _sys.TRS_FAIL_LINK_DOWN
+    """The PD went offline or was disabled."""
+
+
 class TrsPinFormat(_WireEnum):
     """Encoding of the PIN digits a reader inserts into the C-APDU.
 

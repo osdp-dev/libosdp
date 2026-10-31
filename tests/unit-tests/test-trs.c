@@ -52,6 +52,7 @@ struct test_trs_ctx {
 	bool status_seen;
 	enum osdp_trs_session_status_e last_status;
 	uint8_t last_status_reader;
+	struct osdp_notification_trs_status last_failure;
 
 	/* CP side: last command completion seen */
 	/* Written by the completion callback on the refresh thread. */
@@ -146,6 +147,9 @@ static int trs_cp_event_callback(void *arg, int pd, struct osdp_event *ev)
 		ctx->status_seen = true;
 		ctx->last_status = ev->notif.trs_status.status;
 		ctx->last_status_reader = ev->notif.trs_status.reader;
+		if (ev->notif.trs_status.status == OSDP_TRS_SESSION_FAILED) {
+			ctx->last_failure = ev->notif.trs_status;
+		}
 	}
 	return 0;
 }
@@ -2768,6 +2772,11 @@ static bool test_trs_band_flush_on_session_failure(void)
 		goto out;
 	}
 	test_set_channel_hook(NULL, NULL);
+	if (g_trs.last_failure.reason != OSDP_TRS_FAIL_NO_REPLY) {
+		printf(SUB_2 "want reason NO_REPLY, got %d\n",
+		       g_trs.last_failure.reason);
+		ok = false;
+	}
 
 	if (!wait_for_log_count(&log, 5, 10) ||
 	    atomic_load(&log.count) != 5) {
@@ -2865,6 +2874,12 @@ static bool test_trs_start_fails_when_mode_is_refused(void)
 	}
 	if (log.status[1] != OSDP_COMPLETION_FLUSHED) {
 		printf(SUB_2 "STOP: want FLUSHED, got %d\n", log.status[1]);
+		ok = false;
+	}
+	if (g_trs.last_failure.reason != OSDP_TRS_FAIL_NAK ||
+	    g_trs.last_failure.nak_code != OSDP_PD_NAK_MSG_CHK) {
+		printf(SUB_2 "want reason NAK(MSG_CHK), got %d(%d)\n",
+		       g_trs.last_failure.reason, g_trs.last_failure.nak_code);
 		ok = false;
 	}
 	if (!test_wait_for_online(g_trs.cp_ctx, 0, 10)) {

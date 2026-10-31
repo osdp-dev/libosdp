@@ -6,7 +6,7 @@
 
 """Exceptions raised by the osdp package."""
 
-from .enums import CompletionStatus, NakCode
+from .enums import CompletionStatus, NakCode, TrsFailReason
 
 __all__ = ["MarshalError", "NakError", "OSDPError", "TrsSessionError"]
 
@@ -55,6 +55,7 @@ class TrsSessionError(OSDPError):
         message: str,
         status: CompletionStatus | None = None,
         code: int | None = None,
+        reason: TrsFailReason | None = None,
     ) -> None:
         self.status = status
         """How the command settled: Failed when the reader reported an error
@@ -65,9 +66,15 @@ class TrsSessionError(OSDPError):
         """The reader's error code, when it sent one. Reader-defined: OSDP
         does not standardize it."""
 
+        self.reason = reason
+        """Why the session failed, when it did: the command failed or was
+        flushed because the session ended. None while the session is up."""
+
         detail = [status.name] if status is not None else []
         if code is not None:
             detail.append(f"reader error 0x{code:02x}")
+        if reason is not None:
+            detail.append(f"session {reason.name}")
         if detail:
             message = f"{message} ({', '.join(detail)})"
         super().__init__(message)

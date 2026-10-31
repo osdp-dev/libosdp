@@ -358,6 +358,28 @@ def test_trs_session_answer_behind_a_card_announcement():
     assert events.TrsCardInfo(csn=CSN) in collected
 
 
+def test_trs_session_lost_with_the_link():
+    # The card is slow to answer, and the PD is disabled meanwhile
+    pd_app.defer = True
+
+    def disable_once_asked():
+        deadline = time.monotonic() + 5
+        while not pd_app.trs_commands and time.monotonic() < deadline:
+            time.sleep(0.05)
+        cp.disable_pd(pd_addr)
+
+    disabler = threading.Thread(target=disable_once_asked)
+    disabler.start()
+    with pytest.raises(TrsSessionError) as raised:
+        with cp.trs_session(pd_addr) as card:
+            card.transceive(C_APDU)
+    disabler.join()
+    assert raised.value.status == CompletionStatus.Failed
+    assert raised.value.reason == TrsFailReason.LinkDown
+    assert cp.enable_pd(pd_addr)
+    assert cp.sc_wait_all()
+
+
 def test_trs_session_on_the_second_reader():
     with cp.trs_session(pd_addr, reader=1) as card:
         assert card.transceive(C_APDU) == R_APDU

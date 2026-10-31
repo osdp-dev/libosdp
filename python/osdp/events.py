@@ -38,6 +38,7 @@ from .enums import (
     StatusReportType,
     TrsCardProtocol,
     TrsCardStatus,
+    TrsFailReason,
     TrsSessionStatus,
 )
 from .types import PdId
@@ -439,6 +440,14 @@ class Notification:
     scanned reader for the scan's statuses. Only for
     NotificationType.TrsStatus."""
 
+    reason: int = 0
+    """Why the session failed (C enum osdp_trs_fail_reason_e). Only for
+    NotificationType.TrsStatus with status Failed."""
+
+    nak_code: int = 0
+    """The PD's NAK code when the reason is Nak. Only for
+    NotificationType.TrsStatus with status Failed."""
+
     @property
     def sc_active(self) -> bool:
         """Whether the secure channel is up.
@@ -489,6 +498,14 @@ class Notification:
         Only for NotificationType.TrsStatus (reads status).
         """
         return TrsSessionStatus(self.status)
+
+    @property
+    def trs_fail_reason(self) -> TrsFailReason:
+        """Why the TRS card session failed.
+
+        Only for NotificationType.TrsStatus (reads reason).
+        """
+        return TrsFailReason(self.reason)
 
 
 

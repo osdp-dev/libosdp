@@ -110,6 +110,8 @@ internal struct NativeTrsStatus
 {
     public int Status;
     public byte Reader;
+    public int Reason;
+    public byte NakCode;
 }
 
 [StructLayout(LayoutKind.Explicit)]

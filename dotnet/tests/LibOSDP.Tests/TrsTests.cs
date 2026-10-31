@@ -65,6 +65,26 @@ public sealed class TrsTests
     }
 
     [Fact]
+    public async Task LosingTheLinkFailsTheSessionAndSaysWhy()
+    {
+        await using var bus = await Bus.StartAsync(E2E.Options(Transport.Loopback, false, OsdpFlags.EnableNotification));
+        // The card never answers, so the APDU is still waiting when the link goes
+        bus.Reply = _ => CommandReply.Ack;
+        Task<OsdpEvent> failed = bus.NextEventAsync(
+            e => e is NotificationEvent { Notification: TrsStatusNotification { Status: TrsSessionStatus.Failed } });
+
+        Assert.Equal(CompletionStatus.Ok,
+                     await E2E.Settled(bus.Cp.SubmitCommandAsync(Bus.Address, new TrsStartCommand())));
+        Task<CompletionStatus> sent = bus.Cp.SubmitCommandAsync(Bus.Address, new TrsSendApduCommand(0, CApdu));
+        await bus.NextCommandAsync<TrsSendApduCommand>();
+        bus.Cp.DisablePd(Bus.Address);
+
+        Assert.Equal(new TrsStatusNotification(TrsSessionStatus.Failed, 0, TrsFailReason.LinkDown),
+                     ((NotificationEvent)await E2E.Settled(failed)).Notification);
+        Assert.Equal(CompletionStatus.Failed, await E2E.Settled(sent));
+    }
+
+    [Fact]
     public async Task CommandsOutsideTheBandsReaderAreRefused()
     {
         await using var bus = await Bus.StartAsync(E2E.Options(Transport.Loopback, false));

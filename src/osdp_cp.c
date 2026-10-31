@@ -1772,6 +1772,13 @@ static void notify_trs_status(struct osdp_pd *pd,
 		(status == OSDP_TRS_SCAN_SUSPENDED ||
 		 status == OSDP_TRS_SCAN_NO_DEPARTURE) ?
 			pd->trs.scan.reader : pd->trs.reader;
+	if (status == OSDP_TRS_SESSION_FAILED) {
+		evt.notif.trs_status.reason = pd->trs.fail_reason;
+		evt.notif.trs_status.nak_code = pd->trs.fail_nak_code;
+	} else {
+		evt.notif.trs_status.reason = OSDP_TRS_FAIL_NONE;
+		evt.notif.trs_status.nak_code = 0;
+	}
 	ctx->event_callback(ctx->event_callback_arg, pd->idx, &evt);
 	osdp_metrics_report(pd, OSDP_METRIC_EVENT);
 }
@@ -2163,18 +2170,22 @@ static void cp_trs_end_on_link_loss(struct osdp_pd *pd)
 	bool held_start = held && cp_cmd_is_trs(held, OSDP_TRS_CMD_START);
 	bool running = ISSET_FLAG(pd, PD_FLAG_TRS_ACTIVE) && !pd->trs.probe;
 
-	cp_trs_settle_answer(pd, OSDP_COMPLETION_FAILED);
-	cp_trs_settle_session(pd, OSDP_COMPLETION_FAILED);
 	pd->request &= ~CP_REQ_TRS_OPEN;
 	CLEAR_FLAG(pd, PD_FLAG_TRS_ACTIVE);
-	if (!held_start && !running) {
-		return;
+	if (held_start || running) {
+		if (held_start) {
+			/* Still holding what the previous session ended with */
+			pd->trs.failed = false;
+		}
+		osdp_trs_note_failure(pd, OSDP_TRS_FAIL_LINK_DOWN);
+		LOG_WRN("TRS session lost with the link");
+		notify_trs_status(pd, OSDP_TRS_SESSION_FAILED);
 	}
-	if (held_start || pd->trs.stop_pending) {
+	cp_trs_settle_answer(pd, OSDP_COMPLETION_FAILED);
+	cp_trs_settle_session(pd, OSDP_COMPLETION_FAILED);
+	if (held_start || (running && pd->trs.stop_pending)) {
 		cp_flush_trs_band(pd);
 	}
-	LOG_WRN("TRS session lost with the link");
-	notify_trs_status(pd, OSDP_TRS_SESSION_FAILED);
 }
 
 static void cp_state_change(struct osdp_pd *pd, enum osdp_cp_state_e next)
@@ -2218,15 +2229,17 @@ static void cp_state_change(struct osdp_pd *pd, enum osdp_cp_state_e next)
 			}
 			LOG_INF("TRS session %s",
 				pd->trs.failed ? "failed" : "closed");
+			/* The outcome goes out before the commands it settles,
+			 * as a card's answer does before its command. */
+			notify_trs_status(pd, pd->trs.failed ?
+						      OSDP_TRS_SESSION_FAILED :
+						      OSDP_TRS_SESSION_CLOSED);
 			cp_trs_settle_session(pd, pd->trs.failed ?
 						      OSDP_COMPLETION_FAILED :
 						      OSDP_COMPLETION_OK);
 			if (pd->trs.stop_pending) {
 				cp_flush_trs_band(pd);
 			}
-			notify_trs_status(pd, pd->trs.failed ?
-						      OSDP_TRS_SESSION_FAILED :
-						      OSDP_TRS_SESSION_CLOSED);
 			break;
 		}
 		LOG_INF("Online; %s SC", sc_is_active(pd) ? "With" : "Without");
@@ -2270,6 +2283,7 @@ static void cp_state_change(struct osdp_pd *pd, enum osdp_cp_state_e next)
 		pd->trs.state = TRS_STATE_SET_MODE;
 		pd->trs.mode = TRS_MODE_00; /* until the PD accepts mode 01 */
 		pd->trs.failed = false;
+		pd->trs.fail_reason = OSDP_TRS_FAIL_NONE;
 		pd->trs.stop_pending = true;
 		SET_FLAG(pd, PD_FLAG_TRS_ACTIVE);
 		break;

@@ -1334,6 +1334,19 @@ enum osdp_trs_session_status_e {
 };
 
 /**
+ * @brief Why a TRS card session failed, reported with
+ * @c OSDP_TRS_SESSION_FAILED in struct osdp_notification_trs_status::reason.
+ */
+enum osdp_trs_fail_reason_e {
+	OSDP_TRS_FAIL_NONE = 0, /**< Not a failure */
+	OSDP_TRS_FAIL_REFUSED, /**< The reader stayed in its default mode */
+	OSDP_TRS_FAIL_NAK, /**< A command of the session was NAKed */
+	OSDP_TRS_FAIL_NO_REPLY, /**< A command of the session drew no usable
+				 *   reply */
+	OSDP_TRS_FAIL_LINK_DOWN, /**< The PD went offline or was disabled */
+};
+
+/**
  * @brief Cadence of the background card presence scan
  * (osdp_cp_trs_scan_enable()). A zero in any field selects that parameter's
  * built-in default.
@@ -1600,6 +1613,10 @@ struct osdp_notification_trs_status {
 	 * for OPENED/CLOSED, which concern the whole PD.
 	 */
 	uint8_t reader;
+	/** Why the session failed, for FAILED; OSDP_TRS_FAIL_NONE otherwise */
+	enum osdp_trs_fail_reason_e reason;
+	/** The PD's NAK code (enum osdp_pd_nak_code_e), for OSDP_TRS_FAIL_NAK */
+	uint8_t nak_code;
 };
 
 /**

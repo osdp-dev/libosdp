@@ -44,4 +44,8 @@ public sealed record PdIdNotification(PdId Id) : OsdpNotification;
 /// the scan's statuses; on a PD, the reader whose card to release for
 /// <see cref="TrsSessionStatus.CardReleased"/>, and 0 otherwise.
 /// </param>
-public sealed record TrsStatusNotification(TrsSessionStatus Status, byte Reader) : OsdpNotification;
+/// <param name="Reason">Why the session failed, for <see cref="TrsSessionStatus.Failed"/>.</param>
+/// <param name="NakCode">The PD's NAK code, when <paramref name="Reason"/> is <see cref="TrsFailReason.Nak"/>.</param>
+public sealed record TrsStatusNotification(TrsSessionStatus Status, byte Reader,
+                                           TrsFailReason Reason = TrsFailReason.None,
+                                           NakCode NakCode = 0) : OsdpNotification;

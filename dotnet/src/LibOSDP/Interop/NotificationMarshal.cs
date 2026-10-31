@@ -19,7 +19,8 @@ internal static unsafe class NotificationMarshal
         NotificationType.PdId =>
             new PdIdNotification(PdId.FromNative(n->Data.PdId)),
         NotificationType.TrsStatus =>
-            new TrsStatusNotification((TrsSessionStatus)n->Data.TrsStatus.Status, n->Data.TrsStatus.Reader),
+            new TrsStatusNotification((TrsSessionStatus)n->Data.TrsStatus.Status, n->Data.TrsStatus.Reader,
+                (TrsFailReason)n->Data.TrsStatus.Reason, (NakCode)n->Data.TrsStatus.NakCode),
         _ => null,
     };
 }

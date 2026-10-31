@@ -47,6 +47,9 @@ int osdp_trs_apdu_capacity(struct osdp_pd *pd, enum osdp_trs_cmd_e command);
 /* 0 if the wire can carry this PIN-entry layout; -1 (logged) if not */
 int osdp_trs_pin_entry_check(struct osdp_pd *pd,
 			     const struct osdp_trs_pin_entry *pe);
+/* Fail the session in progress for @reason, unless it has already failed */
+void osdp_trs_note_failure(struct osdp_pd *pd,
+			   enum osdp_trs_fail_reason_e reason);
 
 /*
  * Background presence scan (osdp_cp_trs_scan_enable): probe scheduling and

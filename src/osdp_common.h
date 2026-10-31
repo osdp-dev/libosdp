@@ -537,6 +537,10 @@ struct osdp_trs {
 	enum trs_state_e state; /* current TRS session sub-state */
 	uint8_t mode; /* negotiated TRS mode (TRS_MODE_00/01) */
 	bool failed; /* session did not open, or was cut short by an error */
+	/* Why it failed, latched at the first failure so that the restore
+	 * attempt failing too does not hide the cause */
+	enum osdp_trs_fail_reason_e fail_reason;
+	uint8_t fail_nak_code;
 	/*
 	 * Tracks the tail of cmd_queue, not the session: set when a START is
 	 * queued and cleared when its STOP is. A command is inside the band iff

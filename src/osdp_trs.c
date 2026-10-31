@@ -1002,6 +1002,17 @@ void osdp_trs_pd_reset(struct osdp_pd *pd)
 
 /* --- CP: library-driven session state machine --- */
 
+void osdp_trs_note_failure(struct osdp_pd *pd,
+			   enum osdp_trs_fail_reason_e reason)
+{
+	if (pd->trs.failed) {
+		return;
+	}
+	pd->trs.failed = true;
+	pd->trs.fail_reason = reason;
+	pd->trs.fail_nak_code = reason == OSDP_TRS_FAIL_NAK ? pd->nak_code : 0;
+}
+
 /*
  * Advance the TRS sub-state after the PD accepted a command, and return the next
  * CP role state. The XMIT->DISCONNECT transition is driven by a stop request in
@@ -1024,7 +1035,7 @@ enum osdp_cp_state_e osdp_trs_state_update(struct osdp_pd *pd)
 		if (pd->trs.mode != TRS_MODE_01) {
 			LOG_ERR("TRS: PD refused transparent mode; aborting");
 			pd->trs.state = TRS_STATE_DONE;
-			pd->trs.failed = true;
+			osdp_trs_note_failure(pd, OSDP_TRS_FAIL_REFUSED);
 			return OSDP_CP_STATE_ONLINE;
 		}
 		pd->trs.state = TRS_STATE_XMIT;
@@ -1064,7 +1075,9 @@ enum osdp_cp_state_e osdp_trs_state_update_err(struct osdp_pd *pd)
 		return OSDP_CP_STATE_TRS_RUN;
 	}
 
-	pd->trs.failed = true;
+	osdp_trs_note_failure(pd, pd->reply_id == REPLY_NAK ?
+					  OSDP_TRS_FAIL_NAK :
+					  OSDP_TRS_FAIL_NO_REPLY);
 
 	switch (pd->trs.state) {
 	case TRS_STATE_SET_MODE:

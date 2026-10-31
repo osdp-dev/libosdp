@@ -105,3 +105,5 @@ life-cycle, and the presence scan's own state:
 <!-- doxygen:struct:osdp_notification_trs_status:members -->
 
 <!-- doxygen:enum:osdp_trs_session_status_e -->
+
+<!-- doxygen:enum:osdp_trs_fail_reason_e -->

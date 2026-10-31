@@ -162,6 +162,21 @@ public enum TrsSessionStatus
     CardReleased = 5,
 }
 
+/// <summary>Why a transparent-reader (TRS) card session failed.</summary>
+public enum TrsFailReason
+{
+    /// <summary>Not a failure.</summary>
+    None = 0,
+    /// <summary>The reader stayed in its default mode.</summary>
+    Refused = 1,
+    /// <summary>A command of the session was NAKed; see <see cref="TrsStatusNotification.NakCode"/>.</summary>
+    Nak = 2,
+    /// <summary>A command of the session drew no usable reply.</summary>
+    NoReply = 3,
+    /// <summary>The PD went offline or was disabled.</summary>
+    LinkDown = 4,
+}
+
 /// <summary>How a reader encodes the PIN digits it writes into a C-APDU.</summary>
 public enum TrsPinFormat
 {

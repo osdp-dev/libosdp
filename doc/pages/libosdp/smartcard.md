@@ -330,6 +330,15 @@ The session life-cycle is reported through `OSDP_NOTIFICATION_TRS_STATUS`
 | `OSDP_TRS_SCAN_NO_DEPARTURE` | CP | The reader cannot answer a card scan, so card removal will not be reported |
 | `OSDP_TRS_CARD_RELEASED` | PD | The CP ended its transaction with the card |
 
+A `FAILED` status says why in `reason` (`enum osdp_trs_fail_reason_e`):
+`OSDP_TRS_FAIL_REFUSED` when the reader stayed in its default mode,
+`OSDP_TRS_FAIL_NAK` when a command of the session was NAKed (the code is in
+`nak_code`), `OSDP_TRS_FAIL_NO_REPLY` when one drew no usable reply, and
+`OSDP_TRS_FAIL_LINK_DOWN` when the PD went offline or was disabled. It arrives
+before the completions of the commands the failure settles, so a completion
+callback can already know the cause. In Python, `TrsSessionError.reason`
+carries it.
+
 ### Finding the card: the presence scan
 
 Many readers only report smart cards while they are in transparent mode, and a

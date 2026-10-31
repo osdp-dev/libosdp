@@ -732,7 +732,9 @@ static int pyosdp_make_dict_notification(PyObject *obj, const void *payload)
 		break;
 	case OSDP_NOTIFICATION_TRS_STATUS:
 		if (pyosdp_dict_add_int(obj, "status", n->trs_status.status) ||
-		    pyosdp_dict_add_int(obj, "reader", n->trs_status.reader))
+		    pyosdp_dict_add_int(obj, "reader", n->trs_status.reader) ||
+		    pyosdp_dict_add_int(obj, "reason", n->trs_status.reason) ||
+		    pyosdp_dict_add_int(obj, "nak_code", n->trs_status.nak_code))
 			return -1;
 		break;
 	default:
@@ -806,6 +808,12 @@ static int pyosdp_make_struct_notification(void *payload, PyObject *dict)
 		if (pyosdp_dict_get_int(dict, "reader", &val))
 			return -1;
 		n->trs_status.reader = (uint8_t)val;
+		if (pyosdp_dict_get_int(dict, "reason", &val))
+			return -1;
+		n->trs_status.reason = (enum osdp_trs_fail_reason_e)val;
+		if (pyosdp_dict_get_int(dict, "nak_code", &val))
+			return -1;
+		n->trs_status.nak_code = (uint8_t)val;
 		break;
 	default:
 		break;
