@@ -111,5 +111,15 @@ public sealed record TrsPinCompleteEvent(byte Reader, byte ReaderStatus, byte Tr
 /// answered completes as <see cref="CompletionStatus.Failed"/>; the session
 /// stays open.
 /// </summary>
-/// <param name="Code">Error condition; reader-defined, OSDP does not standardize it.</param>
-public sealed record TrsErrorEvent(byte Code) : OsdpEvent;
+/// <param name="Code">
+/// Error condition. LibOSDP recommends the <see cref="TrsErrorCode"/> values,
+/// but a reader may send any byte.
+/// </param>
+public sealed record TrsErrorEvent(byte Code) : OsdpEvent
+{
+    /// <summary>Reports one of LibOSDP's recommended codes.</summary>
+    public TrsErrorEvent(TrsErrorCode code) : this((byte)code) { }
+
+    /// <summary><see cref="Code"/> as a <see cref="TrsErrorCode"/>, or null for a reader's own code.</summary>
+    public TrsErrorCode? KnownCode => Enum.IsDefined((TrsErrorCode)Code) ? (TrsErrorCode)Code : null;
+}

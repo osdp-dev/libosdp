@@ -6,7 +6,7 @@
 
 """Exceptions raised by the osdp package."""
 
-from .enums import CompletionStatus, NakCode, TrsFailReason
+from .enums import CompletionStatus, NakCode, TrsErrorCode, TrsFailReason
 
 __all__ = ["MarshalError", "NakError", "OSDPError", "TrsSessionError"]
 
@@ -47,7 +47,7 @@ class TrsSessionError(OSDPError):
         >>> raise TrsSessionError("card exchange failed",
         ...                       CompletionStatus.Failed, code=0x01)
         Traceback (most recent call last):
-        osdp.errors.TrsSessionError: card exchange failed (Failed, reader error 0x01)
+        osdp.errors.TrsSessionError: card exchange failed (Failed, reader error NoCard)
     """
 
     def __init__(
@@ -59,19 +59,23 @@ class TrsSessionError(OSDPError):
     ) -> None:
         self.status = status
         """How the command settled: Failed when the reader reported an error
-        or never answered, Flushed when the session ended under it. None when
-        the session could not be opened at all."""
+        or never answered, or the session did not open; Flushed when the
+        session ended under it. None when the command was refused outright."""
 
+        if code is not None and code in TrsErrorCode._value2member_map_:
+            code = TrsErrorCode(code)
         self.code = code
-        """The reader's error code, when it sent one. Reader-defined: OSDP
-        does not standardize it."""
+        """The reader's error code, when it sent one: a TrsErrorCode when it
+        is one of LibOSDP's recommended codes, the raw byte otherwise."""
 
         self.reason = reason
         """Why the session failed, when it did: the command failed or was
         flushed because the session ended. None while the session is up."""
 
         detail = [status.name] if status is not None else []
-        if code is not None:
+        if isinstance(code, TrsErrorCode):
+            detail.append(f"reader error {code.name}")
+        elif code is not None:
             detail.append(f"reader error 0x{code:02x}")
         if reason is not None:
             detail.append(f"session {reason.name}")

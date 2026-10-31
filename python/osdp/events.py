@@ -707,7 +707,8 @@ class TrsError:
     ID: ClassVar[EventId] = EventId.Trs
 
     code: int = 0
-    """Error condition from the reader or card; reader-defined."""
+    """Error condition from the reader or card. LibOSDP recommends the
+    TrsErrorCode values, but a reader may send any byte."""
 
     def __post_init__(self) -> None:
         check_range("code", self.code, UINT8_MAX)

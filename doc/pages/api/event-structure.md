@@ -66,6 +66,8 @@ reader error. On a PD, submit one to answer an `OSDP_CMD_XWR`. See
 
 <!-- doxygen:enum:osdp_trs_reply_e -->
 
+<!-- doxygen:enum:osdp_trs_error_e -->
+
 <!-- doxygen:struct:osdp_trs_card_info:members -->
 
 <!-- doxygen:define:OSDP_TRS_CSN_MAX_LEN -->

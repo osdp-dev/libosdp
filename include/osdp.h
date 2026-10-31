@@ -1563,9 +1563,34 @@ struct osdp_trs_pin_complete {
 	uint8_t tries; /**< Number of PIN-entry attempts */
 };
 
+/**
+ * @brief Recommended codes for a TRS error report (@c struct osdp_trs_error).
+ *
+ * OSDP leaves the error byte undefined ("various transparent mode error
+ * conditions"), so every CP would otherwise need each reader vendor's table.
+ * These are LibOSDP's convention, not the specification's: a reader built on
+ * LibOSDP should use them, and a CP should still expect other values from
+ * other readers.
+ */
+enum osdp_trs_error_e {
+	OSDP_TRS_ERR_NO_CARD = 1, /**< No card in the field */
+	OSDP_TRS_ERR_CARD_SILENT, /**< The card did not answer; it may have
+				   *   left the field */
+	OSDP_TRS_ERR_TOO_LONG, /**< The C-APDU was too long for the reader, or
+				*   the R-APDU too long to send back; ask for
+				*   less, e.g. with a smaller Le */
+	OSDP_TRS_ERR_PROTOCOL, /**< The exchange with the card failed at the
+				*   protocol level */
+	OSDP_TRS_ERR_BUSY, /**< The reader is still working on an earlier
+			    *   command */
+	OSDP_TRS_ERR_UNSUPPORTED, /**< The reader does not support the
+				   *   command */
+};
+
 struct osdp_trs_error {
-	uint8_t code; /**< Error/NAK condition from the reader or card
-	           *   (reader-defined; not standardized by OSDP) */
+	uint8_t code; /**< Error condition from the reader or card; LibOSDP
+		       *   recommends enum osdp_trs_error_e, but a reader may
+		       *   send any value */
 };
 
 /**

@@ -334,7 +334,7 @@ def test_trs_session_waits_for_a_slow_card():
 
 
 def test_trs_session_raises_on_a_reader_error():
-    pd_app.error_code = 0x02
+    pd_app.error_code = TrsErrorCode.CardSilent
     with cp.trs_session(pd_addr) as card:
         with pytest.raises(TrsSessionError) as raised:
             card.transceive(C_APDU)
@@ -342,7 +342,18 @@ def test_trs_session_raises_on_a_reader_error():
         pd_app.error_code = None
         assert card.transceive(C_APDU) == R_APDU
     assert raised.value.status == CompletionStatus.Failed
-    assert raised.value.code == 0x02
+    assert raised.value.code is TrsErrorCode.CardSilent
+    wait_for_session_closed()
+
+
+def test_trs_session_error_keeps_a_vendor_code():
+    # A code outside LibOSDP's vocabulary is the reader's own; keep it raw
+    pd_app.error_code = 0xE7
+    with cp.trs_session(pd_addr) as card:
+        with pytest.raises(TrsSessionError) as raised:
+            card.transceive(C_APDU)
+    assert raised.value.code == 0xE7
+    assert not isinstance(raised.value.code, TrsErrorCode)
     wait_for_session_closed()
 
 

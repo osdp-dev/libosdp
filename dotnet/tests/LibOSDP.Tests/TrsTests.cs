@@ -50,7 +50,7 @@ public sealed class TrsTests
         bus.Reply = command =>
         {
             if (command is TrsSendApduCommand)
-                _ = bus.Pd.SubmitEventAsync(new TrsErrorEvent(0x02));
+                _ = bus.Pd.SubmitEventAsync(new TrsErrorEvent(TrsErrorCode.CardSilent));
             return CommandReply.Ack;
         };
         Task<OsdpEvent> error = bus.NextEventAsync(e => e is TrsErrorEvent);
@@ -59,7 +59,9 @@ public sealed class TrsTests
         Task<CompletionStatus> sent = bus.Cp.SubmitCommandAsync(Bus.Address, new TrsSendApduCommand(0, CApdu));
         Task<CompletionStatus> stop = bus.Cp.SubmitCommandAsync(Bus.Address, new TrsStopCommand());
 
-        Assert.Equal(new TrsErrorEvent(0x02), await E2E.Settled(error));
+        var reported = Assert.IsType<TrsErrorEvent>(await E2E.Settled(error));
+        Assert.Equal(TrsErrorCode.CardSilent, reported.KnownCode);
+        Assert.Null(new TrsErrorEvent(0xE7).KnownCode);
         Assert.Equal(CompletionStatus.Failed, await E2E.Settled(sent));
         Assert.Equal(CompletionStatus.Ok, await E2E.Settled(stop));
     }

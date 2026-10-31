@@ -179,6 +179,27 @@ public enum TrsFailReason
     Idle = 5,
 }
 
+/// <summary>
+/// Recommended codes for a reader's TRS error report (<see cref="TrsErrorEvent"/>).
+/// OSDP leaves the error byte undefined; these are LibOSDP's convention, so a
+/// reader built on LibOSDP uses them, and others may send other values.
+/// </summary>
+public enum TrsErrorCode : byte
+{
+    /// <summary>No card in the field.</summary>
+    NoCard = 1,
+    /// <summary>The card did not answer; it may have left the field.</summary>
+    CardSilent = 2,
+    /// <summary>The C-APDU was too long for the reader, or the R-APDU too long to send back; ask for less.</summary>
+    TooLong = 3,
+    /// <summary>The exchange with the card failed at the protocol level.</summary>
+    Protocol = 4,
+    /// <summary>The reader is still working on an earlier command.</summary>
+    Busy = 5,
+    /// <summary>The reader does not support the command.</summary>
+    Unsupported = 6,
+}
+
 /// <summary>How a reader encodes the PIN digits it writes into a C-APDU.</summary>
 public enum TrsPinFormat
 {

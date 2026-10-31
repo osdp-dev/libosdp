@@ -551,6 +551,35 @@ class TrsFailReason(IntEnum):
     """No card command came for the idle timeout (OSDP_TRS_IDLE_TOUT_MS)."""
 
 
+class TrsErrorCode(IntEnum):
+    """Recommended codes for a reader's TRS error report (events.TrsError).
+
+    OSDP leaves the error byte undefined; these are LibOSDP's convention, so
+    a reader built on LibOSDP uses them, and others may send other values.
+
+    @see osdp_trs_error_e
+    """
+
+    NoCard = _sys.TRS_ERR_NO_CARD
+    """No card in the field."""
+
+    CardSilent = _sys.TRS_ERR_CARD_SILENT
+    """The card did not answer; it may have left the field."""
+
+    TooLong = _sys.TRS_ERR_TOO_LONG
+    """The C-APDU was too long for the reader, or the R-APDU too long to send
+    back; ask for less, e.g. with a smaller Le."""
+
+    Protocol = _sys.TRS_ERR_PROTOCOL
+    """The exchange with the card failed at the protocol level."""
+
+    Busy = _sys.TRS_ERR_BUSY
+    """The reader is still working on an earlier command."""
+
+    Unsupported = _sys.TRS_ERR_UNSUPPORTED
+    """The reader does not support the command."""
+
+
 class TrsPinFormat(_WireEnum):
     """Encoding of the PIN digits a reader inserts into the C-APDU.
 

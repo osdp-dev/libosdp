@@ -322,8 +322,14 @@ interpreting them is the application's business. It completes
 `OSDP_COMPLETION_FAILED` when the exchange itself did not happen: the reader
 reported an `OSDP_TRS_REPLY_ERROR` (delivered first, as above), or never
 answered. A reader error fails only that exchange; the session stays open and
-the next command in the band runs. The meaning of an error `code` is
-reader-defined — OSDP does not standardize it.
+the next command in the band runs.
+
+OSDP leaves the error `code` undefined, so LibOSDP recommends a vocabulary,
+`enum osdp_trs_error_e`: `OSDP_TRS_ERR_NO_CARD`, `CARD_SILENT` (the card did
+not answer, and may have left), `TOO_LONG` (ask for less, e.g. with a smaller
+`Le`), `PROTOCOL`, `BUSY` and `UNSUPPORTED`. A PD built on LibOSDP should
+report with these; a CP should still expect other values from other readers,
+which define their own.
 
 The session life-cycle is reported through `OSDP_NOTIFICATION_TRS_STATUS`
 (payload `struct osdp_notification_trs_status`) with an
@@ -424,7 +430,8 @@ int command_callback(void *arg, struct osdp_cmd *cmd)
                           osdp_pd_trs_get_max_apdu_len(ctx));
     if (len < 0) {
         ev.trs.reply = OSDP_TRS_REPLY_ERROR;
-        ev.trs.error.code = 0x01;  /* reader-defined */
+        ev.trs.error.code = len == -EMSGSIZE ? OSDP_TRS_ERR_TOO_LONG :
+                                               OSDP_TRS_ERR_CARD_SILENT;
     } else {
         ev.trs.reply = OSDP_TRS_REPLY_CARD_DATA;
         ev.trs.card_data.apdu.length = len;
