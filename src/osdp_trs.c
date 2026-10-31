@@ -26,6 +26,15 @@
 
 #include "osdp_trs.h"
 
+/* The public structs carry these lengths in fields of the widths below */
+_Static_assert(OSDP_TRS_APDU_MAX_LEN <= UINT16_MAX,
+	       "OSDP_TRS_APDU_MAX_LEN must fit osdp_trs_apdu::length");
+_Static_assert(OSDP_TRS_CSN_MAX_LEN <= UINT8_MAX,
+	       "OSDP_TRS_CSN_MAX_LEN must fit osdp_trs_card_info::csn_len");
+_Static_assert(OSDP_TRS_PROTOCOL_DATA_MAX_LEN <= UINT8_MAX,
+	       "OSDP_TRS_PROTOCOL_DATA_MAX_LEN must fit "
+	       "osdp_trs_card_info::protocol_data_len");
+
 #define TO_TRS(pd) (&(pd)->trs)
 
 /* Wire encoding of a transparent-mode command/reply: (mode << 8) | code */

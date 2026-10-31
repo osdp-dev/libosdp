@@ -435,7 +435,9 @@ Two different limits apply, and only one of them is the one to design against:
 - `OSDP_TRS_APDU_MAX_LEN` (default 258 — a 255-byte short-APDU body plus status
   word) sizes the buffer embedded in the command and event structures. It is
   the memory knob: raise it at build time for extended-length APDUs, lower it
-  to save RAM.
+  to save RAM. `OSDP_TRS_CSN_MAX_LEN` (default 32) and
+  `OSDP_TRS_PROTOCOL_DATA_MAX_LEN` (default 64) size the card-info buffers
+  the same way, up to 255 each.
 - What fits on the wire is bounded by the packet size in use: the smaller of
   this build's `OSDP_PACKET_BUF_SIZE` and the peer's announced receive size,
   less framing. With the default 256-byte packets that is 216 bytes in each

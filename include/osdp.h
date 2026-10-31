@@ -1383,10 +1383,21 @@ struct osdp_trs_scan_params {
 #ifndef OSDP_TRS_APDU_MAX_LEN
 #define OSDP_TRS_APDU_MAX_LEN 258
 #endif
-/** @brief Max CSN length carried in a TRS card-info reply */
+/**
+ * @brief Max CSN length carried in a TRS card-info reply. Overridable at build
+ * time; osdp_event embeds a buffer of this size.
+ */
+#ifndef OSDP_TRS_CSN_MAX_LEN
 #define OSDP_TRS_CSN_MAX_LEN 32
-/** @brief Max protocol-data length carried in a TRS card-info reply */
+#endif
+/**
+ * @brief Max protocol-data (ATR, ATS or ATQB) length carried in a TRS
+ * card-info reply. Overridable at build time; osdp_event embeds a buffer of
+ * this size.
+ */
+#ifndef OSDP_TRS_PROTOCOL_DATA_MAX_LEN
 #define OSDP_TRS_PROTOCOL_DATA_MAX_LEN 64
+#endif
 
 struct osdp_trs_apdu {
 	uint16_t length; /**< APDU length in bytes */

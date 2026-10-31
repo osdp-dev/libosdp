@@ -68,6 +68,10 @@ reader error. On a PD, submit one to answer an `OSDP_CMD_XWR`. See
 
 <!-- doxygen:struct:osdp_trs_card_info:members -->
 
+<!-- doxygen:define:OSDP_TRS_CSN_MAX_LEN -->
+
+<!-- doxygen:define:OSDP_TRS_PROTOCOL_DATA_MAX_LEN -->
+
 <!-- doxygen:enum:osdp_trs_card_protocol_e -->
 
 <!-- doxygen:struct:osdp_trs_card_present:members -->
