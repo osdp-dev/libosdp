@@ -459,41 +459,42 @@ classes.
 TRS maps onto `commands.TrsStart`, `TrsSendApdu`, `TrsEnterPin`,
 `TrsCardScan` and `TrsStop`, the `events.TrsCardInfo`, `TrsCardPresent`,
 `TrsCardData`, `TrsPinComplete` and `TrsError` events, and the
-`ControlPanel.trs_scan_enable()` / `trs_get_max_apdu_len()` methods. A CP that
-waits for a card, runs one APDU against it and closes the session:
+`ControlPanel.trs_scan_enable()` / `trs_get_max_apdu_len()` methods.
+
+Most applications want the session helper on top of those.
+`ControlPanel.trs_session()` opens a band in a `with` block and closes it on
+the way out; each `transceive()` sends one C-APDU and returns the card's
+R-APDU. It returns once the library has settled the command, so there is no
+timeout to pick: a silent reader fails after `OSDP_TRS_ANSWER_TOUT_MS`, and a
+session that ends early fails what was left of it. A failed exchange raises
+`TrsSessionError`, carrying the reader's error code when it sent one. A CP
+that waits for a card, selects an applet on it and closes the session:
 
 ```python
-from osdp import (ControlPanel, LibFlag, NotificationType, PDInfo,
-                  TrsSessionStatus, commands, events)
+from osdp import ControlPanel, PDInfo, TrsSessionError, events
 
-cp = ControlPanel([PDInfo(101, channel, flags=[LibFlag.EnableNotification])])
+cp = ControlPanel([PDInfo(101, channel)])
 cp.start()
 cp.online_wait(101)
 cp.trs_scan_enable(101)
 
-def exchange(capdu: bytes) -> bytes | None:
-    cp.submit_command(101, commands.TrsSendApdu(apdu=capdu))
-    while True:
-        match cp.get_event(101, timeout=6):
-            case events.TrsCardData(apdu=rapdu):
-                return rapdu
-            case events.TrsError() | None:
-                return None
-            case events.Notification(type=NotificationType.TrsStatus) as n \
-                    if n.trs_status == TrsSessionStatus.Failed:
-                return None
-
 while True:
     match cp.get_event(101, timeout=1):
-        case events.TrsCardInfo(csn=csn):
+        case events.TrsCardInfo(reader=reader, csn=csn):
             print(f"card {csn.hex()}")
-            cp.submit_command(101, commands.TrsStart())
-            rapdu = exchange(bytes.fromhex("00A4040007D276000085010100"))
-            cp.submit_command(101, commands.TrsStop())
+            try:
+                with cp.trs_session(101, reader) as card:
+                    answer = card.transceive(
+                        bytes.fromhex("00A4040007D276000085010100"))
+            except TrsSessionError as e:
+                print(f"card exchange failed: {e}")
 ```
 
-The answer timeout above sits just past the library's own 5 s
-`OSDP_TRS_ANSWER_TOUT_MS`, so a silent reader surfaces as a failed command
-before `get_event()` gives up. On a `PeripheralDevice`, a command handler
-answers a `commands.TrsSendApdu` by calling `submit_event()` with an
-`events.TrsCardData` (or `events.TrsError`) and returning `None`.
+The answers a session returns are not queued again for `get_event()`. A held
+card is announced on every scan probe, so a real application also remembers
+which card it has already handled.
+
+On a `PeripheralDevice`, a command handler answers a `commands.TrsSendApdu`
+by calling `submit_event()` with an `events.TrsCardData` (or
+`events.TrsError`) and returning `None`; `trs_get_max_apdu_len()` bounds how
+much of the card's answer fits.

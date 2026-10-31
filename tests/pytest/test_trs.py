@@ -50,6 +50,7 @@ class PDApp:
         self.trs_commands = []
         self.card_status = TrsCardStatus.Present
         self.defer = False
+        self.error_code = None
 
     def reset(self):
         with self.lock:
@@ -57,6 +58,7 @@ class PDApp:
             self.trs_status_readers = []
             self.trs_commands = []
         self.defer = False
+        self.error_code = None
 
     def statuses(self):
         with self.lock:
@@ -74,7 +76,9 @@ class PDApp:
                     self.trs_status_readers.append(command.reader)
             case commands.TrsSendApdu():
                 self._record(command)
-                if not self.defer:
+                if self.error_code is not None:
+                    pd.submit_event(events.TrsError(code=self.error_code))
+                elif not self.defer:
                     pd.submit_event(events.TrsCardData(apdu=R_APDU))
             case commands.TrsEnterPin():
                 self._record(command)
@@ -287,6 +291,64 @@ def test_trs_band_enter_pin():
     assert trs_replies(collected) == [events.TrsPinComplete(tries=1)]
     assert pd_app.trs_commands == [enter_pin]
     assert (enter_pin, CompletionStatus.Ok) in completions
+
+
+def wait_for_session_closed():
+    collect_events(lambda c: TrsSessionStatus.Closed in trs_statuses(c))
+
+
+def test_trs_session_transceive():
+    with cp.trs_session(pd_addr) as card:
+        assert card.transceive(C_APDU) == R_APDU
+        assert card.card_scan().status == TrsCardStatus.Present
+    wait_for_session_closed()
+    # The session returned the answers; get_event() does not see them again
+    while (event := cp.get_event(pd_addr, timeout=0.2)) is not None:
+        assert type(event).ID != EventId.Trs
+
+
+def test_trs_session_waits_for_a_slow_card():
+    pd_app.defer = True
+
+    def answer_later():
+        deadline = time.monotonic() + 5
+        while not pd_app.trs_commands and time.monotonic() < deadline:
+            time.sleep(0.05)
+        time.sleep(0.3)
+        pd.submit_event(events.TrsCardData(reader_status=1, apdu=R_APDU))
+
+    answerer = threading.Thread(target=answer_later)
+    answerer.start()
+    with cp.trs_session(pd_addr) as card:
+        assert card.transceive(C_APDU) == R_APDU
+    answerer.join()
+    wait_for_session_closed()
+
+
+def test_trs_session_raises_on_a_reader_error():
+    pd_app.error_code = 0x02
+    with cp.trs_session(pd_addr) as card:
+        with pytest.raises(TrsSessionError) as raised:
+            card.transceive(C_APDU)
+        # The session survives a failed exchange
+        pd_app.error_code = None
+        assert card.transceive(C_APDU) == R_APDU
+    assert raised.value.status == CompletionStatus.Failed
+    assert raised.value.code == 0x02
+    wait_for_session_closed()
+
+
+def test_trs_session_on_the_second_reader():
+    with cp.trs_session(pd_addr, reader=1) as card:
+        assert card.transceive(C_APDU) == R_APDU
+    wait_for_session_closed()
+    assert [c.reader for c in pd_app.trs_commands] == [1]
+
+
+def test_trs_session_refused_outside_the_pd_readers():
+    with pytest.raises(TrsSessionError):
+        with cp.trs_session(pd_addr, reader=2):
+            pass
 
 
 def test_trs_card_command_outside_a_band_is_refused():

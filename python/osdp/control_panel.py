@@ -11,7 +11,7 @@ import threading
 import time
 from typing import Any, Callable
 
-from . import _sys
+from . import _sys, commands, events
 from ._marshal import decode_command, decode_event, encode_command
 from .commands import Command
 from .enums import (
@@ -22,10 +22,16 @@ from .enums import (
     MpMsgType,
     NotificationType,
 )
+from .errors import TrsSessionError
 from .events import Event, Notification
 from .types import FileOps, FileTxStatus, Metrics, PdId, PDInfo
 
-__all__ = ["CommandCompletionHandler", "ControlPanel", "EventHandler"]
+__all__ = [
+    "CommandCompletionHandler",
+    "ControlPanel",
+    "EventHandler",
+    "TrsSession",
+]
 
 EventHandler = Callable[[int, Event], int]
 """Called with (pd_address, event) when a PD reports something.
@@ -50,6 +56,34 @@ _UNKNOWN_PD_ID = PdId(
     version=0, model=0, vendor_code=0, serial_number=0, firmware_version=0
 )
 """What a PD's identity reads as before it has reported one."""
+
+# The events that answer each card command a TrsSession sends; a reader error
+# answers any of them.
+_TRS_ANSWERS: dict[type, tuple[type, ...]] = {
+    commands.TrsSendApdu: (events.TrsCardData, events.TrsError),
+    commands.TrsEnterPin: (events.TrsPinComplete, events.TrsError),
+    commands.TrsCardScan: (events.TrsCardPresent, events.TrsError),
+}
+
+
+class _TrsExchange:
+    """One card command a TrsSession is waiting on.
+
+    The library delivers a card command's answer before the command
+    completes, and completes every command exactly once, so the completion
+    is when the exchange is decided and the answer is already in hand.
+    """
+
+    def __init__(self, command: Command) -> None:
+        self.command = command
+        self.answer: Event | None = None
+        self.status: CompletionStatus | None = None
+        self.done = threading.Event()
+
+    def takes(self, event: Event) -> bool:
+        return self.answer is None and isinstance(
+            event, _TRS_ANSWERS[type(self.command)]
+        )
 
 
 class ControlPanel:
@@ -87,6 +121,9 @@ class ControlPanel:
         self._online = 0
         self._sc_active = 0
         self._pd_ids = [_UNKNOWN_PD_ID for _ in self.pd_addr]
+        self._trs_exchange: list[_TrsExchange | None] = [
+            None for _ in self.pd_addr
+        ]
 
         # Notifications are how the above is fed, so they are turned on at the
         # library level whatever the caller asked for. Whether the caller also
@@ -131,7 +168,13 @@ class ControlPanel:
                 # This one was only ever ours; the caller did not ask to see
                 # library notifications.
                 return 0
-        self.event_queue[pd].put(decoded)
+        exchange = self._trs_exchange[pd]
+        if exchange is not None and exchange.takes(decoded):
+            # The TrsSession waiting on it returns it; get_event() would
+            # otherwise hand the same answer out a second time.
+            exchange.answer = decoded
+        else:
+            self.event_queue[pd].put(decoded)
         if self.user_event_handler:
             return self.user_event_handler(self.pd_addr[pd], decoded)
         return 0
@@ -167,11 +210,15 @@ class ControlPanel:
     def _internal_command_completion_handler(
         self, pd: int, command: dict[str, Any], status: int
     ) -> None:
+        decoded = decode_command(command)
+        exchange = self._trs_exchange[pd]
+        if exchange is not None and decoded == exchange.command:
+            self._trs_exchange[pd] = None
+            exchange.status = CompletionStatus(status)
+            exchange.done.set()
         if self.user_command_completion_handler:
             self.user_command_completion_handler(
-                self.pd_addr[pd],
-                decode_command(command),
-                CompletionStatus(status),
+                self.pd_addr[pd], decoded, CompletionStatus(status)
             )
 
     def set_event_handler(self, handler: EventHandler | None) -> None:
@@ -428,6 +475,46 @@ class ControlPanel:
         with self.lock:
             return self.ctx.trs_get_max_apdu_len(pd)
 
+    def trs_session(self, address: int, reader: int = 0) -> "TrsSession":
+        """Open a card session on a PD's reader, for use in a `with` block.
+
+        Entering submits a `commands.TrsStart`, leaving submits the
+        `commands.TrsStop` that closes it; in between, the session's methods
+        send one card command at a time and return the card's answer.
+
+        Example:
+            with cp.trs_session(101) as card:
+                answer = card.transceive(bytes.fromhex("00A4040007D2760000850101"))
+
+        @see osdp_trs_cmd_e
+        """
+        return TrsSession(self, address, reader)
+
+    def _trs_exchange_run(
+        self, address: int, command: Command, timeout: float | None
+    ) -> Event:
+        pd = self.pd_addr.index(address)
+        exchange = _TrsExchange(command)
+        with self.lock:
+            if self._trs_exchange[pd] is not None:
+                raise TrsSessionError("a card exchange is already running")
+            # Registered before the submit, under the lock the refresh loop
+            # holds, so the answer cannot arrive ahead of it.
+            self._trs_exchange[pd] = exchange
+            if not self.ctx.submit_command(pd, encode_command(command)):
+                self._trs_exchange[pd] = None
+                raise TrsSessionError("card command refused")
+        if not exchange.done.wait(timeout):
+            with self.lock:
+                if self._trs_exchange[pd] is exchange:
+                    self._trs_exchange[pd] = None
+            raise TimeoutError("no verdict on the card command in time")
+        answer = exchange.answer
+        if exchange.status is CompletionStatus.Ok and answer is not None:
+            return answer
+        code = answer.code if isinstance(answer, events.TrsError) else None
+        raise TrsSessionError("card exchange failed", exchange.status, code)
+
     # -- lifecycle ----------------------------------------------------------
 
     @staticmethod
@@ -505,3 +592,74 @@ class ControlPanel:
         return self._wait_until(
             lambda: self.get_num_sc_active() == self.num_pds, timeout
         )
+
+
+class TrsSession:
+    """A card session on one reader of one PD; see
+    `ControlPanel.trs_session()`.
+
+    Each method sends one card command and blocks until the library has
+    settled it, returning the card's answer. The answer is returned here
+    rather than queued for `ControlPanel.get_event()`; an event handler
+    still sees it.
+
+    `timeout` defaults to None, which waits for the library's own verdict:
+    it fails a card command the reader leaves unanswered (after
+    OSDP_TRS_ANSWER_TOUT_MS, 5 s by default) and fails or flushes every
+    command of a session that ends early, so the wait always ends. A PIN
+    entry waits as long as the person takes; give it a timeout to bound
+    that. A TimeoutError leaves the command running; leave the session to
+    close it.
+
+    Raises TrsSessionError when the session cannot open or a card exchange
+    did not happen.
+    """
+
+    def __init__(self, cp: ControlPanel, address: int, reader: int) -> None:
+        self.cp = cp
+        self.address = address
+        self.reader = reader
+
+    def __enter__(self) -> "TrsSession":
+        if not self.cp.submit_command(
+            self.address, commands.TrsStart(reader=self.reader)
+        ):
+            raise TrsSessionError("card session refused")
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        # Refused only when the session already ended on its own, which
+        # leaves nothing to close.
+        self.cp.submit_command(
+            self.address, commands.TrsStop(reader=self.reader)
+        )
+
+    def transceive(self, apdu: bytes, timeout: float | None = None) -> bytes:
+        """Send a C-APDU to the card and return its R-APDU, status word
+        included."""
+        answer = self.cp._trs_exchange_run(
+            self.address,
+            commands.TrsSendApdu(reader=self.reader, apdu=apdu),
+            timeout,
+        )
+        assert isinstance(answer, events.TrsCardData)
+        return answer.apdu
+
+    def enter_pin(
+        self, command: commands.TrsEnterPin, timeout: float | None = None
+    ) -> events.TrsPinComplete:
+        """Run a secure PIN entry on the reader. `command.reader` must be
+        this session's reader."""
+        answer = self.cp._trs_exchange_run(self.address, command, timeout)
+        assert isinstance(answer, events.TrsPinComplete)
+        return answer
+
+    def card_scan(
+        self, timeout: float | None = None
+    ) -> events.TrsCardPresent:
+        """Ask the reader whether a card is in its field."""
+        answer = self.cp._trs_exchange_run(
+            self.address, commands.TrsCardScan(reader=self.reader), timeout
+        )
+        assert isinstance(answer, events.TrsCardPresent)
+        return answer

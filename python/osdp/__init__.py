@@ -25,7 +25,12 @@ names which appear on both sides (Status, Notification, BioRead) stay distinct:
 from . import commands, enums, events
 from .channel import Channel
 from .commands import Command
-from .control_panel import CommandCompletionHandler, ControlPanel, EventHandler
+from .control_panel import (
+    CommandCompletionHandler,
+    ControlPanel,
+    EventHandler,
+    TrsSession,
+)
 from .log import LogHandler, set_log_handler
 from .enums import (
     BioFormat,
@@ -57,7 +62,7 @@ from .enums import (
     TrsReply,
     TrsSessionStatus,
 )
-from .errors import MarshalError, NakError, OSDPError
+from .errors import MarshalError, NakError, OSDPError, TrsSessionError
 from .events import Event
 from .key_store import KeyStore
 from .peripheral_device import (
@@ -89,6 +94,7 @@ __all__ = [
     "ControlPanel",
     "PeripheralDevice",
     "KeyStore",
+    "TrsSession",
     "set_log_handler",
     # payload unions
     "Command",
@@ -111,6 +117,7 @@ __all__ = [
     "MarshalError",
     "NakError",
     "OSDPError",
+    "TrsSessionError",
     # enums
     "BioFormat",
     "BioStatus",

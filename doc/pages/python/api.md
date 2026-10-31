@@ -130,6 +130,8 @@ command or event that could not cross the C boundary.
 
 <!-- pydoc:class:errors.MarshalError -->
 
+<!-- pydoc:class:errors.TrsSessionError -->
+
 ## Enumerations
 
 These enums are shared across the API. The command- and event-specific enums

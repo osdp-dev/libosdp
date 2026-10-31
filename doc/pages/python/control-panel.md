@@ -115,14 +115,25 @@ implementation with `register_file_ops(address, fops)`, then submit a
 
 ## Smart cards (TRS)
 
-To talk to a smart card on the reader, open a session with
-`commands.TrsStart`, exchange APDUs with `commands.TrsSendApdu`, and close it
-with `commands.TrsStop`; each answer arrives as an `events.TrsCardData`.
+To talk to a smart card on the reader, open a session and exchange APDUs in
+it:
+
+```python
+with cp.trs_session(101) as card:
+    answer = card.transceive(bytes.fromhex("00A4040007D276000085010100"))
+```
+
+Each call returns the card's answer once the library has settled the command,
+and raises `TrsSessionError` when the exchange did not happen.
 `trs_scan_enable(address)` has the library watch for cards between sessions,
 which then arrive as `events.TrsCardInfo`, and `trs_get_max_apdu_len(address)`
-says how large an APDU the link can carry. See
+says how large an APDU the link can carry. The session is built on
+`commands.TrsStart`, `TrsSendApdu` and `TrsStop`, which can also be submitted
+directly. See
 [Transparent Reader Support](/libosdp/smartcard#transparent-reader-support-trs)
-for the whole flow, with a worked Python example.
+for the whole flow.
+
+<!-- pydoc:class:TrsSession:methods -->
 
 ## See also
 

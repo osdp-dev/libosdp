@@ -6,9 +6,9 @@
 
 """Exceptions raised by the osdp package."""
 
-from .enums import NakCode
+from .enums import CompletionStatus, NakCode
 
-__all__ = ["MarshalError", "NakError", "OSDPError"]
+__all__ = ["MarshalError", "NakError", "OSDPError", "TrsSessionError"]
 
 
 class OSDPError(Exception):
@@ -34,6 +34,43 @@ class NakError(OSDPError):
         """Why the command was rejected."""
 
         super().__init__(f"Command rejected: {code.name}")
+
+
+class TrsSessionError(OSDPError):
+    """Raised by a `ControlPanel.trs_session()` when a card session cannot
+    open, or a card exchange in it did not happen.
+
+    A card that answered with an error status word has still answered: that
+    is a successful exchange, and nothing is raised.
+
+    Example:
+        >>> raise TrsSessionError("card exchange failed",
+        ...                       CompletionStatus.Failed, code=0x01)
+        Traceback (most recent call last):
+        osdp.errors.TrsSessionError: card exchange failed (Failed, reader error 0x01)
+    """
+
+    def __init__(
+        self,
+        message: str,
+        status: CompletionStatus | None = None,
+        code: int | None = None,
+    ) -> None:
+        self.status = status
+        """How the command settled: Failed when the reader reported an error
+        or never answered, Flushed when the session ended under it. None when
+        the session could not be opened at all."""
+
+        self.code = code
+        """The reader's error code, when it sent one. Reader-defined: OSDP
+        does not standardize it."""
+
+        detail = [status.name] if status is not None else []
+        if code is not None:
+            detail.append(f"reader error 0x{code:02x}")
+        if detail:
+            message = f"{message} ({', '.join(detail)})"
+        super().__init__(message)
 
 
 class MarshalError(OSDPError):
