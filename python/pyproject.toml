@@ -33,6 +33,9 @@ classifiers = [
     "Typing :: Typed",
 ]
 
+[project.optional-dependencies]
+serial = ["pyserial >= 3.5"]
+
 [project.urls]
 Homepage = "https://github.com/osdp-dev/libosdp"
 Documentation = "https://doc.osdp.dev/"

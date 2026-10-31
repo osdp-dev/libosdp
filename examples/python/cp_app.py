@@ -10,36 +10,17 @@
 
 import argparse
 
-import serial
-
 from osdp import (
-    Channel,
     Command,
     CompletionStatus,
     ControlPanel,
     KeyStore,
     LEDColor,
     PDInfo,
+    SerialChannel,
     commands,
     events,
 )
-
-
-class SerialChannel(Channel):
-    def __init__(self, device: str, speed: int):
-        self.dev = serial.Serial(device, speed, timeout=0)
-
-    def read(self, max_bytes: int) -> bytes:
-        return self.dev.read(max_bytes)
-
-    def write(self, data: bytes) -> int:
-        return self.dev.write(data)
-
-    def flush(self) -> None:
-        self.dev.flush()
-
-    def __del__(self):
-        self.dev.close()
 
 
 parser = argparse.ArgumentParser(prog='cp_app', description="LibOSDP CP APP Example")

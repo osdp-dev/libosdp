@@ -23,7 +23,7 @@ names which appear on both sides (Status, Notification, BioRead) stay distinct:
 """
 
 from . import commands, enums, events
-from .channel import Channel
+from .channel import Channel, SerialChannel
 from .commands import Command
 from .control_panel import (
     CommandCompletionHandler,
@@ -91,6 +91,7 @@ __all__ = [
     "events",
     # core
     "Channel",
+    "SerialChannel",
     "ControlPanel",
     "PeripheralDevice",
     "KeyStore",

@@ -11,11 +11,8 @@
 import argparse
 import signal
 
-import serial
-
 from osdp import (
     Capability,
-    Channel,
     Command,
     CompletionStatus,
     Event,
@@ -25,6 +22,7 @@ from osdp import (
     PDCapabilities,
     PDInfo,
     PeripheralDevice,
+    SerialChannel,
     StatusReportType,
     commands,
     events,
@@ -40,23 +38,6 @@ def signal_handler(sig, frame):
 
 
 signal.signal(signal.SIGINT, signal_handler)
-
-
-class SerialChannel(Channel):
-    def __init__(self, device: str, speed: int):
-        self.dev = serial.Serial(device, speed, timeout=0)
-
-    def read(self, max_bytes: int) -> bytes:
-        return self.dev.read(max_bytes)
-
-    def write(self, data: bytes) -> int:
-        return self.dev.write(data)
-
-    def flush(self) -> None:
-        self.dev.flush()
-
-    def __del__(self):
-        self.dev.close()
 
 
 parser = argparse.ArgumentParser(prog='pd_app', description="LibOSDP PD APP Example")

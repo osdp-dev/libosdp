@@ -47,34 +47,16 @@ pip install .
 
 ## Quick Start
 
-LibOSDP does not own the transport; you implement a `Channel` over your wire.
-Both snippets below use this `pyserial`-backed channel (`pip install pyserial`):
-
-```python
-import serial
-from osdp import Channel
-
-class SerialChannel(Channel):
-    def __init__(self, device: str, speed: int = 115200):
-        self.dev = serial.Serial(device, speed, timeout=0)
-
-    def read(self, max_bytes: int) -> bytes:
-        return self.dev.read(max_bytes)
-
-    def write(self, data: bytes) -> int:
-        return self.dev.write(data)
-
-    def flush(self) -> None:
-        self.dev.flush()
-
-    def __del__(self):
-        self.dev.close()
-```
+LibOSDP does not own the transport; a `Channel` moves bytes over your wire.
+For a serial port — an RS-485 adapter or a USB serial device — use the
+built-in `SerialChannel` (`pip install libosdp[serial]`); for anything else,
+subclass `Channel`. Both snippets below talk over a serial port.
 
 ### Control Panel Mode
 
 ```python
-from osdp import ControlPanel, PDInfo, KeyStore, LogLevel, LEDColor, commands, events
+from osdp import (ControlPanel, PDInfo, KeyStore, LogLevel, LEDColor,
+                  SerialChannel, commands, events)
 
 # Create a communication channel
 channel = SerialChannel("/dev/ttyUSB0")
@@ -135,7 +117,7 @@ cp.set_command_completion_handler(on_command_complete)
 ```python
 from osdp import (
     Capability, CardFormat, Command, NakCode, NakError, PDCapabilities, PDInfo,
-    PeripheralDevice, StatusReportType, commands, events,
+    PeripheralDevice, SerialChannel, StatusReportType, commands, events,
 )
 
 # Create a communication channel

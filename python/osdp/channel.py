@@ -7,8 +7,9 @@
 """The transport a CP and PD talk over."""
 
 import abc
+from typing import Any
 
-__all__ = ["Channel"]
+__all__ = ["Channel", "SerialChannel"]
 
 
 class Channel(abc.ABC):
@@ -36,3 +37,49 @@ class Channel(abc.ABC):
     @abc.abstractmethod
     def flush(self) -> None:
         """Discard anything buffered. May do nothing if that has no meaning."""
+
+
+class SerialChannel(Channel):
+    """A Channel over a serial port: RS-485 adapters, USB CDC ACM devices,
+    or anything else the OS presents as one.
+
+    Needs pyserial (``pip install libosdp[serial]``). Reads never block;
+    a write blocks until the frame is handed to the driver, which at OSDP
+    frame sizes is a few milliseconds. Close the port with `close()`, or use
+    the channel as a context manager.
+
+    Example:
+        with SerialChannel("/dev/ttyUSB0", 115200) as channel:
+            cp = ControlPanel([PDInfo(101, channel)])
+    """
+
+    def __init__(self, device: str, baudrate: int = 115200) -> None:
+        try:
+            import serial
+        except ImportError as e:
+            raise ImportError(
+                "SerialChannel needs pyserial: pip install libosdp[serial]"
+            ) from e
+        self.port: Any = serial.Serial(device, baudrate, timeout=0)
+        """The underlying `serial.Serial`."""
+
+    def read(self, max_bytes: int) -> bytes:
+        return bytes(self.port.read(max_bytes))
+
+    def write(self, buf: bytes) -> int:
+        return int(self.port.write(buf))
+
+    def flush(self) -> None:
+        # What a peer sent before the library chose to resynchronize; what
+        # we have queued to send is a frame in flight, and must go out whole.
+        self.port.reset_input_buffer()
+
+    def close(self) -> None:
+        """Close the serial port."""
+        self.port.close()
+
+    def __enter__(self) -> "SerialChannel":
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close()

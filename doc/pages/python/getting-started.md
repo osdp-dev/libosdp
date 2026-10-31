@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-08-20
+lastUpdated: 2026-10-29
 description: "Get started with the LibOSDP Python bindings — install the package and build a minimal OSDP control panel or peripheral device in a few lines of Python."
 ---
 # Python Getting Started
@@ -24,32 +24,23 @@ for the per-OS toolchain requirements and other install methods.
 
 ## A channel to talk over
 
-LibOSDP does not own the transport. You implement a [`Channel`](/python/api#channel)
-that moves bytes over your wire (serial, TCP, etc.) and hand it to the device.
-A `pyserial`-backed channel looks like this:
+LibOSDP does not own the transport. A [`Channel`](/python/api#channel) moves
+bytes over your wire and is handed to the device. For a serial port — an RS-485
+adapter or a USB serial device — the bindings ship `SerialChannel`, which needs
+pyserial:
 
-```python
-import serial
-from osdp import Channel
-
-class SerialChannel(Channel):
-    def __init__(self, device: str, speed: int = 115200):
-        self.dev = serial.Serial(device, speed, timeout=0)
-
-    def read(self, max_bytes: int) -> bytes:
-        return self.dev.read(max_bytes)
-
-    def write(self, data: bytes) -> int:
-        return self.dev.write(data)
-
-    def flush(self) -> None:
-        self.dev.flush()
-
-    def __del__(self):
-        self.dev.close()
+```sh
+pip install "libosdp[serial]"
 ```
 
-Both snippets below use this `SerialChannel` (`pip install pyserial`).
+```python
+from osdp import SerialChannel
+
+channel = SerialChannel("/dev/ttyUSB0", 115200)
+```
+
+For any other transport (TCP, a radio link, a test harness), subclass
+`Channel`. Both snippets below talk over a `SerialChannel`.
 
 ## Control Panel mode
 
@@ -59,7 +50,8 @@ thread that services the bus for you, so the application never has to poll on a
 timer.
 
 ```python
-from osdp import ControlPanel, PDInfo, KeyStore, LogLevel, LEDColor, commands, events
+from osdp import (ControlPanel, PDInfo, KeyStore, LogLevel, LEDColor,
+                  SerialChannel, commands, events)
 
 channel = SerialChannel("/dev/ttyUSB0")
 
@@ -111,7 +103,8 @@ inline, or raise [`NakError`](/python/api#errors) to decline it.
 ```python
 from osdp import (
     Capability, Command, NakCode, NakError, PDCapabilities, PDInfo,
-    PeripheralDevice, StatusReportType, commands, events, CardFormat,
+    PeripheralDevice, SerialChannel, StatusReportType, commands, events,
+    CardFormat,
 )
 
 channel = SerialChannel("/dev/ttyUSB0")

@@ -17,7 +17,7 @@ one never waits on the bus.
 To run the samples, you have to install the following python packages:
 
 ```sh
-python3 -m pip install pyserial libosdp
+python3 -m pip install "libosdp[serial]"
 ```
 
 Then you can run start the CP/PD service as,

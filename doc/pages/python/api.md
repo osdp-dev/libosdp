@@ -62,14 +62,13 @@ of each function code and its compliance levels.
 
 ## Channel
 
-LibOSDP does not own the transport. You subclass `Channel` and implement three
-methods that move bytes over your wire — serial, TCP, or anything else — and
-hand an instance to a `PDInfo`.
+LibOSDP does not own the transport. A `Channel` moves bytes over your wire and
+is handed to a `PDInfo`. Serial ports are covered by `SerialChannel`; for
+anything else, subclass `Channel` and implement its three methods.
 
 <!-- pydoc:class:channel.Channel -->
 
-A minimal `pyserial` implementation is shown in
-[Getting Started](/python/getting-started#a-channel-to-talk-over).
+<!-- pydoc:class:channel.SerialChannel -->
 
 ## KeyStore
 
