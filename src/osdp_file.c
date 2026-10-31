@@ -19,6 +19,9 @@
 #define OSDP_FILE_TX_STATUS_ERR_UNKNOWN	       -2
 #define OSDP_FILE_TX_STATUS_ERR_INVALID	       -3
 
+/* The upper byte of osdp_file::flags is libosdp's own transfer state; the
+ * rest holds what the app passed in osdp_cmd_file_tx::flags. */
+#define OSDP_FILE_TX_FLAG_INTERNAL   0xFF000000
 #define OSDP_FILE_TX_FLAG_EXCLUSIVE  0x01000000
 #define OSDP_FILE_TX_FLAG_PLAIN_TEXT 0x02000000
 #define OSDP_FILE_TX_FLAG_POLL_RESP  0x04000000
@@ -338,7 +341,8 @@ int osdp_file_cmd_tx_decode(struct osdp_pd *pd, uint8_t *buf, int len)
 			/* Notify app of this command and make sure we can
 			 * proceed */
 			cmd.id = OSDP_CMD_FILE_TX;
-			cmd.file_tx.flags = f->flags;
+			cmd.file_tx.flags =
+				f->flags & ~OSDP_FILE_TX_FLAG_INTERNAL;
 			cmd.file_tx.id = type;
 			if (pd->command_callback(pd->command_callback_arg,
 						 &cmd) < 0) {
@@ -575,6 +579,12 @@ int osdp_file_tx_command(struct osdp_pd *pd, int file_id, uint32_t flags)
 
 	if (f == NULL) {
 		LOG_ERR("TX_init: File ops not registered!");
+		return -1;
+	}
+
+	if (flags & OSDP_FILE_TX_FLAG_INTERNAL) {
+		LOG_ERR("TX_init: flags 0x%08" PRIx32 " set reserved bits",
+			flags);
 		return -1;
 	}
 

@@ -1098,9 +1098,9 @@ struct osdp_cmd_file_tx {
 	/**
 	 * Reserved and set to zero by OSDP spec.
 	 *
-	 * @note: The upper bits are used by libosdp internally (IOW, not sent
-	 * over the OSDP bus). No application-settable flags are defined; to
-	 * stop a running transfer, call osdp_cp_cancel().
+	 * @note: The upper 8 bits are reserved for libosdp; a command that
+	 * sets them is refused. No application flags are defined; to stop a
+	 * running transfer, call osdp_cp_cancel().
 	 */
 	uint32_t flags;
 };
