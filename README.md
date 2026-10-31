@@ -26,21 +26,42 @@ This protocol is developed and maintained by [Security Industry Association][20]
 
 ## Salient Features of LibOSDP
 
+  - Complete OSDP v2.2 command and reply set, on both the CP and the PD side
+    ([see][22]). The one message left out on purpose is `osdp_FMT`, whose
+    character count the specification leaves undefined.
+  - Transparent Reader Support (TRS): a CP drives a smart card through the
+    reader with raw ISO 7816 APDUs, including secure PIN entry, while the
+    library runs the reader's mode switching and a background card presence
+    scan ([see][45]).
+  - Smart card (PIV data, GENAUTH, CRAUTH), biometric read/match and file
+    transfer, with multi-part messages fragmented and reassembled by the
+    library so applications only ever see whole payloads.
   - Supports secure channel communication (AES-128) by default and provides a
     custom init-time flag to enforce a higher level of security not mandated by
-    the specification ([see][41])
+    the specification ([see][41]). A key rotation only takes effect once a
+    session on the new key proves it; one that fails leaves the PD on the key
+    it already had.
+  - Asynchronous API: commands and events are queued by reference, and every
+    one is reported back exactly once through a completion callback (done,
+    failed, flushed or aborted). Link, session and transfer state changes are
+    delivered as notifications.
+  - Fully non-blocking; the application drives it with a periodic refresh, so
+    it fits a superloop, an RTOS task or an event loop alike.
   - Can be used to setup a PD or CP mode of operation (see [examples][39]).
   - Exposes a well defined contract though a single [header file][38].
   - Cross-platform; can be built to run on bare-metal embedded devices, Linux,
     Mac, and Windows.
-  - No run-time memory allocation. All memory is allocated at init-time
+  - No run-time memory allocation. All memory is allocated at init-time, and
+    a static build (`OPT_OSDP_STATIC`) does without a heap altogether.
+  - Optional zero-copy receive path for RAM-constrained targets, letting the
+    transport hand frames to the library without an intermediate ring buffer.
   - No external dependencies (for ease of cross compilation)
-  - Fully non-blocking, asynchronous design
-  - Provides Rust, Python3, and C++ bindings for the C library for faster
+  - Provides Rust, Python3, .NET and C++ bindings for the C library for faster
     integration into various development phases.
   - Includes dozens of integration and unit tests which are incorporated in CI
     to ensure higher quality of releases.
-  - Built-in, sophisticated, debugging infrastructure and tools ([see][14]).
+  - Built-in, sophisticated, debugging infrastructure and tools, including
+    packet capture and per-PD link metrics ([see][14]).
   - Packaged and distributed through various package repositories such as
     Cargo [crates][19], [PyPI][12], [Vcpkg][33], [PlatformIO][18], etc.,
 
@@ -87,9 +108,9 @@ more info and usage examples.
 
 ## Supported Commands and Replies
 
-OSDP has certain command and reply IDs pre-registered. This implementation of
-the protocol support only the most common among them. You can see a list of
-commands and replies and their support status in LibOSDP [here][22].
+OSDP has certain command and reply IDs pre-registered. LibOSDP implements every
+one that OSDP v2.2 defines except `osdp_FMT`. You can see a list of commands
+and replies and their support status in LibOSDP [here][22].
 
 ## Build & Install
 
@@ -179,3 +200,4 @@ Your support will ensure sustained development of LibOSDP.
 [42]: https://img.shields.io/nuget/v/LibOSDP?logo=nuget
 [43]: https://www.nuget.org/packages/LibOSDP
 [44]: https://github.com/osdp-dev/libosdp/tree/master/dotnet
+[45]: https://doc.osdp.dev/libosdp/smartcard#transparent-reader-support-trs
