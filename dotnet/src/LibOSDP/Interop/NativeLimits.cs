@@ -19,6 +19,9 @@ internal static class NativeLimits
     internal const int EventMfgrepMaxDataLen = 128;
     internal const int EventMfgstatMaxDataLen = 128;
     internal const int EventBioreadrMaxTemplateLen = 256;
+    internal const int TrsApduMaxLen = 258;
+    internal const int TrsCsnMaxLen = 32;
+    internal const int TrsProtocolDataMaxLen = 64;
 
     // The unions hold no pointers and nothing wider than 4-byte alignment, so
     // their size is the same on every target. Measured on armv7, where struct
@@ -35,12 +38,22 @@ internal static class NativeCmdId
     internal const int Output = 1, Led = 2, Buzzer = 3, Text = 4, Keyset = 5,
         Comset = 6, Mfg = 7, FileTx = 8, Status = 9, ComsetDone = 10,
         Notification = 11, BioRead = 12, BioMatch = 13, TdSet = 14,
-        PivData = 15, GenAuth = 16, CrAuth = 17;
+        PivData = 15, GenAuth = 16, CrAuth = 17, Xwr = 18;
 }
 
 internal static class NativeEventId
 {
     internal const int CardRead = 1, KeyPress = 2, MfgRep = 3, Status = 4,
         Notification = 5, MfgStatR = 6, MfgErrR = 7, BioReadR = 8,
-        BioMatchR = 9, PivDataR = 10, GenAuthR = 11, CrAuthR = 12;
+        BioMatchR = 9, PivDataR = 10, GenAuthR = 11, CrAuthR = 12, Trs = 13;
+}
+
+internal static class NativeTrsCmdId // enum osdp_trs_cmd_e
+{
+    internal const int Start = 1, Stop = 2, SendApdu = 3, EnterPin = 4, CardScan = 5;
+}
+
+internal static class NativeTrsReplyId // enum osdp_trs_reply_e
+{
+    internal const int CardInfo = 1, CardPresent = 2, CardData = 3, PinComplete = 4, Error = 5;
 }

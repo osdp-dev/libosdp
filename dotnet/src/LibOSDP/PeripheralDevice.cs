@@ -158,6 +158,22 @@ public sealed unsafe class PeripheralDevice : IDisposable
         return Math.Max(n, 0);
     }
 
+    /// <summary>
+    /// Longest R-APDU a <see cref="TrsCardDataEvent"/> can carry to the CP. It
+    /// changes when the CP announces its receive size, so ask for each answer;
+    /// a longer one is refused, and should be answered with a
+    /// <see cref="TrsErrorEvent"/> instead.
+    /// </summary>
+    /// <returns>The length in bytes.</returns>
+    public int GetTrsMaxApduLength()
+    {
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_ctx == 0, this);
+            return Native.PdTrsGetMaxApduLen(_ctx);
+        }
+    }
+
     /// <summary>Provide storage for files the CP sends.</summary>
     /// <param name="operations">The file sink.</param>
     /// <exception cref="InvalidOperationException">The link has already been refreshed.</exception>

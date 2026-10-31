@@ -148,3 +148,68 @@ public sealed record GenAuthCommand(byte Algorithm, byte Key, byte[] Data) : Osd
 /// <param name="Key">Key reference.</param>
 /// <param name="Data">Challenge, at most 256 bytes.</param>
 public sealed record CrAuthCommand(byte Algorithm, byte Key, byte[] Data) : OsdpCommand;
+
+/// <summary>
+/// Open a transparent-reader (TRS) card session, a band: the commands up to
+/// the matching <see cref="TrsStopCommand"/>. LibOSDP puts the reader in
+/// transparent mode; inside a band only TRS commands are accepted, and every
+/// one must name this reader.
+/// </summary>
+/// <param name="Reader">Reader the session talks to, from 0.</param>
+public sealed record TrsStartCommand(byte Reader = 0) : OsdpCommand;
+
+/// <summary>Close the card session; LibOSDP releases the card and restores the reader.</summary>
+/// <param name="Reader">The reader the band's <see cref="TrsStartCommand"/> named.</param>
+public sealed record TrsStopCommand(byte Reader = 0) : OsdpCommand;
+
+/// <summary>
+/// Send a C-APDU to the card, inside a band. The card's answer arrives as a
+/// <see cref="TrsCardDataEvent"/> before this command completes.
+/// </summary>
+/// <param name="Reader">The reader the band's <see cref="TrsStartCommand"/> named.</param>
+/// <param name="Apdu">The C-APDU; see <see cref="ControlPanel.GetTrsMaxApduLength"/> for how much fits.</param>
+public sealed record TrsSendApduCommand(byte Reader, byte[] Apdu) : OsdpCommand;
+
+/// <summary>Where, and how, a reader writes the entered PIN into the C-APDU.</summary>
+/// <param name="Format">Digit encoding.</param>
+/// <param name="RightJustify">Right-justify the PIN within the block.</param>
+/// <param name="OffsetBits">Block position in the APDU payload, in bits.</param>
+/// <param name="SizeBytes">Block size in bytes, as defined by the card scheme (8 for EMV).</param>
+public sealed record TrsPinBlock(TrsPinFormat Format, bool RightJustify, ushort OffsetBits, byte SizeBytes);
+
+/// <summary>Where a reader records how many digits were entered.</summary>
+/// <param name="SizeBits">Field size in bits; 0 when the APDU has no such field.</param>
+/// <param name="OffsetBits">Field position in the APDU payload, in bits.</param>
+public sealed record TrsPinLengthField(byte SizeBits, ushort OffsetBits);
+
+/// <summary>
+/// Have the reader prompt for a PIN, insert it into <paramref name="Apdu"/>
+/// and send that to the card, inside a band. The answer arrives as a
+/// <see cref="TrsPinCompleteEvent"/>. Positions the wire cannot express are
+/// refused at submission.
+/// </summary>
+/// <param name="Reader">The reader the band's <see cref="TrsStartCommand"/> named.</param>
+/// <param name="TimeoutInitial">Seconds to wait for the first digit; 0 for the reader's default.</param>
+/// <param name="TimeoutDigit">Seconds to wait for each further digit.</param>
+/// <param name="PinBlock">Where and how the PIN goes into the APDU.</param>
+/// <param name="PinLengthField">Where the number of digits goes into the APDU.</param>
+/// <param name="MinDigits">Shortest PIN accepted.</param>
+/// <param name="MaxDigits">Longest PIN accepted.</param>
+/// <param name="CompleteOn">What ends the entry.</param>
+/// <param name="NumMessages">Number of display messages.</param>
+/// <param name="LanguageId">Display language.</param>
+/// <param name="MsgIndex">Index of the message to display.</param>
+/// <param name="TeoPrologue">T=1 protocol prologue; exactly 3 bytes.</param>
+/// <param name="Apdu">The C-APDU the PIN is written into.</param>
+public sealed record TrsEnterPinCommand(byte Reader, byte TimeoutInitial, byte TimeoutDigit, TrsPinBlock PinBlock,
+                                        TrsPinLengthField PinLengthField, byte MinDigits, byte MaxDigits,
+                                        TrsPinComplete CompleteOn, byte NumMessages, ushort LanguageId,
+                                        byte MsgIndex, byte[] TeoPrologue, byte[] Apdu) : OsdpCommand;
+
+/// <summary>
+/// Ask the reader whether a card is in its field, inside a band. The answer
+/// arrives as a <see cref="TrsCardPresentEvent"/>. For a scan that runs on
+/// its own between bands, see <see cref="ControlPanel.TrsScanEnable"/>.
+/// </summary>
+/// <param name="Reader">The reader the band's <see cref="TrsStartCommand"/> named.</param>
+public sealed record TrsCardScanCommand(byte Reader = 0) : OsdpCommand;

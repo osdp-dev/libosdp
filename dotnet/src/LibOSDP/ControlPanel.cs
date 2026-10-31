@@ -209,6 +209,72 @@ public sealed unsafe class ControlPanel : IDisposable
     /// <returns>True when enabled.</returns>
     public bool IsPdEnabled(int address) => Call(address, (ctx, pd) => Native.CpIsPdEnabled(ctx, pd)) != 0;
 
+    /// <summary>
+    /// Replace a disabled PD's secure channel base key, e.g. to try another key
+    /// after a key rotation that never settled. Enable the PD again to use it.
+    /// </summary>
+    /// <param name="address">PD address.</param>
+    /// <param name="scbk">The key; exactly 16 bytes.</param>
+    /// <returns>False when the PD is not disabled.</returns>
+    public bool SetScbk(int address, byte[] scbk)
+    {
+        ArgumentNullException.ThrowIfNull(scbk);
+        if (scbk.Length != 16)
+            throw new ArgumentException("An SCBK is exactly 16 bytes.", nameof(scbk));
+        int pd = IndexOf(address);
+        int rc;
+        fixed (byte* key = scbk)
+        {
+            lock (_gate)
+            {
+                ObjectDisposedException.ThrowIf(_ctx == 0, this);
+                rc = Native.CpSetScbk(_ctx, pd, key);
+            }
+        }
+        return rc == 0;
+    }
+
+    /// <summary>
+    /// Watch a TRS-capable PD for smart cards between card sessions, for readers
+    /// that do not announce them in their default mode. A sighting arrives as a
+    /// <see cref="TrsCardInfoEvent"/> or <see cref="TrsCardPresentEvent"/>, and
+    /// transparent mode is then held briefly so that a <see cref="TrsStartCommand"/>
+    /// submitted in response adopts the reader as-is.
+    /// </summary>
+    /// <param name="address">PD address.</param>
+    /// <param name="parameters">Scan cadence; null, or zero fields, select the defaults.</param>
+    /// <returns>False if LibOSDP refused it.</returns>
+    public bool TrsScanEnable(int address, TrsScanParams? parameters = null)
+    {
+        TrsScanParams p = parameters ?? new TrsScanParams();
+        NativeTrsScanParams native = new()
+        {
+            Mode0DwellMs = p.Mode0DwellMs, Mode1DwellMs = p.Mode1DwellMs, HoldMs = p.HoldMs, Reader = p.Reader,
+        };
+        int pd = IndexOf(address);
+        int rc;
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_ctx == 0, this);
+            rc = Native.CpTrsScanEnable(_ctx, pd, &native);
+        }
+        return rc == 0;
+    }
+
+    /// <summary>Stop the smart-card presence scan on a PD.</summary>
+    /// <param name="address">PD address.</param>
+    /// <returns>False if LibOSDP refused it.</returns>
+    public bool TrsScanDisable(int address) => Call(address, Native.CpTrsScanDisable) == 0;
+
+    /// <summary>
+    /// Largest C-APDU a <see cref="TrsSendApduCommand"/> can carry to a PD: the
+    /// packet size in use less framing, so below the 258-byte buffer by
+    /// default, and final only once the PD has been online.
+    /// </summary>
+    /// <param name="address">PD address.</param>
+    /// <returns>The length in bytes.</returns>
+    public int GetTrsMaxApduLength(int address) => Call(address, Native.CpTrsGetMaxApduLen);
+
     /// <summary>The identity the PD reported; all zero until it has identified itself.</summary>
     /// <param name="address">PD address.</param>
     /// <returns>The identity.</returns>

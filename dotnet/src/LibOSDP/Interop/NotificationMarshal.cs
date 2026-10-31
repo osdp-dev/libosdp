@@ -6,7 +6,7 @@ namespace LibOSDP.Interop;
 
 internal static unsafe class NotificationMarshal
 {
-    /// Null for notification kinds the binding does not expose (TRS).
+    /// Null for a notification kind this binding does not know.
     internal static OsdpNotification? FromNative(NativeNotification* n) => (NotificationType)n->Type switch
     {
         NotificationType.SecureChannelStatus =>
@@ -18,6 +18,8 @@ internal static unsafe class NotificationMarshal
                 n->Data.Mp.ObjectId, n->Data.Mp.Total, n->Data.Mp.Offset, (MpOutcome)n->Data.Mp.Outcome),
         NotificationType.PdId =>
             new PdIdNotification(PdId.FromNative(n->Data.PdId)),
+        NotificationType.TrsStatus =>
+            new TrsStatusNotification((TrsSessionStatus)n->Data.TrsStatus.Status, n->Data.TrsStatus.Reader),
         _ => null,
     };
 }

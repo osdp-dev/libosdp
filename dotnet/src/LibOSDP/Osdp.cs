@@ -33,6 +33,16 @@ public static unsafe class Osdp
         }
     }
 
+    /// <summary>Where the native libosdp was built from: git branch, revision and tag.</summary>
+    public static string SourceInfo
+    {
+        get
+        {
+            EnsureInitialized();
+            return Marshal.PtrToStringUTF8((nint)Native.GetSourceInfo()) ?? "";
+        }
+    }
+
     internal static void EnsureInitialized()
     {
         if (s_initialized)

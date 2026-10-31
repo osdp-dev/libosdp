@@ -65,6 +65,57 @@ internal unsafe struct NativeEvtPivReply
     public fixed byte Data[NativeLimits.PivDataMaxLen];
 }
 
+[StructLayout(LayoutKind.Sequential)]
+internal unsafe struct NativeTrsCardInfo
+{
+    public byte Reader;
+    public int Protocol;
+    public byte CsnLength;
+    public fixed byte Csn[NativeLimits.TrsCsnMaxLen];
+    public byte ProtocolDataLength;
+    public fixed byte ProtocolData[NativeLimits.TrsProtocolDataMaxLen];
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct NativeTrsCardPresent
+{
+    public byte Reader;
+    public int Status;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct NativeTrsCardData
+{
+    public byte Reader;
+    public byte ReaderStatus;
+    public NativeTrsApdu Apdu;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct NativeTrsPinComplete
+{
+    public byte Reader;
+    public byte ReaderStatus;
+    public byte Tries;
+}
+
+[StructLayout(LayoutKind.Explicit)]
+internal struct NativeTrsReplyUnion
+{
+    [FieldOffset(0)] public NativeTrsCardInfo CardInfo;
+    [FieldOffset(0)] public NativeTrsCardPresent CardPresent;
+    [FieldOffset(0)] public NativeTrsCardData CardData;
+    [FieldOffset(0)] public NativeTrsPinComplete PinComplete;
+    [FieldOffset(0)] public byte ErrorCode;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct NativeTrsReply
+{
+    public int Reply;
+    public NativeTrsReplyUnion U;
+}
+
 [StructLayout(LayoutKind.Explicit, Size = NativeLimits.EventUnionSize)]
 internal struct NativeEventUnion
 {
@@ -77,6 +128,7 @@ internal struct NativeEventUnion
     [FieldOffset(0)] public NativeEvtPivReply PivReply;
     [FieldOffset(0)] public NativeStatusReport Status;
     [FieldOffset(0)] public NativeNotification Notif;
+    [FieldOffset(0)] public NativeTrsReply Trs;
 }
 
 [StructLayout(LayoutKind.Sequential)]

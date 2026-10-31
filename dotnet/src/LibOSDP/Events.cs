@@ -80,3 +80,36 @@ public sealed record GenAuthEvent(byte[] Data) : OsdpEvent;
 /// <summary>PIV challenge/response result (osdp_CRAUTHR).</summary>
 /// <param name="Data">Response, at most 256 bytes.</param>
 public sealed record CrAuthEvent(byte[] Data) : OsdpEvent;
+
+/// <summary>A smart card entered a reader's field (transparent reader, osdp_XRD).</summary>
+/// <param name="Reader">Reader number, from 0.</param>
+/// <param name="Protocol">How the card talks to the reader.</param>
+/// <param name="Csn">Card serial number (UID), at most 32 bytes.</param>
+/// <param name="ProtocolData">ATR (contact) or ATS/ATQB (contactless), at most 64 bytes.</param>
+public sealed record TrsCardInfoEvent(byte Reader, TrsCardProtocol Protocol, byte[] Csn,
+                                      byte[] ProtocolData) : OsdpEvent;
+
+/// <summary>Whether a smart card is in a reader's field (transparent reader, osdp_XRD).</summary>
+/// <param name="Reader">Reader number, from 0.</param>
+/// <param name="Status">Presence, and the interface when known.</param>
+public sealed record TrsCardPresentEvent(byte Reader, TrsCardStatus Status) : OsdpEvent;
+
+/// <summary>A card's answer to a <see cref="TrsSendApduCommand"/> (osdp_XRD).</summary>
+/// <param name="Reader">Reader number, from 0.</param>
+/// <param name="ReaderStatus">Result of the exchange as the reader reports it; reader-defined.</param>
+/// <param name="Apdu">The R-APDU, status word included.</param>
+public sealed record TrsCardDataEvent(byte Reader, byte ReaderStatus, byte[] Apdu) : OsdpEvent;
+
+/// <summary>A secure PIN entry finished (osdp_XRD).</summary>
+/// <param name="Reader">Reader number, from 0.</param>
+/// <param name="ReaderStatus">Result as the reader reports it; reader-defined.</param>
+/// <param name="Tries">Number of PIN entry attempts.</param>
+public sealed record TrsPinCompleteEvent(byte Reader, byte ReaderStatus, byte Tries) : OsdpEvent;
+
+/// <summary>
+/// The reader could not carry out a card command (osdp_XRD). The command it
+/// answered completes as <see cref="CompletionStatus.Failed"/>; the session
+/// stays open.
+/// </summary>
+/// <param name="Code">Error condition; reader-defined, OSDP does not standardize it.</param>
+public sealed record TrsErrorEvent(byte Code) : OsdpEvent;

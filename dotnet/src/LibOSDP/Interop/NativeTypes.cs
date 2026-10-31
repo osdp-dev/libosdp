@@ -105,6 +105,13 @@ internal struct NativeMpNotification
     public int Outcome;
 }
 
+[StructLayout(LayoutKind.Sequential)]
+internal struct NativeTrsStatus
+{
+    public int Status;
+    public byte Reader;
+}
+
 [StructLayout(LayoutKind.Explicit)]
 internal struct NativeNotificationData
 {
@@ -112,6 +119,16 @@ internal struct NativeNotificationData
     [FieldOffset(0)] public byte PdOnline;
     [FieldOffset(0)] public NativeMpNotification Mp;
     [FieldOffset(0)] public NativePdId PdId;
+    [FieldOffset(0)] public NativeTrsStatus TrsStatus;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct NativeTrsScanParams
+{
+    public ushort Mode0DwellMs;
+    public ushort Mode1DwellMs;
+    public ushort HoldMs;
+    public byte Reader;
 }
 
 [StructLayout(LayoutKind.Sequential)]

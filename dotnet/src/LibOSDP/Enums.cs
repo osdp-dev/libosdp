@@ -138,6 +138,77 @@ public enum NotificationType
     MultipartDone = 4,
     /// <summary>The PD reported its identity.</summary>
     PdId = 5,
+    /// <summary>A transparent-reader (TRS) card session changed state.</summary>
+    TrsStatus = 6,
+}
+
+/// <summary>
+/// Life-cycle of a transparent-reader (TRS) card session. A PD is told only
+/// <see cref="Opened"/>, <see cref="Closed"/> and <see cref="CardReleased"/>.
+/// </summary>
+public enum TrsSessionStatus
+{
+    /// <summary>The reader is in transparent mode; APDUs flow.</summary>
+    Opened = 0,
+    /// <summary>The session closed (CP), or the CP took the reader out of transparent mode or restarted the link (PD).</summary>
+    Closed = 1,
+    /// <summary>The PD refused transparent mode, or a link error cut the session short.</summary>
+    Failed = 2,
+    /// <summary>The reader refused a presence-scan probe; the scan backs off and retries.</summary>
+    ScanSuspended = 3,
+    /// <summary>The reader cannot answer a card scan, so card removal will not be reported.</summary>
+    ScanNoDeparture = 4,
+    /// <summary>PD only: the CP ended its transaction with the card; disconnect it.</summary>
+    CardReleased = 5,
+}
+
+/// <summary>How a reader encodes the PIN digits it writes into a C-APDU.</summary>
+public enum TrsPinFormat
+{
+    /// <summary>Digits as binary values.</summary>
+    Binary = 1,
+    /// <summary>Digits as packed BCD.</summary>
+    Bcd = 2,
+    /// <summary>Digits as ASCII characters.</summary>
+    Ascii = 3,
+}
+
+/// <summary>What ends a secure PIN entry; combine with |.</summary>
+[Flags]
+public enum TrsPinComplete
+{
+    /// <summary>No condition.</summary>
+    None = 0,
+    /// <summary>The maximum number of digits was entered.</summary>
+    MaxDigits = 1 << 0,
+    /// <summary>The validation (enter) key was pressed.</summary>
+    Key = 1 << 1,
+    /// <summary>Entry timed out.</summary>
+    Timeout = 1 << 2,
+}
+
+/// <summary>How a smart card talks to the reader.</summary>
+public enum TrsCardProtocol
+{
+    /// <summary>ISO 7816 contact (T=0/T=1).</summary>
+    Contact = 1,
+    /// <summary>ISO 14443 A/B contactless.</summary>
+    Contactless = 2,
+}
+
+/// <summary>Whether a smart card is in the reader's field, and on which interface.</summary>
+public enum TrsCardStatus
+{
+    /// <summary>No presence has been reported.</summary>
+    Unknown = 0,
+    /// <summary>No card.</summary>
+    NotPresent = 1,
+    /// <summary>A card is present; interface not specified.</summary>
+    Present = 2,
+    /// <summary>A card is present on the contactless interface.</summary>
+    PresentContactless = 3,
+    /// <summary>A card is present on the contact interface.</summary>
+    PresentContact = 4,
 }
 
 /// <summary>Kinds of multipart operation.</summary>

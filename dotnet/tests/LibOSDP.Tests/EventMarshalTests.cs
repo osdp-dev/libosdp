@@ -22,6 +22,12 @@ public sealed unsafe class EventMarshalTests
         new PivDataEvent([1, 2, 3]),
         new GenAuthEvent([4, 5]),
         new CrAuthEvent([6]),
+        new TrsCardInfoEvent(1, TrsCardProtocol.Contactless, [0x04, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
+                             [0x06, 0x77, 0x77, 0x71, 0x02, 0x80]),
+        new TrsCardPresentEvent(1, TrsCardStatus.PresentContact),
+        new TrsCardDataEvent(1, 0, [0x6F, 0x1A, 0x84, 0x0E, 0x90, 0x00]),
+        new TrsPinCompleteEvent(1, 0, 2),
+        new TrsErrorEvent(0x02),
     };
 
     [Theory(DisableDiscoveryEnumeration = true)]
@@ -140,10 +146,10 @@ public sealed unsafe class EventMarshalTests
     }
 
     [Fact]
-    public void TrsEventIsIgnored()
+    public void UnknownEventIsIgnored()
     {
         NativeEvent native = default;
-        native.Type = 13; // OSDP_EVENT_TRS is not exposed
+        native.Type = 99;
         Assert.Null(EventMarshal.FromNative(&native));
     }
 }

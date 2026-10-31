@@ -31,6 +31,13 @@ public sealed unsafe class CommandMarshalTests
         new PivDataCommand([0x5F, 0xC1, 0x02], 1, 0),
         new GenAuthCommand(0x07, 0x9A, [1, 2, 3, 4]),
         new CrAuthCommand(0x07, 0x9A, [5, 6, 7, 8]),
+        new TrsStartCommand(1),
+        new TrsStopCommand(1),
+        new TrsSendApduCommand(1, [0x00, 0xA4, 0x04, 0x00, 0x02, 0x3F, 0x00]),
+        new TrsEnterPinCommand(1, 30, 5, new TrsPinBlock(TrsPinFormat.Bcd, true, 40, 8),
+                               new TrsPinLengthField(4, 4), 4, 12, TrsPinComplete.Key | TrsPinComplete.MaxDigits,
+                               1, 0x0409, 2, [0x00, 0x40, 0x0D], [0x00, 0x20, 0x00, 0x80, 0x08, 1, 2, 3, 4, 5, 6, 7, 8]),
+        new TrsCardScanCommand(1),
     };
 
     [Theory(DisableDiscoveryEnumeration = true)]
@@ -142,7 +149,7 @@ public sealed unsafe class CommandMarshalTests
     public void UnknownCommandIsIgnored()
     {
         NativeCmd native = default;
-        native.Id = 18; // OSDP_CMD_XWR (TRS) is not exposed
+        native.Id = 99;
         Assert.Null(CommandMarshal.FromNative(&native));
     }
 }

@@ -14,8 +14,10 @@ This package brings [LibOSDP](https://osdp.dev/) to .NET. It is the same C
 engine that runs inside embedded readers, so a .NET CP or PD speaks exactly the
 protocol the hardware does:
 
-- CP and PD modes, every non-TRS command and event, Secure Channel with key
-  provisioning (install mode, osdp_KEYSET), file transfer, and link metrics.
+- CP and PD modes, every command and event including Transparent Reader
+  Support (smart-card APDU sessions and the presence scan), Secure Channel
+  with key provisioning (install mode, osdp_KEYSET), file transfer, and link
+  metrics.
 - Commands and events are C# records; submissions return a `Task` that
   completes when LibOSDP is done with them.
 - Prebuilt native libraries for Windows (x64, Arm64), Linux (x64, Arm64,

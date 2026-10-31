@@ -16,6 +16,9 @@ internal static unsafe partial class Native
     [LibraryImport(Library, EntryPoint = "osdp_get_version")]
     internal static partial byte* GetVersion();
 
+    [LibraryImport(Library, EntryPoint = "osdp_get_source_info")]
+    internal static partial byte* GetSourceInfo();
+
     [LibraryImport(Library, EntryPoint = "osdp_logger_init")]
     internal static partial void LoggerInit(byte* name, int logLevel, nint putsFn);
 
@@ -78,6 +81,21 @@ internal static unsafe partial class Native
 
     [LibraryImport(Library, EntryPoint = "osdp_cp_is_pd_enabled")]
     internal static partial byte CpIsPdEnabled(nint ctx, int pd);
+
+    [LibraryImport(Library, EntryPoint = "osdp_cp_set_scbk")]
+    internal static partial int CpSetScbk(nint ctx, int pd, byte* scbk);
+
+    [LibraryImport(Library, EntryPoint = "osdp_cp_trs_scan_enable")]
+    internal static partial int CpTrsScanEnable(nint ctx, int pd, NativeTrsScanParams* parameters);
+
+    [LibraryImport(Library, EntryPoint = "osdp_cp_trs_scan_disable")]
+    internal static partial int CpTrsScanDisable(nint ctx, int pd);
+
+    [LibraryImport(Library, EntryPoint = "osdp_cp_trs_get_max_apdu_len")]
+    internal static partial int CpTrsGetMaxApduLen(nint ctx, int pd);
+
+    [LibraryImport(Library, EntryPoint = "osdp_pd_trs_get_max_apdu_len")]
+    internal static partial int PdTrsGetMaxApduLen(nint ctx);
 
     [LibraryImport(Library, EntryPoint = "osdp_pd_setup")]
     internal static partial nint PdSetup(NativeChannel* channel, NativePdInfo* info);

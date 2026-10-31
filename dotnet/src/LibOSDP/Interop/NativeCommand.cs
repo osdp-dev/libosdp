@@ -134,6 +134,61 @@ internal unsafe struct NativeCmdAuth
     public fixed byte Data[NativeLimits.PivDataMaxLen];
 }
 
+[StructLayout(LayoutKind.Sequential)]
+internal unsafe struct NativeTrsApdu
+{
+    public ushort Length;
+    public fixed byte Data[NativeLimits.TrsApduMaxLen];
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct NativeTrsPinBlock
+{
+    public int Format;
+    public byte RightJustify; // C bool
+    public ushort OffsetBits;
+    public byte SizeBytes;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct NativeTrsPinLengthField
+{
+    public byte SizeBits;
+    public ushort OffsetBits;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal unsafe struct NativeTrsPinEntry
+{
+    public byte TimeoutInitial;
+    public byte TimeoutDigit;
+    public NativeTrsPinBlock PinBlock;
+    public NativeTrsPinLengthField PinLengthField;
+    public byte MinDigits;
+    public byte MaxDigits;
+    public uint CompleteOn;
+    public byte NumMessages;
+    public ushort LanguageId;
+    public byte MsgIndex;
+    public fixed byte TeoPrologue[3];
+    public NativeTrsApdu Apdu;
+}
+
+[StructLayout(LayoutKind.Explicit)]
+internal struct NativeTrsCmdUnion
+{
+    [FieldOffset(0)] public NativeTrsApdu Apdu;
+    [FieldOffset(0)] public NativeTrsPinEntry PinEntry;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct NativeCmdTrs
+{
+    public int Command;
+    public byte Reader;
+    public NativeTrsCmdUnion U;
+}
+
 [StructLayout(LayoutKind.Explicit, Size = NativeLimits.CmdUnionSize)]
 internal struct NativeCmdUnion
 {
@@ -152,6 +207,7 @@ internal struct NativeCmdUnion
     [FieldOffset(0)] public NativeCmdTdSet TdSet;
     [FieldOffset(0)] public NativeCmdPivData PivData;
     [FieldOffset(0)] public NativeCmdAuth Auth;
+    [FieldOffset(0)] public NativeCmdTrs Trs;
 }
 
 [StructLayout(LayoutKind.Sequential)]

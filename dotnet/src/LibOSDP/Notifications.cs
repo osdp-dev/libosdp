@@ -36,3 +36,12 @@ public sealed record MultipartNotification(NotificationType Stage, MpMsgType Mes
 /// <summary>The PD reported its identity.</summary>
 /// <param name="Id">The reported identity.</param>
 public sealed record PdIdNotification(PdId Id) : OsdpNotification;
+
+/// <summary>A transparent-reader (TRS) card session changed state.</summary>
+/// <param name="Status">What happened.</param>
+/// <param name="Reader">
+/// Reader it concerns: on a CP, the session's reader, or the scanned reader for
+/// the scan's statuses; on a PD, the reader whose card to release for
+/// <see cref="TrsSessionStatus.CardReleased"/>, and 0 otherwise.
+/// </param>
+public sealed record TrsStatusNotification(TrsSessionStatus Status, byte Reader) : OsdpNotification;
