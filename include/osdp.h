@@ -1277,6 +1277,12 @@ enum osdp_cmd_e {
  * included, is completed @c OSDP_COMPLETION_FLUSHED and an
  * @c OSDP_TRS_SESSION_FAILED notification says why.
  *
+ * A session with no card command queued or answer pending for
+ * @c OSDP_TRS_IDLE_TOUT_MS (30 s by default) is taken to be abandoned: the
+ * library closes it as a STOP would and fails it with
+ * @c OSDP_TRS_FAIL_IDLE, so a forgotten STOP cannot keep the reader in
+ * transparent mode, where it stops reporting ordinary card reads.
+ *
  * Knowing @b when to open a band is the reader's job: a smart card entering
  * the field is announced as an @c OSDP_EVENT_TRS card-info/card-present event,
  * either spontaneously (some readers report cards in their default mode) or
@@ -1344,6 +1350,7 @@ enum osdp_trs_fail_reason_e {
 	OSDP_TRS_FAIL_NO_REPLY, /**< A command of the session drew no usable
 				 *   reply */
 	OSDP_TRS_FAIL_LINK_DOWN, /**< The PD went offline or was disabled */
+	OSDP_TRS_FAIL_IDLE, /**< No card command came for the idle timeout */
 };
 
 /**

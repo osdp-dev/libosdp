@@ -175,6 +175,8 @@ public enum TrsFailReason
     NoReply = 3,
     /// <summary>The PD went offline or was disabled.</summary>
     LinkDown = 4,
+    /// <summary>No card command came for the idle timeout (30 s by default).</summary>
+    Idle = 5,
 }
 
 /// <summary>How a reader encodes the PIN digits it writes into a C-APDU.</summary>

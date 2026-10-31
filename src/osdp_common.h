@@ -571,6 +571,9 @@ struct osdp_trs {
 	 */
 	const struct osdp_cmd *answer_cmd;
 	tick_t answer_tstamp;
+	/* Last time an app session had a card command to send or answer to
+	 * wait for; see OSDP_TRS_IDLE_TOUT_MS */
+	tick_t idle_tstamp;
 	/*
 	 * The app's START or STOP whose mode change is still on the wire: the
 	 * START completes once the reader is in transparent mode, the STOP once

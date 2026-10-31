@@ -2893,6 +2893,53 @@ out:
 	return ok;
 }
 
+/*
+ * A session left without a STOP is closed after OSDP_TRS_IDLE_TOUT_MS (4s in
+ * test builds) and reported as failed for that reason; its band is gone, so a
+ * late STOP is refused, and the next session opens as usual.
+ */
+static bool test_trs_idle_session_is_closed(void)
+{
+	struct osdp_cmd start_cmd, stop_cmd;
+
+	printf(SUB_2 "testing TRS idle session is closed\n");
+
+	g_trs.status_seen = false;
+	if (submit_trs_cmd(&start_cmd, OSDP_TRS_CMD_START) ||
+	    !wait_for_trs_status(OSDP_TRS_SESSION_OPENED, 5)) {
+		printf(SUB_2 "TRS session never opened\n");
+		return false;
+	}
+	g_trs.status_seen = false;
+	if (!wait_for_trs_status(OSDP_TRS_SESSION_FAILED, 10)) {
+		printf(SUB_2 "idle session was not closed\n");
+		return false;
+	}
+	if (g_trs.last_failure.reason != OSDP_TRS_FAIL_IDLE) {
+		printf(SUB_2 "want reason IDLE, got %d\n",
+		       g_trs.last_failure.reason);
+		return false;
+	}
+	if (submit_trs_cmd(&stop_cmd, OSDP_TRS_CMD_STOP) == 0) {
+		printf(SUB_2 "STOP after the idle close must be refused\n");
+		return false;
+	}
+
+	g_trs.status_seen = false;
+	if (submit_trs_cmd(&start_cmd, OSDP_TRS_CMD_START) ||
+	    !wait_for_trs_status(OSDP_TRS_SESSION_OPENED, 5)) {
+		printf(SUB_2 "next session never opened\n");
+		return false;
+	}
+	g_trs.status_seen = false;
+	if (submit_trs_cmd(&stop_cmd, OSDP_TRS_CMD_STOP) ||
+	    !wait_for_trs_status(OSDP_TRS_SESSION_CLOSED, 5)) {
+		printf(SUB_2 "next session never closed\n");
+		return false;
+	}
+	return true;
+}
+
 extern int test_pd_decode_command(struct osdp_pd *pd, uint8_t *buf, int len);
 
 static bool g_trs_cap_cb_fired;
@@ -3037,6 +3084,7 @@ void run_trs_tests(struct test *t)
 	result &= test_trs_scan_card_scan_unsupported_latches();
 	result &= test_trs_scan_probe_failure_backoff();
 	result &= test_trs_start_fails_when_mode_is_refused();
+	result &= test_trs_idle_session_is_closed();
 	/*
 	 * Last on this link: two full retry-exhaustion stages leave the CP
 	 * having just burned a long backlog of timeouts, which is not a

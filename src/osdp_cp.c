@@ -1670,6 +1670,23 @@ static bool cp_trs_answer_pending(struct osdp_pd *pd)
 	return true;
 }
 
+/*
+ * An app session with nothing to send for OSDP_TRS_IDLE_TOUT_MS is one its app
+ * has abandoned. Close it as a STOP would, and fail it, so that the reader goes
+ * back to reporting ordinary card reads.
+ */
+static bool cp_trs_idle_expired(struct osdp_pd *pd)
+{
+	if (pd->trs.probe ||
+	    osdp_millis_since(pd->trs.idle_tstamp) <= OSDP_TRS_IDLE_TOUT_MS) {
+		return false;
+	}
+	LOG_WRN("TRS: session idle for %ums; closing it",
+		(unsigned)OSDP_TRS_IDLE_TOUT_MS);
+	osdp_trs_note_failure(pd, OSDP_TRS_FAIL_IDLE);
+	return true;
+}
+
 static int cp_get_trs_command(struct osdp_pd *pd)
 {
 	const struct osdp_cmd *cmd;
@@ -1677,9 +1694,15 @@ static int cp_get_trs_command(struct osdp_pd *pd)
 	switch (pd->trs.state) {
 	case TRS_STATE_XMIT:
 		if (cp_trs_answer_pending(pd)) {
+			pd->trs.idle_tstamp = osdp_millis_now();
 			return cp_get_poll_command(pd);
 		}
 		if (cp_cmd_dequeue(pd, &cmd)) {
+			if (cp_trs_idle_expired(pd)) {
+				pd->active_cmd = NULL;
+				pd->trs.state = TRS_STATE_DISCONNECT_CARD;
+				return CMD_XWR;
+			}
 			if (pd->trs.probe && osdp_trs_probe_expired(pd)) {
 				/* Probe is done: no card transaction to
 				 * disconnect, just restore the default mode */
@@ -1695,6 +1718,7 @@ static int cp_get_trs_command(struct osdp_pd *pd)
 			}
 			return cp_get_poll_command(pd);
 		}
+		pd->trs.idle_tstamp = osdp_millis_now();
 		if (pd->trs.probe && cp_cmd_is_trs(cmd, OSDP_TRS_CMD_START)) {
 			/* Transparent mode is the whole PD's, so a probe of
 			 * one reader serves a band for any of them. */
@@ -2299,6 +2323,7 @@ static void cp_state_change(struct osdp_pd *pd, enum osdp_cp_state_e next)
 				break;
 			}
 			LOG_INF("TRS session opened");
+			pd->trs.idle_tstamp = osdp_millis_now();
 			cp_trs_settle_session(pd, OSDP_COMPLETION_OK);
 			notify_trs_status(pd, OSDP_TRS_SESSION_OPENED);
 		}

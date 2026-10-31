@@ -67,6 +67,13 @@
 #define OSDP_TRS_ANSWER_TOUT_MS                 (5 * 1000u)
 #endif
 
+/* How long the CP keeps a TRS session open with no card command to send. A
+ * session the app forgot to STOP would otherwise hold the reader in
+ * transparent mode, where it stops reporting ordinary card reads. */
+#ifndef OSDP_TRS_IDLE_TOUT_MS
+#define OSDP_TRS_IDLE_TOUT_MS                   (30 * 1000u)
+#endif
+
 /* Protocol Limits */
 #ifndef OSDP_CMD_MAX_RETRIES
 #define OSDP_CMD_MAX_RETRIES                    (8)

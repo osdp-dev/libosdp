@@ -1041,6 +1041,12 @@ enum osdp_cp_state_e osdp_trs_state_update(struct osdp_pd *pd)
 		pd->trs.state = TRS_STATE_XMIT;
 		return OSDP_CP_STATE_TRS_RUN;
 	case TRS_STATE_XMIT:
+		/* Idle time counts from the end of the app's last card
+		 * command, however long its retries took; polls and the
+		 * scan's own questions are not the app's doing. */
+		if (pd->cmd_id == CMD_XWR && !pd->trs.scan.asking) {
+			pd->trs.idle_tstamp = osdp_millis_now();
+		}
 		pd->trs.scan.asking = false;
 		return OSDP_CP_STATE_TRS_RUN;
 	case TRS_STATE_DISCONNECT_CARD:

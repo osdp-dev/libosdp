@@ -286,6 +286,14 @@ link drops — the rest of the band is completed `OSDP_COMPLETION_FLUSHED`, the
 `STOP` included, and an `OSDP_TRS_SESSION_FAILED` notification says so. Commands
 the application queued *after* the band keep their place and run as usual.
 
+A session that is left with nothing to do — no card command queued and no
+answer pending — for `OSDP_TRS_IDLE_TOUT_MS` (default 30 s) is taken to be
+abandoned. The library closes it as a `STOP` would and fails it with
+`OSDP_TRS_FAIL_IDLE`, so an application that forgets its `STOP`, or dies
+before sending it, cannot leave the reader in transparent mode. A PIN entry
+waiting on the user is an answer pending, so it is never cut short. Raise the
+timeout at build time if your application pauses longer between commands.
+
 ### Answers and errors
 
 The reader's answers arrive as `OSDP_EVENT_TRS` events carrying a

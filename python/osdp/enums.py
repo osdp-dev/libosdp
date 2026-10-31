@@ -547,6 +547,9 @@ class TrsFailReason(IntEnum):
     LinkDown = _sys.TRS_FAIL_LINK_DOWN
     """The PD went offline or was disabled."""
 
+    Idle = _sys.TRS_FAIL_IDLE
+    """No card command came for the idle timeout (OSDP_TRS_IDLE_TOUT_MS)."""
+
 
 class TrsPinFormat(_WireEnum):
     """Encoding of the PIN digits a reader inserts into the C-APDU.
