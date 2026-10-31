@@ -119,7 +119,7 @@ public enum StatusReportType
     Output = 1,
     /// <summary>Local status: tamper and power.</summary>
     Local = 2,
-    /// <summary>Reader tamper status, one entry per reader.</summary>
+    /// <summary>Reader tamper status, one entry per connected downstream reader; entry 0 is reader 1.</summary>
     Reader = 3,
 }
 

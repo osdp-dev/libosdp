@@ -271,7 +271,8 @@ class StatusReportType(_WireEnum):
     """Local status: two entries, report[0] tamper and report[1] power."""
 
     Reader = _sys.STATUS_REPORT_READER
-    """Reader tamper status: one entry per reader (0 normal, 1 not connected, 2 tamper)."""
+    """Reader tamper status: one entry per connected downstream reader,
+    report[0] being reader 1 (0 normal, 1 not connected, 2 tamper)."""
 
 
 class NotificationType(IntEnum):

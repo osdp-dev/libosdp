@@ -158,7 +158,32 @@ Indicates the number of credential reader devices present.
 
 **Compliance Levels** (bit fields): `0x01` (Bit 0), `0x02` (Bit 1).
 
-**Number of Units:** Number of readers.
+**Number of Units:** Number of attached downstream readers.
+
+### Reader numbering in LibOSDP
+
+Commands and replies that address a reader — `osdp_LED`, `osdp_BUZ`,
+`osdp_TEXT`, `osdp_BIOREAD`, `osdp_BIOMATCH` and the transparent-mode card
+commands, and the card, keypad, biometric and transparent-mode replies —
+carry a reader number. The specification numbers it only as "0 = First
+Reader, 1 = Second Reader", and does not say whether a PD's own reader is
+one of them: whether the first reader is the PD itself or the first reader
+attached to it.
+
+LibOSDP reads it this way:
+
+- Reader 0 is always the PD itself, whether or not anything is attached to
+  it.
+- The readers this capability counts are the ones attached downstream,
+  numbered from 1. A PD that advertises N readers takes reader numbers 0 to N.
+- A reader number above N is refused: the CP does not accept such a command,
+  a PD NAKs one it receives with `0x09` (unable to process command record),
+  and a PD does not accept an event for such a reader.
+
+The reader tamper status report (`osdp_RSTATR`) follows from this. The
+specification has it carry one status per reader, and says reader tamper
+applies only to external readers attached to the PD. So the report has N
+entries, the first being reader 1, and the PD's own reader 0 has none.
 
 ## Function Code 14 — Biometrics
 

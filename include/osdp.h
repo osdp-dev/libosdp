@@ -483,8 +483,9 @@ enum osdp_status_report_type {
 	/**
 	 * @brief Reader tamper status report
 	 *
-	 * One byte per attached reader (see OSDP_PD_CAP_READERS); report[i] is
-	 * the status of reader i: 0 = normal, 1 = not connected, 2 = tamper.
+	 * One byte per connected downstream reader (OSDP_PD_CAP_READERS);
+	 * report[0] is reader 1. Each is 0 = normal, 1 = not connected,
+	 * 2 = tamper.
 	 */
 	OSDP_STATUS_REPORT_READER,
 };
@@ -521,7 +522,8 @@ struct osdp_status_report {
 	 */
 	int nr_entries;
 	/**
-	 * Status report; one byte per entry
+	 * Status report; one byte per entry. For OSDP_STATUS_REPORT_READER,
+	 * report[0] is reader 1, the first connected downstream reader
 	 */
 	uint8_t report[OSDP_STATUS_REPORT_MAX_LEN];
 };
