@@ -238,11 +238,11 @@ class PeripheralDevice:
     def sc_wait(self, timeout: float = 8) -> bool:
         """Block until the secure channel comes up, or the timeout elapses."""
         deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            time.sleep(0.5)
-            if self.is_sc_active():
-                return True
-        return False
+        while not self.is_sc_active():
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.02)
+        return True
 
     # -- file transfer ------------------------------------------------------
 

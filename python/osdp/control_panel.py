@@ -587,11 +587,11 @@ class ControlPanel:
         self, predicate: Callable[[], bool], timeout: float
     ) -> bool:
         deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            time.sleep(0.5)
-            if predicate():
-                return True
-        return False
+        while not predicate():
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.02)
+        return True
 
     def online_wait(self, address: int, timeout: float = 8) -> bool:
         """Block until a PD comes online, or the timeout elapses."""
