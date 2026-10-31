@@ -139,6 +139,20 @@ static void cp_trs_settle_answer(struct osdp_pd *pd,
 	cp_cmd_free(pd, cmd);
 }
 
+/* Complete the START or STOP waiting on the session's mode change, if any */
+static void cp_trs_settle_session(struct osdp_pd *pd,
+				  enum osdp_completion_status status)
+{
+	const struct osdp_cmd *cmd = pd->trs.session_cmd;
+
+	if (cmd == NULL) {
+		return;
+	}
+	pd->trs.session_cmd = NULL;
+	cp_complete_cmd(pd, cmd, status);
+	cp_cmd_free(pd, cmd);
+}
+
 /* Whether @reply answers card command @cmd */
 static bool cp_trs_reply_answers(const struct osdp_cmd *cmd,
 				 enum osdp_trs_reply_e reply)
@@ -1574,7 +1588,8 @@ static int cp_get_online_command(struct osdp_pd *pd)
 			/* Open a TRS session; the transition runs through the
 			 * usual request path, nothing goes on the wire now. */
 			pd->trs.reader = cmd->trs.reader;
-			cp_discard_cmd(pd, cmd, OSDP_COMPLETION_OK);
+			pd->trs.session_cmd = cmd;
+			pd->active_cmd = NULL;
 			make_request(pd, CP_REQ_TRS_OPEN);
 			return -1;
 		}
@@ -1691,7 +1706,8 @@ static int cp_get_trs_command(struct osdp_pd *pd)
 			return cp_get_trs_command(pd);
 		}
 		if (cp_cmd_is_trs(cmd, OSDP_TRS_CMD_STOP)) {
-			cp_discard_cmd(pd, cmd, OSDP_COMPLETION_OK);
+			pd->trs.session_cmd = cmd;
+			pd->active_cmd = NULL;
 			pd->trs.stop_pending = false;
 			pd->trs.state = TRS_STATE_DISCONNECT_CARD;
 			return CMD_XWR;
@@ -2136,6 +2152,31 @@ static void cp_transition_effects(struct osdp_pd *pd, enum osdp_cp_state_e cur,
 	}
 }
 
+/*
+ * The link went down under an app's TRS session, or under a START still
+ * waiting to open one. Nothing more of that session will reach the reader:
+ * fail what waits on it, drop the rest of its band and tell the app.
+ */
+static void cp_trs_end_on_link_loss(struct osdp_pd *pd)
+{
+	const struct osdp_cmd *held = pd->trs.session_cmd;
+	bool held_start = held && cp_cmd_is_trs(held, OSDP_TRS_CMD_START);
+	bool running = ISSET_FLAG(pd, PD_FLAG_TRS_ACTIVE) && !pd->trs.probe;
+
+	cp_trs_settle_answer(pd, OSDP_COMPLETION_FAILED);
+	cp_trs_settle_session(pd, OSDP_COMPLETION_FAILED);
+	pd->request &= ~CP_REQ_TRS_OPEN;
+	CLEAR_FLAG(pd, PD_FLAG_TRS_ACTIVE);
+	if (!held_start && !running) {
+		return;
+	}
+	if (held_start || pd->trs.stop_pending) {
+		cp_flush_trs_band(pd);
+	}
+	LOG_WRN("TRS session lost with the link");
+	notify_trs_status(pd, OSDP_TRS_SESSION_FAILED);
+}
+
 static void cp_state_change(struct osdp_pd *pd, enum osdp_cp_state_e next)
 {
 	enum osdp_cp_state_e cur = pd->state;
@@ -2177,6 +2218,9 @@ static void cp_state_change(struct osdp_pd *pd, enum osdp_cp_state_e next)
 			}
 			LOG_INF("TRS session %s",
 				pd->trs.failed ? "failed" : "closed");
+			cp_trs_settle_session(pd, pd->trs.failed ?
+						      OSDP_COMPLETION_FAILED :
+						      OSDP_COMPLETION_OK);
 			if (pd->trs.stop_pending) {
 				cp_flush_trs_band(pd);
 			}
@@ -2200,7 +2244,7 @@ static void cp_state_change(struct osdp_pd *pd, enum osdp_cp_state_e next)
 			" seconds; Was in '%s' state",
 			pd->wait_ms / 1000, state_get_name(cur));
 		osdp_engines_abort(pd);
-		cp_trs_settle_answer(pd, OSDP_COMPLETION_FAILED);
+		cp_trs_end_on_link_loss(pd);
 		break;
 	case OSDP_CP_STATE_SC_CHLNG:
 		/* A restart can arrive with the old session still up (a
@@ -2218,7 +2262,7 @@ static void cp_state_change(struct osdp_pd *pd, enum osdp_cp_state_e next)
 		sc_deactivate(pd);
 		notify_sc_status(pd);
 		osdp_engines_abort(pd);
-		cp_trs_settle_answer(pd, OSDP_COMPLETION_FAILED);
+		cp_trs_end_on_link_loss(pd);
 		osdp_phy_state_reset(pd, true);
 		LOG_INF("PD disabled; going offline until re-enabled");
 		break;
@@ -2230,7 +2274,9 @@ static void cp_state_change(struct osdp_pd *pd, enum osdp_cp_state_e next)
 		SET_FLAG(pd, PD_FLAG_TRS_ACTIVE);
 		break;
 	case OSDP_CP_STATE_TRS_RUN:
-		if (cur == OSDP_CP_STATE_TRS_SETUP) {
+		/* A refused mode-set also passes through here, on its way to
+		 * restoring the reader; that session never opened. */
+		if (cur == OSDP_CP_STATE_TRS_SETUP && !pd->trs.failed) {
 			if (pd->trs.probe) {
 				/* Dwell starts when mode 01 is confirmed, not
 				 * when the probe was scheduled */
@@ -2239,6 +2285,7 @@ static void cp_state_change(struct osdp_pd *pd, enum osdp_cp_state_e next)
 				break;
 			}
 			LOG_INF("TRS session opened");
+			cp_trs_settle_session(pd, OSDP_COMPLETION_OK);
 			notify_trs_status(pd, OSDP_TRS_SESSION_OPENED);
 		}
 		break;
@@ -3006,6 +3053,7 @@ void osdp_cp_teardown(osdp_t *ctx)
 					       OSDP_COMPLETION_ABORTED);
 		}
 		cp_trs_settle_answer(pd, OSDP_COMPLETION_ABORTED);
+		cp_trs_settle_session(pd, OSDP_COMPLETION_ABORTED);
 		cp_complete_cmd(pd, pd->active_cmd, OSDP_COMPLETION_ABORTED);
 		pd->active_cmd = NULL;
 		cp_complete_cmd(pd, pd->keyset_cmd, OSDP_COMPLETION_ABORTED);

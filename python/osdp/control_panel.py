@@ -60,6 +60,8 @@ _UNKNOWN_PD_ID = PdId(
 # The events that answer each card command a TrsSession sends; a reader error
 # answers any of them.
 _TRS_ANSWERS: dict[type, tuple[type, ...]] = {
+    commands.TrsStart: (),
+    commands.TrsStop: (),
     commands.TrsSendApdu: (events.TrsCardData, events.TrsError),
     commands.TrsEnterPin: (events.TrsPinComplete, events.TrsError),
     commands.TrsCardScan: (events.TrsCardPresent, events.TrsError),
@@ -478,9 +480,11 @@ class ControlPanel:
     def trs_session(self, address: int, reader: int = 0) -> "TrsSession":
         """Open a card session on a PD's reader, for use in a `with` block.
 
-        Entering submits a `commands.TrsStart`, leaving submits the
-        `commands.TrsStop` that closes it; in between, the session's methods
-        send one card command at a time and return the card's answer.
+        Entering submits a `commands.TrsStart` and returns once the reader is
+        in transparent mode; leaving submits the `commands.TrsStop` that
+        closes it and returns once the reader is back out. In between, the
+        session's methods send one card command at a time and return the
+        card's answer.
 
         Example:
             with cp.trs_session(101) as card:
@@ -490,9 +494,10 @@ class ControlPanel:
         """
         return TrsSession(self, address, reader)
 
-    def _trs_exchange_run(
+    def _trs_settle(
         self, address: int, command: Command, timeout: float | None
-    ) -> Event:
+    ) -> _TrsExchange:
+        """Submit a TRS command and wait for the library to complete it."""
         pd = self.pd_addr.index(address)
         exchange = _TrsExchange(command)
         with self.lock:
@@ -509,6 +514,12 @@ class ControlPanel:
                 if self._trs_exchange[pd] is exchange:
                     self._trs_exchange[pd] = None
             raise TimeoutError("no verdict on the card command in time")
+        return exchange
+
+    def _trs_exchange_run(
+        self, address: int, command: Command, timeout: float | None
+    ) -> Event:
+        exchange = self._trs_settle(address, command, timeout)
         answer = exchange.answer
         if exchange.status is CompletionStatus.Ok and answer is not None:
             return answer
@@ -621,18 +632,23 @@ class TrsSession:
         self.reader = reader
 
     def __enter__(self) -> "TrsSession":
-        if not self.cp.submit_command(
-            self.address, commands.TrsStart(reader=self.reader)
-        ):
-            raise TrsSessionError("card session refused")
+        start = self.cp._trs_settle(
+            self.address, commands.TrsStart(reader=self.reader), None
+        )
+        if start.status is not CompletionStatus.Ok:
+            raise TrsSessionError("card session did not open", start.status)
         return self
 
     def __exit__(self, *exc_info: object) -> None:
-        # Refused only when the session already ended on its own, which
+        # Returns once the reader is back out of transparent mode. A STOP is
+        # refused only when the session already ended on its own, which
         # leaves nothing to close.
-        self.cp.submit_command(
-            self.address, commands.TrsStop(reader=self.reader)
-        )
+        try:
+            self.cp._trs_settle(
+                self.address, commands.TrsStop(reader=self.reader), None
+            )
+        except TrsSessionError:
+            pass
 
     def transceive(self, apdu: bytes, timeout: float | None = None) -> bytes:
         """Send a C-APDU to the card and return its R-APDU, status word

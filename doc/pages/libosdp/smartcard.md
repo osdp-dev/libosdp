@@ -154,16 +154,17 @@ conversation goes like this:
    protocol, its CSN (UID), and its ATR (contact) or ATS/ATQB (contactless).
 4. **The CP opens a session** by submitting `OSDP_TRS_CMD_START`. If the scan
    is still holding the reader in transparent mode, the session adopts it with
-   no extra traffic on the wire. An `OSDP_TRS_SESSION_OPENED` notification
-   confirms the reader is ready.
+   no extra traffic on the wire. The `START` completes `OSDP_COMPLETION_OK`
+   once the reader is ready, or `OSDP_COMPLETION_FAILED` if it never gets
+   there; an `OSDP_TRS_SESSION_OPENED` notification says the same.
 5. **The CP talks to the card**, one `OSDP_TRS_CMD_SEND_APDU` at a time. Each
    answer arrives as an `OSDP_TRS_REPLY_CARD_DATA` event carrying the R-APDU
    (status word included), and is delivered *before* the command completes.
    The session stays open between commands, however long the application takes
    to decide what to send next.
 6. **The CP closes the session** with `OSDP_TRS_CMD_STOP`. The library
-   terminates the card transaction, restores the reader's default mode and
-   raises `OSDP_TRS_SESSION_CLOSED`. With the scan on, the card leaving the
+   terminates the card transaction, restores the reader's default mode,
+   completes the `STOP` and raises `OSDP_TRS_SESSION_CLOSED`. With the scan on, the card leaving the
    field later is reported as an `OSDP_TRS_REPLY_CARD_PRESENT` event with
    `OSDP_TRS_CARD_NOT_PRESENT`.
 
@@ -171,8 +172,10 @@ The rest of this section fills in each step.
 
 ### CP side in C
 
-Everything arrives on the two callbacks every CP already has. Enable
-notifications (`OSDP_FLAG_ENABLE_NOTIFICATION`) to see the session life-cycle.
+Everything arrives on the two callbacks every CP already has. The completion
+callback is enough to follow a session; notifications
+(`OSDP_FLAG_ENABLE_NOTIFICATION`) add the scan's reports and why a session
+failed.
 
 ```c
 static struct osdp_cmd start = {
@@ -222,7 +225,11 @@ int event_callback(void *arg, int pd, struct osdp_event *ev)
 void completion_callback(void *arg, int pd, struct osdp_cmd *cmd,
                          enum osdp_completion_status status)
 {
-    if (cmd == &select_app) {
+    if (cmd == &start && status != OSDP_COMPLETION_OK) {
+        /* The reader never entered transparent mode; the rest of the
+         * band completes OSDP_COMPLETION_FLUSHED */
+        in_session = false;
+    } else if (cmd == &select_app) {
         /* On OSDP_COMPLETION_OK the answer save_answer() kept is the
          * card's; act on it, then submit the next SEND_APDU or close.
          * A session that failed has already closed its band, so the

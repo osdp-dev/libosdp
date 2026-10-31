@@ -304,8 +304,11 @@ def wait_for_session_closed():
 
 def test_trs_session_transceive():
     with cp.trs_session(pd_addr) as card:
+        assert TrsSessionStatus.Opened in pd_app.statuses()
         assert card.transceive(C_APDU) == R_APDU
         assert card.card_scan().status == TrsCardStatus.Present
+    # Leaving the block waited for the reader to leave transparent mode
+    assert pd_app.statuses()[-1] == TrsSessionStatus.Closed
     wait_for_session_closed()
     # The session returned the answers; get_event() does not see them again
     while (event := cp.get_event(pd_addr, timeout=0.2)) is not None:

@@ -1250,8 +1250,11 @@ enum osdp_cmd_e {
  *
  * The library owns the wire handshakes the band implies (it negotiates
  * transparent mode on START, and disconnects the card and restores the reader
- * on STOP) and reports the session's progress as @c OSDP_NOTIFICATION_TRS_STATUS
- * events. The band is enforced when a command is submitted, so misuse is an
+ * on STOP), and completes START and STOP on their outcome: START once the
+ * reader is in transparent mode, STOP once it is back out, and either with
+ * @c OSDP_COMPLETION_FAILED if the session fails first. The completions are
+ * all an app needs to follow a session; @c OSDP_NOTIFICATION_TRS_STATUS events
+ * report the same progress, and why a session failed. The band is enforced when a command is submitted, so misuse is an
  * error from osdp_cp_submit_command() and never a command that runs and then
  * has to be taken back: inside a band only TRS commands are accepted (anything
  * else would interrupt the card transaction), a card command is refused
@@ -1269,8 +1272,9 @@ enum osdp_cmd_e {
  * To abandon a session and the APDUs still queued for it, flush the command
  * queue (osdp_cp_flush_commands()) and then submit @c OSDP_TRS_CMD_STOP; the
  * flushed APDUs are reported to the app individually. If the session ends on its
- * own before its STOP is reached -- the reader rejects transparent mode, say --
- * the APDUs left in the band are completed @c OSDP_COMPLETION_FLUSHED and an
+ * own before its STOP is reached -- the reader rejects transparent mode, say,
+ * which fails the START, or the link goes down -- the rest of the band, STOP
+ * included, is completed @c OSDP_COMPLETION_FLUSHED and an
  * @c OSDP_TRS_SESSION_FAILED notification says why.
  *
  * Knowing @b when to open a band is the reader's job: a smart card entering
@@ -1282,8 +1286,10 @@ enum osdp_cmd_e {
  * with no extra mode negotiation on the wire.
  */
 enum osdp_trs_cmd_e {
-	OSDP_TRS_CMD_START = 1, /**< Open a card session */
-	OSDP_TRS_CMD_STOP, /**< Close the card session opened by START */
+	OSDP_TRS_CMD_START = 1, /**< Open a card session; completes once the
+				 *   reader is in transparent mode */
+	OSDP_TRS_CMD_STOP, /**< Close the card session opened by START;
+			    *   completes once the reader is back out */
 	OSDP_TRS_CMD_SEND_APDU, /**< Send a C-APDU to the card */
 	OSDP_TRS_CMD_ENTER_PIN, /**< EMV PIN entry */
 	OSDP_TRS_CMD_CARD_SCAN, /**< Scan for a card in the field */

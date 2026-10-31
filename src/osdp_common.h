@@ -568,6 +568,12 @@ struct osdp_trs {
 	const struct osdp_cmd *answer_cmd;
 	tick_t answer_tstamp;
 	/*
+	 * The app's START or STOP whose mode change is still on the wire: the
+	 * START completes once the reader is in transparent mode, the STOP once
+	 * it is back out, and either fails if the session fails first.
+	 */
+	const struct osdp_cmd *session_cmd;
+	/*
 	 * The TRS session in progress is a presence-scan probe the library
 	 * opened on its own -- no app band, no session notifications; it winds
 	 * down by mode-set alone (there is no card transaction to terminate).

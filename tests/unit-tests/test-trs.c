@@ -2822,6 +2822,62 @@ out:
 	return ok;
 }
 
+/*
+ * START completes on the session's outcome, not when it leaves the queue: a
+ * reader that NAKs the mode-set fails the START, and the STOP behind it goes
+ * with the band it would have closed.
+ */
+static bool test_trs_start_fails_when_mode_is_refused(void)
+{
+	struct trs_wire_nak_hook hook = { 0 };
+	struct trs_band_flush_log log = { 0 };
+	struct osdp_cmd start_cmd, stop_cmd;
+	bool ok = true;
+
+	printf(SUB_2 "testing TRS start fails when the mode is refused\n");
+
+	trs_use_completion(trs_band_flush_completion_cb, &log);
+	g_trs.status_seen = false;
+	test_set_channel_hook(trs_wire_nak_hook, &hook);
+
+	if (submit_trs_cmd(&start_cmd, OSDP_TRS_CMD_START) ||
+	    submit_trs_cmd(&stop_cmd, OSDP_TRS_CMD_STOP)) {
+		printf(SUB_2 "failed to submit the band\n");
+		ok = false;
+		goto out;
+	}
+	if (!wait_for_trs_status(OSDP_TRS_SESSION_FAILED, 20)) {
+		printf(SUB_2 "session-failed notification not received\n");
+		ok = false;
+		goto out;
+	}
+	test_set_channel_hook(NULL, NULL);
+
+	if (!wait_for_log_count(&log, 2, 5) || atomic_load(&log.count) != 2) {
+		printf(SUB_2 "want 2 completions, got %d\n",
+		       atomic_load(&log.count));
+		ok = false;
+		goto out;
+	}
+	if (log.status[0] != OSDP_COMPLETION_FAILED) {
+		printf(SUB_2 "START: want FAILED, got %d\n", log.status[0]);
+		ok = false;
+	}
+	if (log.status[1] != OSDP_COMPLETION_FLUSHED) {
+		printf(SUB_2 "STOP: want FLUSHED, got %d\n", log.status[1]);
+		ok = false;
+	}
+	if (!test_wait_for_online(g_trs.cp_ctx, 0, 10)) {
+		printf(SUB_2 "PD did not return online after the refusal\n");
+		ok = false;
+	}
+
+out:
+	test_set_channel_hook(NULL, NULL);
+	trs_use_completion(trs_cp_completion_callback, &g_trs);
+	return ok;
+}
+
 extern int test_pd_decode_command(struct osdp_pd *pd, uint8_t *buf, int len);
 
 static bool g_trs_cap_cb_fired;
@@ -2965,6 +3021,7 @@ void run_trs_tests(struct test *t)
 	result &= test_trs_scan_card_scan_timeout_is_not_unsupported();
 	result &= test_trs_scan_card_scan_unsupported_latches();
 	result &= test_trs_scan_probe_failure_backoff();
+	result &= test_trs_start_fails_when_mode_is_refused();
 	/*
 	 * Last on this link: two full retry-exhaustion stages leave the CP
 	 * having just burned a long backlog of timeouts, which is not a

@@ -123,8 +123,10 @@ with cp.trs_session(101) as card:
     answer = card.transceive(bytes.fromhex("00A4040007D276000085010100"))
 ```
 
-Each call returns the card's answer once the library has settled the command,
-and raises `TrsSessionError` when the exchange did not happen.
+Entering the block returns once the reader is in transparent mode, and raises
+`TrsSessionError` if it never gets there; leaving it returns once the reader
+is back out. Each call returns the card's answer once the library has settled
+the command, and raises `TrsSessionError` when the exchange did not happen.
 `trs_scan_enable(address)` has the library watch for cards between sessions,
 which then arrive as `events.TrsCardInfo`, and `trs_get_max_apdu_len(address)`
 says how large an APDU the link can carry. The session is built on
