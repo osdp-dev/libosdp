@@ -38,6 +38,7 @@ cp = ControlPanel(
 
 C_APDU = bytes([0x00, 0xA4, 0x04, 0x00, 0x0E])
 R_APDU = bytes([0x6F, 0x1A, 0x84, 0x0E, 0x90, 0x00])
+CSN = bytes([0x04, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66])
 
 
 class PDApp:
@@ -51,6 +52,7 @@ class PDApp:
         self.card_status = TrsCardStatus.Present
         self.defer = False
         self.error_code = None
+        self.announce = False
 
     def reset(self):
         with self.lock:
@@ -59,6 +61,7 @@ class PDApp:
             self.trs_commands = []
         self.defer = False
         self.error_code = None
+        self.announce = False
 
     def statuses(self):
         with self.lock:
@@ -76,6 +79,8 @@ class PDApp:
                     self.trs_status_readers.append(command.reader)
             case commands.TrsSendApdu():
                 self._record(command)
+                if self.announce:
+                    pd.submit_event(events.TrsCardInfo(csn=CSN))
                 if self.error_code is not None:
                     pd.submit_event(events.TrsError(code=self.error_code))
                 elif not self.defer:
@@ -336,6 +341,18 @@ def test_trs_session_raises_on_a_reader_error():
     assert raised.value.status == CompletionStatus.Failed
     assert raised.value.code == 0x02
     wait_for_session_closed()
+
+
+def test_trs_session_answer_behind_a_card_announcement():
+    # The PD replies to the APDU with the card report it queued first; the
+    # APDU waits for its own answer on a later poll.
+    pd_app.announce = True
+    with cp.trs_session(pd_addr) as card:
+        assert card.transceive(C_APDU) == R_APDU
+    collected = collect_events(
+        lambda c: TrsSessionStatus.Closed in trs_statuses(c)
+    )
+    assert events.TrsCardInfo(csn=CSN) in collected
 
 
 def test_trs_session_on_the_second_reader():

@@ -139,12 +139,10 @@ static void cp_trs_settle_answer(struct osdp_pd *pd,
 	cp_cmd_free(pd, cmd);
 }
 
-/* Whether @reply answers the card command the band is holding for */
-static bool cp_trs_reply_answers(struct osdp_pd *pd,
+/* Whether @reply answers card command @cmd */
+static bool cp_trs_reply_answers(const struct osdp_cmd *cmd,
 				 enum osdp_trs_reply_e reply)
 {
-	const struct osdp_cmd *cmd = pd->trs.answer_cmd;
-
 	if (cmd == NULL) {
 		return false;
 	}
@@ -993,12 +991,15 @@ static int cp_decode_response(struct osdp_pd *pd, uint8_t *buf, int len)
 		}
 		pd->trs.reply_error =
 			ret == OSDP_TRS_REPLY_ACTION_DISPATCH_ERROR;
+		pd->trs.reply_unanswered =
+			ret == OSDP_TRS_REPLY_ACTION_NONE ||
+			!cp_trs_reply_answers(pd->active_cmd, event.trs.reply);
 		if (ret != OSDP_TRS_REPLY_ACTION_NONE) {
 			cp_dispatch_event(pd, &event);
 		}
 		if (pd->cmd_id == CMD_POLL &&
 		    ret != OSDP_TRS_REPLY_ACTION_NONE &&
-		    cp_trs_reply_answers(pd, event.trs.reply)) {
+		    cp_trs_reply_answers(pd->trs.answer_cmd, event.trs.reply)) {
 			cp_trs_settle_answer(pd, pd->trs.reply_error ?
 						 OSDP_COMPLETION_FAILED :
 						 OSDP_COMPLETION_OK);
@@ -2379,12 +2380,18 @@ static bool cp_cmd_failure_is_soft(struct osdp_pd *pd)
 
 /*
  * A PD that ACKs a card command is still working on it, and sends the answer
- * on a later poll. Keep the command until then instead of completing it now.
+ * on a later poll. So is one that replies with a report it queued earlier,
+ * such as a card it announced when the session opened. Keep the command
+ * until the answer arrives instead of completing it now.
  */
 static bool cp_trs_park_answer(struct osdp_pd *pd)
 {
-	if (pd->cmd_id != CMD_XWR || pd->reply_id != REPLY_ACK ||
-	    pd->active_cmd == NULL || !cp_trs_cmd_is_app_owned(pd)) {
+	if (pd->cmd_id != CMD_XWR || pd->active_cmd == NULL ||
+	    !cp_trs_cmd_is_app_owned(pd)) {
+		return false;
+	}
+	if (pd->reply_id != REPLY_ACK &&
+	    !(pd->reply_id == REPLY_XRD && pd->trs.reply_unanswered)) {
 		return false;
 	}
 	pd->trs.answer_cmd = pd->active_cmd;

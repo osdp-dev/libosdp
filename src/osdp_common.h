@@ -554,10 +554,16 @@ struct osdp_trs {
 	 */
 	bool reply_error;
 	/*
-	 * A card command the PD acknowledged instead of answering: its answer
-	 * comes on a later poll, and the command completes then. The band
-	 * holds meanwhile, so the answer cannot reach the CP as the reply to
-	 * the next card command.
+	 * The last REPLY_XRD carried a report other than the answer to the card
+	 * command it replied to, such as a card the reader announced. Read
+	 * only for the CMD_XWR it replied to, which is then still waiting.
+	 */
+	bool reply_unanswered;
+	/*
+	 * A card command the PD acknowledged, or replied to with some other
+	 * report, instead of answering: its answer comes on a later poll, and
+	 * the command completes then. The band holds meanwhile, so the answer
+	 * cannot reach the CP as the reply to the next card command.
 	 */
 	const struct osdp_cmd *answer_cmd;
 	tick_t answer_tstamp;
