@@ -1161,12 +1161,17 @@ static int cp_process_reply(struct osdp_pd *pd)
 			make_request(pd, CP_REQ_LINK_RESET);
 			return OSDP_CP_ERR_SEQ_NUM;
 		}
-		if (pd->nak_code == OSDP_PD_NAK_SC_COND) {
+		if (pd->nak_code == OSDP_PD_NAK_SC_COND &&
+		    pd->state != OSDP_CP_STATE_SC_CHLNG &&
+		    pd->state != OSDP_CP_STATE_SC_SCRYPT) {
 			/* The session is unusable: the reply was unMAC'd, or
 			 * its MAC did not check out. Nothing in it can be
 			 * trusted, but its arrival is reason enough to redo
 			 * the handshake rather than sit out the offline
-			 * dwell. */
+			 * dwell. A handshake reply is different: the
+			 * handshake itself failed, and the state tables pick
+			 * what follows, so restarting it here would retry
+			 * that failure without end. */
 			LOG_WRN("Secure channel is out of step; restarting it");
 			make_request(pd, CP_REQ_RESTART_SC);
 		}
@@ -2168,6 +2173,13 @@ static void cp_transition_effects(struct osdp_pd *pd, enum osdp_cp_state_e cur,
 		if (next == OSDP_CP_STATE_OFFLINE) {
 			LOG_ERR("SCRYPT failed. Set PD offline due to "
 				"ENFORCE_SECURE");
+		} else {
+			/* The PD may hold the session the CP just refused.
+			 * Starting over at sequence 0 makes it discard that
+			 * session, so plaintext works; as for a failed CHLNG,
+			 * the next attempt waits OSDP_PD_SC_RETRY_MS. */
+			osdp_phy_state_reset(pd, true);
+			pd->sc_tstamp = osdp_millis_now();
 		}
 		break;
 	case OSDP_CP_STATE_SET_SCBK:
