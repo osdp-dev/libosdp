@@ -57,6 +57,7 @@ class ControlPanel(_OSDPBaseClass):
         mode0_dwell_ms: int = ...,
         mode1_dwell_ms: int = ...,
         hold_ms: int = ...,
+        reader: int = ...,
         /,
     ) -> bool: ...
     def trs_scan_disable(self, pd: int, /) -> bool: ...

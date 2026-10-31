@@ -1254,8 +1254,10 @@ enum osdp_cmd_e {
  * events. The band is enforced when a command is submitted, so misuse is an
  * error from osdp_cp_submit_command() and never a command that runs and then
  * has to be taken back: inside a band only TRS commands are accepted (anything
- * else would interrupt the card transaction), and a card command is refused
- * outside one (it would reach a reader that is not in transparent mode).
+ * else would interrupt the card transaction), a card command is refused
+ * outside one (it would reach a reader that is not in transparent mode), and
+ * a command naming a different reader than the band's START is refused (a band
+ * talks to one card; see @c struct osdp_trs_cmd::reader).
  *
  * A reader may acknowledge a card command and answer it on a later poll, as a
  * slow card or a PIN entry requires. The command then completes when its
@@ -1360,6 +1362,12 @@ struct osdp_trs_scan_params {
 	 * extra mode negotiation on the wire.
 	 */
 	uint16_t hold_ms;
+	/**
+	 * Reader the scan asks whether a card is present (0 = first, the
+	 * default). Sightings a reader volunteers are delivered whichever
+	 * reader reports them.
+	 */
+	uint8_t reader;
 };
 
 /**
@@ -1455,6 +1463,14 @@ struct osdp_trs_pin_entry {
 
 struct osdp_trs_cmd {
 	enum osdp_trs_cmd_e command; /**< Which TRS command; selects the union */
+	/**
+	 * Reader the command addresses (0 = first, 1 = second, up to the PD's
+	 * READERS capability). A band talks to the card in one reader: every
+	 * command from START to STOP must name the reader its START named, and
+	 * STOP releases that reader's card. On a PD, the reader the CP
+	 * addressed.
+	 */
+	uint8_t reader;
 	union {
 		struct osdp_trs_apdu apdu; /**< For OSDP_TRS_CMD_SEND_APDU */
 		struct osdp_trs_pin_entry pin_entry;
@@ -1560,6 +1576,13 @@ struct osdp_notification_pd_status {
  */
 struct osdp_notification_trs_status {
 	enum osdp_trs_session_status_e status; /**< Session life-cycle state */
+	/**
+	 * Reader the status concerns: on a CP, the session's reader for
+	 * OPENED/CLOSED/FAILED and the scanned reader for the scan's statuses;
+	 * on a PD, the reader whose card is released for CARD_RELEASED, and 0
+	 * for OPENED/CLOSED, which concern the whole PD.
+	 */
+	uint8_t reader;
 };
 
 /**

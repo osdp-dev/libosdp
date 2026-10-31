@@ -22,9 +22,9 @@ internal static class NativeLimits
 
     // The unions hold no pointers and nothing wider than 4-byte alignment, so
     // their size is the same on every target. Measured on armv7, where struct
-    // osdp_cmd has no tail padding: sizeof (316) minus the 16-byte header. On
-    // 64-bit targets the struct adds 4 bytes of tail padding after the union.
-    internal const int CmdUnionSize = 300;
+    // osdp_cmd has no tail padding: sizeof (320) minus the 16-byte header. On
+    // 64-bit targets only the header differs (24 bytes), giving 328.
+    internal const int CmdUnionSize = 304;
     internal const int EventUnionSize = 272;
 
     internal const int CapSentinel = 17; // OSDP_PD_CAP_SENTINEL

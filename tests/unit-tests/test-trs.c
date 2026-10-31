@@ -51,6 +51,7 @@ struct test_trs_ctx {
 	/* CP side: last OSDP_NOTIFICATION_TRS_STATUS seen */
 	bool status_seen;
 	enum osdp_trs_session_status_e last_status;
+	uint8_t last_status_reader;
 
 	/* CP side: last command completion seen */
 	/* Written by the completion callback on the refresh thread. */
@@ -78,6 +79,7 @@ struct test_trs_ctx {
 
 	/* PD side: OSDP_NOTIFICATION_TRS_STATUS seen, in order */
 	enum osdp_trs_session_status_e pd_status[8];
+	uint8_t pd_status_reader[8];
 	int pd_status_count;
 
 	/* When non-zero, the card answers with an R-APDU this long instead of
@@ -143,6 +145,7 @@ static int trs_cp_event_callback(void *arg, int pd, struct osdp_event *ev)
 	    ev->notif.type == OSDP_NOTIFICATION_TRS_STATUS) {
 		ctx->status_seen = true;
 		ctx->last_status = ev->notif.trs_status.status;
+		ctx->last_status_reader = ev->notif.trs_status.reader;
 	}
 	return 0;
 }
@@ -244,6 +247,8 @@ static int trs_pd_command_callback(void *arg, struct osdp_cmd *cmd)
 	if (cmd->id == OSDP_CMD_NOTIFICATION &&
 	    cmd->notif.type == OSDP_NOTIFICATION_TRS_STATUS &&
 	    ctx->pd_status_count < (int)ARRAY_SIZEOF(ctx->pd_status)) {
+		ctx->pd_status_reader[ctx->pd_status_count] =
+			cmd->notif.trs_status.reader;
 		ctx->pd_status[ctx->pd_status_count++] =
 			cmd->notif.trs_status.status;
 	}
@@ -1542,6 +1547,14 @@ static bool test_trs_wire_probe_card_scan_build(void)
 		return false;
 	}
 
+	/* The scan asks the reader it was configured with */
+	pd.trs.scan.reader = 1;
+	len = osdp_trs_cmd_build(&pd, NULL, buf, sizeof(buf));
+	if (len != 3 || buf[2] != 0x01) {
+		printf(SUB_2 "card scan addressed reader %d; want 1\n", buf[2]);
+		return false;
+	}
+
 	/* Not asking: a lifecycle step must still win */
 	pd.trs.scan.asking = false;
 	pd.trs.state = TRS_STATE_TEARDOWN;
@@ -2437,6 +2450,120 @@ static bool test_trs_session_stop()
 	return true;
 }
 
+static void trs_set_readers(int num_items)
+{
+	test_api_lock();
+	osdp_to_pd(g_trs.cp_ctx, 0)->cap[OSDP_PD_CAP_READERS].num_items =
+		num_items;
+	osdp_to_pd(g_trs.pd_ctx, 0)->cap[OSDP_PD_CAP_READERS].num_items =
+		num_items;
+	test_api_unlock();
+}
+
+/*
+ * On a PD with two readers, a band addresses the one its START names: each
+ * card command reaches the PD app tagged with it, STOP releases that reader's
+ * card, and a command naming another reader -- or one the PD does not have --
+ * is refused at submit.
+ */
+static bool test_trs_second_reader_band(void)
+{
+	static struct osdp_cmd start, stop, apdu, stray, absent;
+	const enum osdp_trs_session_status_e pd_want[] = {
+		OSDP_TRS_SESSION_OPENED,
+		OSDP_TRS_CARD_RELEASED,
+		OSDP_TRS_SESSION_CLOSED,
+	};
+	bool result = false;
+
+	printf(SUB_2 "testing TRS band on the second reader\n");
+
+	trs_set_readers(1);
+	g_trs.status_seen = false;
+	g_trs.pd_status_count = 0;
+	g_trs.event_seen = false;
+	g_trs.cmd_seen = false;
+	g_trs.defer = false;
+
+	absent = (struct osdp_cmd){
+		.id = OSDP_CMD_XWR,
+		.trs = { .command = OSDP_TRS_CMD_START, .reader = 2 },
+	};
+	if (test_submit_command(g_trs.cp_ctx, 0, &absent)) {
+		printf(SUB_2 "START for a reader the PD lacks was accepted\n");
+		goto out;
+	}
+
+	start = (struct osdp_cmd){
+		.id = OSDP_CMD_XWR,
+		.trs = { .command = OSDP_TRS_CMD_START, .reader = 1 },
+	};
+	if (!test_submit_command(g_trs.cp_ctx, 0, &start)) {
+		printf(SUB_2 "Failed to submit TRS start on reader 1\n");
+		goto out;
+	}
+
+	stray = (struct osdp_cmd){
+		.id = OSDP_CMD_XWR,
+		.trs = {
+			.command = OSDP_TRS_CMD_SEND_APDU,
+			.reader = 0,
+			.apdu = { .length = sizeof(g_req_apdu) },
+		},
+	};
+	memcpy(stray.trs.apdu.data, g_req_apdu, sizeof(g_req_apdu));
+	if (test_submit_command(g_trs.cp_ctx, 0, &stray)) {
+		printf(SUB_2 "APDU for reader 0 joined a reader-1 band\n");
+		goto out;
+	}
+
+	apdu = stray;
+	apdu.trs.reader = 1;
+	if (!test_submit_command(g_trs.cp_ctx, 0, &apdu)) {
+		printf(SUB_2 "Failed to submit APDU on reader 1\n");
+		goto out;
+	}
+	if (!wait_for_trs_event(10)) {
+		printf(SUB_2 "card answer not received\n");
+		goto out;
+	}
+	if (!g_trs.cmd_seen || g_trs.last_cmd.reader != 1) {
+		printf(SUB_2 "PD app saw reader %d; want 1\n",
+		       g_trs.last_cmd.reader);
+		goto out;
+	}
+
+	stop = (struct osdp_cmd){
+		.id = OSDP_CMD_XWR,
+		.trs = { .command = OSDP_TRS_CMD_STOP, .reader = 1 },
+	};
+	if (!test_submit_command(g_trs.cp_ctx, 0, &stop)) {
+		printf(SUB_2 "Failed to submit TRS stop on reader 1\n");
+		goto out;
+	}
+	if (!wait_for_trs_status(OSDP_TRS_SESSION_CLOSED, 10)) {
+		printf(SUB_2 "TRS session-closed notification not received\n");
+		goto out;
+	}
+	if (g_trs.last_status_reader != 1) {
+		printf(SUB_2 "CP told reader %d closed; want 1\n",
+		       g_trs.last_status_reader);
+		goto out;
+	}
+	if (!wait_for_pd_statuses(pd_want, ARRAY_SIZEOF(pd_want), 1000)) {
+		goto out;
+	}
+	if (g_trs.pd_status_reader[1] != 1) {
+		printf(SUB_2 "PD told to release reader %d's card; want 1\n",
+		       g_trs.pd_status_reader[1]);
+		goto out;
+	}
+	result = test_wait_for_online(g_trs.cp_ctx, 0, 10);
+out:
+	trs_set_readers(0);
+	return result;
+}
+
 /*
  * A CP that restarts the link takes the reader out of transparent mode
  * without a mode-set; the PD app must hear of it all the same.
@@ -2803,6 +2930,7 @@ void run_trs_tests(struct test *t)
 	result &= test_trs_card_present();
 	result &= test_trs_error_reply();
 	result &= test_trs_session_stop();
+	result &= test_trs_second_reader_band();
 	result &= test_trs_unsolicited_xrd_out_of_session();
 	result &= test_trs_scan_cadence();
 	result &= test_trs_scan_probe_asks_card_scan();

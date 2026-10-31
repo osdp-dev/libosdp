@@ -712,6 +712,10 @@ class Notification:
     """TRS session state (C enum osdp_trs_session_status_e). Only for
     NotificationType.TrsStatus."""
 
+    reader: int = 0
+    """Zero-based reader a TRS status concerns; for CardReleased, the reader
+    whose card to disconnect. Only for NotificationType.TrsStatus."""
+
     @property
     def trs_status(self) -> TrsSessionStatus:
         """How the reader's TRS mode changed.
@@ -828,14 +832,23 @@ class TrsStart:
     notifications. Inside a band only TRS commands are accepted, and a card
     command outside one is refused.
 
+    A band talks to the card in one reader: every command in it must name
+    the reader its TrsStart names.
+
     @see osdp_trs_cmd_e
 
     Example:
-        >>> TrsStart().ID.name
-        'Trs'
+        >>> TrsStart(reader=1).reader
+        1
     """
 
     ID: ClassVar[CommandId] = CommandId.Trs
+
+    reader: int = 0
+    """Zero-based reader number the session talks to."""
+
+    def __post_init__(self) -> None:
+        check_range("reader", self.reader, UINT8_MAX)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -849,6 +862,12 @@ class TrsStop:
     """
 
     ID: ClassVar[CommandId] = CommandId.Trs
+
+    reader: int = 0
+    """Zero-based reader number; the one the band's TrsStart named."""
+
+    def __post_init__(self) -> None:
+        check_range("reader", self.reader, UINT8_MAX)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -870,10 +889,14 @@ class TrsSendApdu:
 
     ID: ClassVar[CommandId] = CommandId.Trs
 
+    reader: int = 0
+    """Zero-based reader number; the one the band's TrsStart named."""
+
     apdu: bytes = b""
     """The C-APDU; non-empty."""
 
     def __post_init__(self) -> None:
+        check_range("reader", self.reader, UINT8_MAX)
         if not self.apdu:
             raise ValueError("apdu must not be empty")
         check_length("apdu", self.apdu, MAX_TRS_APDU_LEN)
@@ -946,6 +969,9 @@ class TrsEnterPin:
 
     ID: ClassVar[CommandId] = CommandId.Trs
 
+    reader: int = 0
+    """Zero-based reader number; the one the band's TrsStart named."""
+
     timeout_initial: int = 0
     """Seconds to wait for the first digit; zero for the reader's default."""
 
@@ -983,6 +1009,7 @@ class TrsEnterPin:
     """The C-APDU the PIN is written into; non-empty."""
 
     def __post_init__(self) -> None:
+        check_range("reader", self.reader, UINT8_MAX)
         check_range("timeout_initial", self.timeout_initial, UINT8_MAX)
         check_range("timeout_digit", self.timeout_digit, UINT8_MAX)
         check_range("min_digits", self.min_digits, UINT8_MAX)
@@ -1010,6 +1037,12 @@ class TrsCardScan:
     """
 
     ID: ClassVar[CommandId] = CommandId.Trs
+
+    reader: int = 0
+    """Zero-based reader number; the one the band's TrsStart named."""
+
+    def __post_init__(self) -> None:
+        check_range("reader", self.reader, UINT8_MAX)
 
 
 Command: TypeAlias = (

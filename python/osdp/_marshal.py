@@ -149,7 +149,7 @@ def _notification_payload(x) -> Payload:
             "firmware_version": x.firmware_version,
         }
     if x.type == NotificationType.TrsStatus:
-        return {"type": x.type, "status": x.status}
+        return {"type": x.type, "status": x.status, "reader": x.reader}
     return {"type": x.type}
 
 
@@ -165,6 +165,7 @@ def _notification_from_payload(cls, p: Payload):
         object_id=p.get("object_id", 0), total=p.get("total", 0),
         offset=p.get("offset", 0), outcome=p.get("outcome", 0),
         status=p.get("status", 0),
+        reader=p.get("reader", 0),
     )
     # PdId is CP-only, so only the CP-side Notification carries these fields.
     if kwargs["type"] == NotificationType.PdId:
@@ -181,6 +182,7 @@ def _encode_trs_enter_pin(cmd: c.TrsEnterPin) -> Payload:
     return {
         "command": CommandId.Trs,
         "trs_command": TrsCommand.EnterPin,
+        "reader": cmd.reader,
         "timeout_initial": cmd.timeout_initial,
         "timeout_digit": cmd.timeout_digit,
         "pin_block": {
@@ -208,6 +210,7 @@ def _decode_trs_enter_pin(payload: Payload) -> c.TrsEnterPin:
     pin_block = payload["pin_block"]
     pin_length_field = payload["pin_length_field"]
     return c.TrsEnterPin(
+        reader=payload["reader"],
         timeout_initial=payload["timeout_initial"],
         timeout_digit=payload["timeout_digit"],
         pin_block=c.TrsPinBlock(
@@ -232,11 +235,13 @@ def _decode_trs_enter_pin(payload: Payload) -> c.TrsEnterPin:
 
 
 _TRS_COMMAND_DECODERS: dict[TrsCommand, Callable[[Payload], c.Command]] = {
-    TrsCommand.Start: lambda p: c.TrsStart(),
-    TrsCommand.Stop: lambda p: c.TrsStop(),
-    TrsCommand.SendApdu: lambda p: c.TrsSendApdu(apdu=p["apdu"]),
+    TrsCommand.Start: lambda p: c.TrsStart(reader=p["reader"]),
+    TrsCommand.Stop: lambda p: c.TrsStop(reader=p["reader"]),
+    TrsCommand.SendApdu: lambda p: c.TrsSendApdu(
+        reader=p["reader"], apdu=p["apdu"]
+    ),
     TrsCommand.EnterPin: _decode_trs_enter_pin,
-    TrsCommand.CardScan: lambda p: c.TrsCardScan(),
+    TrsCommand.CardScan: lambda p: c.TrsCardScan(reader=p["reader"]),
 }
 
 
@@ -344,20 +349,24 @@ _COMMAND_ENCODERS: dict[type, Callable[[Any], Payload]] = {
     c.TrsStart: lambda x: {
         "command": CommandId.Trs,
         "trs_command": TrsCommand.Start,
+        "reader": x.reader,
     },
     c.TrsStop: lambda x: {
         "command": CommandId.Trs,
         "trs_command": TrsCommand.Stop,
+        "reader": x.reader,
     },
     c.TrsSendApdu: lambda x: {
         "command": CommandId.Trs,
         "trs_command": TrsCommand.SendApdu,
+        "reader": x.reader,
         "apdu": x.apdu,
     },
     c.TrsEnterPin: _encode_trs_enter_pin,
     c.TrsCardScan: lambda x: {
         "command": CommandId.Trs,
         "trs_command": TrsCommand.CardScan,
+        "reader": x.reader,
     },
 }
 

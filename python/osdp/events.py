@@ -434,6 +434,11 @@ class Notification:
     """TRS session state (C enum osdp_trs_session_status_e). Only for
     NotificationType.TrsStatus."""
 
+    reader: int = 0
+    """Zero-based reader a TRS status concerns: the session's reader, or the
+    scanned reader for the scan's statuses. Only for
+    NotificationType.TrsStatus."""
+
     @property
     def sc_active(self) -> bool:
         """Whether the secure channel is up.

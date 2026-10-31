@@ -17,9 +17,11 @@ pd_addr = 101
 key = KeyStore.gen_key()
 f1, f2 = make_fifo_pair("trs")
 
-# Bit 0 of the smart-card compliance level is what tells a CP the PD speaks TRS
+# Bit 0 of the smart-card compliance level is what tells a CP the PD speaks TRS.
+# One attached reader besides the PD's own gives card sessions two to address.
 pd_cap = PDCapabilities([
     (Capability.SmartCard, 1, 1),
+    (Capability.Readers, 1, 1),
 ])
 
 pd = PeripheralDevice(
@@ -44,6 +46,7 @@ class PDApp:
     def __init__(self):
         self.lock = threading.Lock()
         self.trs_statuses = []
+        self.trs_status_readers = []
         self.trs_commands = []
         self.card_status = TrsCardStatus.Present
         self.defer = False
@@ -51,6 +54,7 @@ class PDApp:
     def reset(self):
         with self.lock:
             self.trs_statuses = []
+            self.trs_status_readers = []
             self.trs_commands = []
         self.defer = False
 
@@ -58,11 +62,16 @@ class PDApp:
         with self.lock:
             return list(self.trs_statuses)
 
+    def status_readers(self):
+        with self.lock:
+            return list(self.trs_status_readers)
+
     def handler(self, command):
         match command:
             case commands.Notification(type=NotificationType.TrsStatus):
                 with self.lock:
                     self.trs_statuses.append(command.trs_status)
+                    self.trs_status_readers.append(command.reader)
             case commands.TrsSendApdu():
                 self._record(command)
                 if not self.defer:
@@ -191,6 +200,38 @@ def test_trs_band_send_apdu():
         TrsSessionStatus.CardReleased,
         TrsSessionStatus.Closed,
     ])
+
+
+def test_trs_band_on_the_second_reader():
+    # A band talks to the card in the reader its TrsStart names: a command
+    # naming another reader is refused, and STOP releases that reader's card.
+    assert not cp.submit_command(pd_addr, commands.TrsStart(reader=2))
+    assert cp.submit_command(pd_addr, commands.TrsStart(reader=1))
+    assert not cp.submit_command(
+        pd_addr, commands.TrsSendApdu(reader=0, apdu=C_APDU)
+    )
+    send = commands.TrsSendApdu(reader=1, apdu=C_APDU)
+    assert cp.submit_command(pd_addr, send)
+    collected = collect_events(lambda c: len(trs_replies(c)) == 1)
+    assert cp.submit_command(pd_addr, commands.TrsStop(reader=1))
+    collected += collect_events(
+        lambda c: TrsSessionStatus.Closed in trs_statuses(c)
+    )
+
+    closed = [
+        e for e in collected
+        if isinstance(e, events.Notification)
+        and e.type == NotificationType.TrsStatus
+        and e.trs_status == TrsSessionStatus.Closed
+    ]
+    assert closed[0].reader == 1
+    assert pd_app.trs_commands == [send]
+    wait_for_pd_statuses([
+        TrsSessionStatus.Opened,
+        TrsSessionStatus.CardReleased,
+        TrsSessionStatus.Closed,
+    ])
+    assert pd_app.status_readers() == [0, 1, 0]
 
 
 def test_trs_band_send_apdu_deferred():

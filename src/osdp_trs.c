@@ -232,7 +232,7 @@ static int trs_local_cmd_build(struct osdp_pd *pd, uint8_t *buf, int max_len)
 			return -1;
 		}
 		bwrite_u16_be(CMD_CARD_SCAN, buf, &len);
-		buf[len++] = 0; /* reader (always 0) */
+		buf[len++] = pd->trs.scan.reader;
 		return len;
 	}
 
@@ -252,7 +252,7 @@ static int trs_local_cmd_build(struct osdp_pd *pd, uint8_t *buf, int max_len)
 			return -1;
 		}
 		bwrite_u16_be(CMD_TERMINATE, buf, &len);
-		buf[len++] = 0; /* reader (always 0) */
+		buf[len++] = pd->trs.reader;
 		break;
 	default:
 		return -1;
@@ -337,7 +337,7 @@ int osdp_trs_cmd_build(struct osdp_pd *pd, const struct osdp_cmd *cmd,
 		return -1;
 	}
 	bwrite_u16_be(mode_code, buf, &len);
-	buf[len++] = 0; /* reader (always 0) */
+	buf[len++] = c->reader;
 
 	switch (c->command) {
 	case OSDP_TRS_CMD_SEND_APDU:
@@ -867,17 +867,23 @@ int osdp_trs_cmd_decode(struct osdp_pd *pd, struct osdp_cmd *cmd, uint8_t *buf,
 		return -1;
 	}
 
+	/* Every mode-1 command names the reader it is for */
+	if (len - pos < 1) {
+		return -1;
+	}
+	cmd->trs.reader = buf[pos++];
+	if (cmd->trs.reader > pd->cap[OSDP_PD_CAP_READERS].num_items) {
+		LOG_ERR("TRS: command for reader %d; PD advertises only %d",
+			cmd->trs.reader,
+			pd->cap[OSDP_PD_CAP_READERS].num_items);
+		return -1;
+	}
+
 	/* Card-session teardown is library-driven, but only the app can
 	 * disconnect the card */
 	if (mode_code == CMD_TERMINATE) {
 		return OSDP_TRS_DECODE_RELEASE;
 	}
-
-	/* mode-1 commands carry a reader byte and are delivered to the app */
-	if (len - pos < 1) {
-		return -1;
-	}
-	pos++; /* reader -- always 0 */
 
 	cmd->id = OSDP_CMD_XWR;
 
@@ -1155,6 +1161,7 @@ static void trs_scan_forget_ask(struct osdp_pd *pd)
 void osdp_trs_probe_note_open(struct osdp_pd *pd)
 {
 	pd->trs.probe = true;
+	pd->trs.reader = pd->trs.scan.reader;
 	pd->trs.stop_pending = false;
 	pd->trs.scan.holding = false;
 	trs_scan_forget_ask(pd);

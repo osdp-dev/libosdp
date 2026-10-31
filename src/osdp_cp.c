@@ -1572,6 +1572,7 @@ static int cp_get_online_command(struct osdp_pd *pd)
 		if (cp_cmd_is_trs(cmd, OSDP_TRS_CMD_START)) {
 			/* Open a TRS session; the transition runs through the
 			 * usual request path, nothing goes on the wire now. */
+			pd->trs.reader = cmd->trs.reader;
 			cp_discard_cmd(pd, cmd, OSDP_COMPLETION_OK);
 			make_request(pd, CP_REQ_TRS_OPEN);
 			return -1;
@@ -1679,6 +1680,9 @@ static int cp_get_trs_command(struct osdp_pd *pd)
 			return cp_get_poll_command(pd);
 		}
 		if (pd->trs.probe && cp_cmd_is_trs(cmd, OSDP_TRS_CMD_START)) {
+			/* Transparent mode is the whole PD's, so a probe of
+			 * one reader serves a band for any of them. */
+			pd->trs.reader = cmd->trs.reader;
 			cp_discard_cmd(pd, cmd, OSDP_COMPLETION_OK);
 			osdp_trs_probe_adopted(pd);
 			LOG_INF("TRS session opened (adopted scan probe)");
@@ -1747,6 +1751,10 @@ static void notify_trs_status(struct osdp_pd *pd,
 	evt.type = OSDP_EVENT_NOTIFICATION;
 	evt.notif.type = OSDP_NOTIFICATION_TRS_STATUS;
 	evt.notif.trs_status.status = status;
+	evt.notif.trs_status.reader =
+		(status == OSDP_TRS_SCAN_SUSPENDED ||
+		 status == OSDP_TRS_SCAN_NO_DEPARTURE) ?
+			pd->trs.scan.reader : pd->trs.reader;
 	ctx->event_callback(ctx->event_callback_arg, pd->idx, &evt);
 	osdp_metrics_report(pd, OSDP_METRIC_EVENT);
 }
@@ -2545,19 +2553,25 @@ static int cp_band_admit(struct osdp_pd *pd, const struct osdp_cmd *cmd)
 			return -1;
 		}
 		pd->trs.band_open = true;
+		pd->trs.band_reader = cmd->trs.reader;
 		return 0;
 	}
-	if (cp_cmd_is_trs(cmd, OSDP_TRS_CMD_STOP)) {
-		if (!pd->trs.band_open) {
-			LOG_ERR("TRS stop without a session to close");
-			return -1;
-		}
-		pd->trs.band_open = false;
-		return 0;
+	if (cp_cmd_is_trs(cmd, OSDP_TRS_CMD_STOP) && !pd->trs.band_open) {
+		LOG_ERR("TRS stop without a session to close");
+		return -1;
 	}
 	if (cmd->id == OSDP_CMD_XWR && !pd->trs.band_open) {
 		LOG_ERR("TRS command outside a session; queue a START first");
 		return -1;
+	}
+	if (cmd->id == OSDP_CMD_XWR && cmd->trs.reader != pd->trs.band_reader) {
+		LOG_ERR("TRS command for reader %d inside a session with "
+			"reader %d", cmd->trs.reader, pd->trs.band_reader);
+		return -1;
+	}
+	if (cp_cmd_is_trs(cmd, OSDP_TRS_CMD_STOP)) {
+		pd->trs.band_open = false;
+		return 0;
 	}
 	/*
 	 * Both carriers of a C-APDU are checked here so an oversized one, or a
@@ -3182,6 +3196,7 @@ int osdp_cp_trs_scan_enable(osdp_t *ctx, int pd_idx,
 		params->mode1_dwell_ms : OSDP_TRS_SCAN_MODE1_DWELL_MS;
 	trs->scan.hold_ms = (params && params->hold_ms) ?
 		params->hold_ms : OSDP_TRS_SCAN_HOLD_MS;
+	trs->scan.reader = params ? params->reader : 0;
 	trs->scan.backoff_ms = 0;
 	trs->scan.holding = false;
 	trs->scan.tstamp = osdp_millis_now();

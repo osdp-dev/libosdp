@@ -368,6 +368,7 @@ class ControlPanel:
         mode0_dwell_ms: int = 0,
         mode1_dwell_ms: int = 0,
         hold_ms: int = 0,
+        reader: int = 0,
     ) -> bool:
         """Scan a TRS-capable PD for smart cards between card sessions.
 
@@ -377,7 +378,8 @@ class ControlPanel:
         sighting arrives as an `events.TrsCardPresent` or
         `events.TrsCardInfo`, and transparent mode is then held for `hold_ms`
         so that a `commands.TrsStart` submitted in response adopts it as is.
-        A zero selects that parameter's default.
+        A zero selects that parameter's default. `reader` is the zero-based
+        reader the scan asks.
 
         Returns False if the library refused it.
 
@@ -387,7 +389,7 @@ class ControlPanel:
         with self.lock:
             return bool(
                 self.ctx.trs_scan_enable(
-                    pd, mode0_dwell_ms, mode1_dwell_ms, hold_ms
+                    pd, mode0_dwell_ms, mode1_dwell_ms, hold_ms, reader
                 )
             )
 

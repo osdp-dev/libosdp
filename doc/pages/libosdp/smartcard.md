@@ -262,6 +262,11 @@ The band is enforced at submission, so misuse is an error from
 - A card command outside a band is refused: the reader is not in transparent
   mode to receive it.
 - A second `START` before the `STOP` is refused.
+- A band talks to the card in one reader. `struct osdp_trs_cmd::reader`
+  defaults to 0, the PD's first reader; on a PD with more (its `READERS`
+  capability), the `START` names the reader and every command up to and
+  including the `STOP` must name the same one. A reader the PD does not
+  advertise is refused too.
 
 While a session is open the reader is in transparent mode, where it does not
 report ordinary credential reads. Keep sessions short, and always close them.
@@ -335,7 +340,9 @@ struct osdp_trs_scan_params params = { 0 };  /* zeroes pick the defaults */
 osdp_cp_trs_scan_enable(ctx, pd_idx, &params);
 ```
 
-When a probe sights a card, the sighting is delivered as an `OSDP_EVENT_TRS`
+The scan asks one reader, `osdp_trs_scan_params::reader` (the first by
+default); sightings any reader volunteers are delivered as they come. When a
+probe sights a card, the sighting is delivered as an `OSDP_EVENT_TRS`
 event and transparent mode is held for `hold_ms` (default 500 ms), so a `START`
 submitted in response adopts the reader as-is. A held card is announced on
 every probe; deduplicate on the application side. The scan pauses by itself
@@ -363,7 +370,8 @@ session — and only hands the application the card work:
   `trs.command` set to `OSDP_TRS_CMD_SEND_APDU`, `OSDP_TRS_CMD_ENTER_PIN` or
   `OSDP_TRS_CMD_CARD_SCAN`. Answer with an `OSDP_EVENT_TRS` event:
   `CARD_DATA` for an APDU, `PIN_COMPLETE` for a PIN entry, `CARD_PRESENT` for
-  a card scan, or `ERROR` when the exchange could not be done. Submit it from
+  a card scan, or `ERROR` when the exchange could not be done; `trs.reader`
+  says which reader the CP addressed. Submit it from
   inside the callback to reply at once; return without submitting to have the
   library acknowledge the command, and submit the answer when the card is done
   — it goes out on the CP's next poll.
@@ -372,8 +380,8 @@ session — and only hands the application the card work:
 - **Mode changes** — `OSDP_TRS_SESSION_OPENED` / `CLOSED` notifications follow
   the reader's mode as the CP sets it (expect a steady stream of them while
   the CP runs a presence scan), and `OSDP_TRS_CARD_RELEASED` means the CP has
-  finished with the card: disconnect it, so the next session finds it as if
-  it had just been presented.
+  finished with the card in the notification's `reader`: disconnect it, so
+  the next session finds it as if it had just been presented.
 
 ```c
 int command_callback(void *arg, struct osdp_cmd *cmd)

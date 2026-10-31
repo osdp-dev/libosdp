@@ -273,6 +273,25 @@ int osdp_cmd_reader_no(const struct osdp_cmd *cmd)
 		return cmd->bioread.reader;
 	case OSDP_CMD_BIOMATCH:
 		return cmd->biomatch.reader;
+	case OSDP_CMD_XWR:
+		return cmd->trs.reader;
+	default:
+		return -1;
+	}
+}
+
+/* An error report names no reader (v2.2 Table 74) */
+static int trs_reply_reader_no(const struct osdp_trs_reply *reply)
+{
+	switch (reply->reply) {
+	case OSDP_TRS_REPLY_CARD_INFO:
+		return reply->card_info.reader;
+	case OSDP_TRS_REPLY_CARD_PRESENT:
+		return reply->card_present.reader;
+	case OSDP_TRS_REPLY_CARD_DATA:
+		return reply->card_data.reader;
+	case OSDP_TRS_REPLY_PIN_COMPLETE:
+		return reply->pin_complete.reader;
 	default:
 		return -1;
 	}
@@ -289,6 +308,8 @@ int osdp_event_reader_no(const struct osdp_event *event)
 		return event->bioreadr.reader;
 	case OSDP_EVENT_BIOMATCHR:
 		return event->biomatchr.reader;
+	case OSDP_EVENT_TRS:
+		return trs_reply_reader_no(&event->trs);
 	default:
 		return -1;
 	}

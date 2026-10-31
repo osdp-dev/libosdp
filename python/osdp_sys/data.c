@@ -620,7 +620,8 @@ static int pyosdp_make_dict_cmd_trs(PyObject *obj, const void *payload)
 	const struct osdp_trs_cmd *t = payload;
 	const struct osdp_trs_pin_entry *pe = &t->pin_entry;
 
-	if (pyosdp_dict_add_int(obj, "trs_command", t->command))
+	if (pyosdp_dict_add_int(obj, "trs_command", t->command) ||
+	    pyosdp_dict_add_int(obj, "reader", t->reader))
 		return -1;
 	switch (t->command) {
 	case OSDP_TRS_CMD_START:
@@ -645,10 +646,16 @@ static int pyosdp_make_struct_cmd_trs(void *payload, PyObject *dict)
 	struct osdp_trs_cmd *t = payload;
 	struct osdp_trs_pin_entry *pe = &t->pin_entry;
 	uint8_t *teo_prologue;
-	int command, len;
+	int command, reader, len;
 
-	if (pyosdp_dict_get_int(dict, "trs_command", &command))
+	if (pyosdp_dict_get_int(dict, "trs_command", &command) ||
+	    pyosdp_dict_get_int(dict, "reader", &reader))
 		return -1;
+	if (reader < 0 || reader > UINT8_MAX) {
+		PyErr_Format(PyExc_ValueError, "reader out of range: %d",
+			     reader);
+		return -1;
+	}
 	switch (command) {
 	case OSDP_TRS_CMD_START:
 	case OSDP_TRS_CMD_STOP:
@@ -677,6 +684,7 @@ static int pyosdp_make_struct_cmd_trs(void *payload, PyObject *dict)
 		return -1;
 	}
 	t->command = (enum osdp_trs_cmd_e)command;
+	t->reader = (uint8_t)reader;
 	return 0;
 }
 
@@ -723,7 +731,8 @@ static int pyosdp_make_dict_notification(PyObject *obj, const void *payload)
 			return -1;
 		break;
 	case OSDP_NOTIFICATION_TRS_STATUS:
-		if (pyosdp_dict_add_int(obj, "status", n->trs_status.status))
+		if (pyosdp_dict_add_int(obj, "status", n->trs_status.status) ||
+		    pyosdp_dict_add_int(obj, "reader", n->trs_status.reader))
 			return -1;
 		break;
 	default:
@@ -794,6 +803,9 @@ static int pyosdp_make_struct_notification(void *payload, PyObject *dict)
 		if (pyosdp_dict_get_int(dict, "status", &val))
 			return -1;
 		n->trs_status.status = (enum osdp_trs_session_status_e)val;
+		if (pyosdp_dict_get_int(dict, "reader", &val))
+			return -1;
+		n->trs_status.reader = (uint8_t)val;
 		break;
 	default:
 		break;

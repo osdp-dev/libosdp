@@ -406,17 +406,19 @@ static PyObject *pyosdp_cp_is_pd_enabled(pyosdp_cp_t *self, PyObject *args)
 }
 
 #define pyosdp_cp_trs_scan_enable_doc                                                \
-	"trs_scan_enable(pd, mode0_dwell_ms=0, mode1_dwell_ms=0, hold_ms=0) -> bool\n" \
+	"trs_scan_enable(pd, mode0_dwell_ms=0, mode1_dwell_ms=0, hold_ms=0,\n"      \
+	"                reader=0) -> bool\n"                                        \
 	"\n"                                                                         \
 	"Start a background smart-card presence scan on a TRS-capable PD. A\n"       \
-	"zero selects that parameter's built-in default."
+	"zero selects that parameter's built-in default; reader picks the\n"         \
+	"reader the scan asks."
 static PyObject *pyosdp_cp_trs_scan_enable(pyosdp_cp_t *self, PyObject *args)
 {
-	int pd, mode0_dwell_ms = 0, mode1_dwell_ms = 0, hold_ms = 0;
-	struct osdp_trs_scan_params params;
+	int pd, mode0_dwell_ms = 0, mode1_dwell_ms = 0, hold_ms = 0, reader = 0;
+	struct osdp_trs_scan_params params = { 0 };
 
-	if (!PyArg_ParseTuple(args, "I|iii", &pd, &mode0_dwell_ms,
-			      &mode1_dwell_ms, &hold_ms))
+	if (!PyArg_ParseTuple(args, "I|iiii", &pd, &mode0_dwell_ms,
+			      &mode1_dwell_ms, &hold_ms, &reader))
 		return NULL;
 
 	if (pd < 0 || pd >= self->num_pd) {
@@ -431,10 +433,15 @@ static PyObject *pyosdp_cp_trs_scan_enable(pyosdp_cp_t *self, PyObject *args)
 				"Scan times must fit in 16 bits");
 		return NULL;
 	}
+	if (reader < 0 || reader > UINT8_MAX) {
+		PyErr_SetString(PyExc_ValueError, "Reader must fit in 8 bits");
+		return NULL;
+	}
 
 	params.mode0_dwell_ms = (uint16_t)mode0_dwell_ms;
 	params.mode1_dwell_ms = (uint16_t)mode1_dwell_ms;
 	params.hold_ms = (uint16_t)hold_ms;
+	params.reader = (uint8_t)reader;
 
 	if (osdp_cp_trs_scan_enable(self->ctx, pd, &params))
 		Py_RETURN_FALSE;

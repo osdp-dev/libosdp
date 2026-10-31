@@ -544,6 +544,8 @@ struct osdp_trs {
 	 * trails the tail by everything still queued behind it.
 	 */
 	bool band_open;
+	uint8_t band_reader; /* reader the band at the queue tail addresses */
+	uint8_t reader; /* reader the session in progress addresses */
 	bool stop_pending; /* this session's STOP has not been dequeued yet */
 	/*
 	 * The last REPLY_XRD was an error report: the reader took the command
@@ -589,6 +591,7 @@ struct osdp_trs {
 		uint16_t mode0_dwell_ms;
 		uint16_t mode1_dwell_ms;
 		uint16_t hold_ms;
+		uint8_t reader; /* reader the scan asks */
 		uint32_t backoff_ms; /* probe refused; 0 = no backoff pending */
 		tick_t tstamp; /* mode-0 dwell / backoff anchor */
 		tick_t probe_tstamp; /* when mode-1 was actually entered */
