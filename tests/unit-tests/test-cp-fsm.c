@@ -226,6 +226,9 @@ static const struct soft_fail_case soft_fail_cases[] = {
 	{ "app keyset NAK'd while online", OSDP_CP_STATE_ONLINE,
 	  OSDP_CP_PHY_STATE_DONE, CMD_KEYSET, REPLY_NAK,
 	  OSDP_PD_NAK_RECORD, true },
+	{ "LED still BUSY when the retries ran out", OSDP_CP_STATE_ONLINE,
+	  OSDP_CP_PHY_STATE_DONE, CMD_LED, REPLY_BUSY,
+	  OSDP_PD_NAK_NONE, true },
 
 	/* The NAK code describes the link, not the command. */
 	{ "NAK'd for want of secure channel", OSDP_CP_STATE_ONLINE,
@@ -262,7 +265,72 @@ static const struct soft_fail_case soft_fail_cases[] = {
 	  OSDP_PD_NAK_RECORD, false },
 };
 
-static void test_cp_soft_failure_matrix(struct test *t)
+/*
+ * Inside a TRS session, a refused card command costs that one transaction and
+ * leaves the card session up -- unless the NAK describes the link, or the
+ * command was the library's own TRS traffic, which has no app transaction to
+ * fail.
+ */
+struct trs_soft_fail_case {
+	struct soft_fail_case c;
+	enum trs_state_e trs_state;
+	bool scan_asking;
+	bool reply_error;
+};
+
+static const struct trs_soft_fail_case trs_soft_fail_cases[] = {
+	{ { "card command still BUSY when the retries ran out",
+	    OSDP_CP_STATE_TRS_RUN, OSDP_CP_PHY_STATE_DONE, CMD_XWR,
+	    REPLY_BUSY, OSDP_PD_NAK_NONE, true },
+	  TRS_STATE_XMIT, false, false },
+	{ { "card command answered with an error report",
+	    OSDP_CP_STATE_TRS_RUN, OSDP_CP_PHY_STATE_DONE, CMD_XWR,
+	    REPLY_XRD, OSDP_PD_NAK_NONE, true },
+	  TRS_STATE_XMIT, false, true },
+	{ { "card command NAK'd with a bad check character",
+	    OSDP_CP_STATE_TRS_RUN, OSDP_CP_PHY_STATE_DONE, CMD_XWR,
+	    REPLY_NAK, OSDP_PD_NAK_MSG_CHK, true },
+	  TRS_STATE_XMIT, false, false },
+	{ { "card command failed on a report that is no error",
+	    OSDP_CP_STATE_TRS_RUN, OSDP_CP_PHY_STATE_DONE, CMD_XWR,
+	    REPLY_XRD, OSDP_PD_NAK_NONE, false },
+	  TRS_STATE_XMIT, false, false },
+	{ { "card command NAK'd with a sequence error",
+	    OSDP_CP_STATE_TRS_RUN, OSDP_CP_PHY_STATE_DONE, CMD_XWR,
+	    REPLY_NAK, OSDP_PD_NAK_SEQ_NUM, false },
+	  TRS_STATE_XMIT, false, false },
+	{ { "card command NAK'd for want of secure channel",
+	    OSDP_CP_STATE_TRS_RUN, OSDP_CP_PHY_STATE_DONE, CMD_XWR,
+	    REPLY_NAK, OSDP_PD_NAK_SC_COND, false },
+	  TRS_STATE_XMIT, false, false },
+	{ { "presence scan's card scan NAK'd", OSDP_CP_STATE_TRS_RUN,
+	    OSDP_CP_PHY_STATE_DONE, CMD_XWR, REPLY_NAK, OSDP_PD_NAK_MSG_CHK,
+	    false },
+	  TRS_STATE_XMIT, true, false },
+	{ { "transparent mode-set NAK'd", OSDP_CP_STATE_TRS_SETUP,
+	    OSDP_CP_PHY_STATE_DONE, CMD_XWR, REPLY_NAK, OSDP_PD_NAK_MSG_CHK,
+	    false },
+	  TRS_STATE_SET_MODE, false, false },
+};
+
+static bool soft_fail_classified(const struct soft_fail_case *c,
+				 struct osdp_pd *pd)
+{
+	pd->state = c->state;
+	pd->phy_state = c->phy_state;
+	pd->cmd_id = c->cmd_id;
+	pd->reply_id = c->reply_id;
+	pd->nak_code = c->nak_code;
+
+	if (test_cp_cmd_failure_is_soft(pd) != c->is_soft) {
+		printf(SUB_2 "%s: expected a %s failure\n", c->name,
+		       c->is_soft ? "soft" : "hard");
+		return false;
+	}
+	return true;
+}
+
+static bool test_cp_soft_failure_matrix(void)
 {
 	bool result = true;
 	struct osdp_pd pd;
@@ -270,25 +338,19 @@ static void test_cp_soft_failure_matrix(struct test *t)
 	printf(SUB_1 "classifying command failures\n");
 
 	for (size_t i = 0; i < ARRAY_SIZEOF(soft_fail_cases); i++) {
-		const struct soft_fail_case *c = &soft_fail_cases[i];
+		memset(&pd, 0, sizeof(pd));
+		result &= soft_fail_classified(&soft_fail_cases[i], &pd);
+	}
+	for (size_t i = 0; i < ARRAY_SIZEOF(trs_soft_fail_cases); i++) {
+		const struct trs_soft_fail_case *c = &trs_soft_fail_cases[i];
 
 		memset(&pd, 0, sizeof(pd));
-		pd.state = c->state;
-		pd.phy_state = c->phy_state;
-		pd.cmd_id = c->cmd_id;
-		pd.reply_id = c->reply_id;
-		pd.nak_code = c->nak_code;
-
-		if (test_cp_cmd_failure_is_soft(&pd) != c->is_soft) {
-			printf(SUB_2 "%s: expected a %s failure\n", c->name,
-			       c->is_soft ? "soft" : "hard");
-			result = false;
-		}
+		pd.trs.state = c->trs_state;
+		pd.trs.scan.asking = c->scan_asking;
+		pd.trs.reply_error = c->reply_error;
+		result &= soft_fail_classified(&c->c, &pd);
 	}
-
-	printf(SUB_1 "command failure classification %s\n",
-	       result ? "succeeded" : "failed");
-	TEST_REPORT(t, result);
+	return result;
 }
 
 /**
@@ -317,7 +379,7 @@ static int feed_msg_chk_nak(struct osdp_pd *pd, bool pd_declares_crc)
 	return test_cp_decode_response(pd, nak, sizeof(nak));
 }
 
-static void test_cp_crc_nak_fallback(struct test *t)
+static bool test_cp_crc_nak_fallback(void)
 {
 	bool result = true;
 	struct osdp_pd pd;
@@ -356,10 +418,7 @@ static void test_cp_crc_nak_fallback(struct test *t)
 		printf(SUB_2 "resends must be bounded, not endless\n");
 		result = false;
 	}
-
-	printf(SUB_1 "NAK(MSG_CHK) classification %s\n",
-	       result ? "succeeded" : "failed");
-	TEST_REPORT(t, result);
+	return result;
 }
 
 /**
@@ -368,7 +427,7 @@ static void test_cp_crc_nak_fallback(struct test *t)
  * and cp_state_change(); a write sneaking back into a table would make
  * transitions depend on how often the tables happen to be consulted.
  */
-static void test_cp_transition_table_purity(struct test *t)
+static bool test_cp_transition_table_purity(void)
 {
 	static const enum osdp_cp_state_e states[] = {
 		OSDP_CP_STATE_INIT,    OSDP_CP_STATE_CAPDET,
@@ -401,10 +460,7 @@ static void test_cp_transition_table_purity(struct test *t)
 			result = false;
 		}
 	}
-
-	printf(SUB_1 "transition table purity %s\n",
-	       result ? "succeeded" : "failed");
-	TEST_REPORT(t, result);
+	return result;
 }
 
 /**
@@ -413,16 +469,73 @@ static void test_cp_transition_table_purity(struct test *t)
  * and any session-scoped request pending at that moment must not survive to
  * fire on the next ONLINE visit.
  */
-static bool test_cp_seq_nak_link_reset(struct osdp *ctx)
+/*
+ * Step the CP FSM against the canned PD @iterations times, 1ms apart. Fails as
+ * soon as the PD goes offline; with @stop_when_online, stops at the first
+ * ONLINE instead of running out the count. Either way, true only if the PD
+ * ends up ONLINE.
+ */
+static bool fsm_step_to_online(struct osdp_pd *pd, int iterations,
+			       bool stop_when_online)
 {
-	struct osdp_pd *pd = GET_CURRENT_PD(ctx);
+	for (int i = 0; i < iterations; i++) {
+		test_state_update(pd);
+		if (pd->state == OSDP_CP_STATE_OFFLINE) {
+			printf(SUB_2 "CP took the PD offline\n");
+			return false;
+		}
+		if (stop_when_online && pd->state == OSDP_CP_STATE_ONLINE) {
+			return true;
+		}
+		usleep(1000);
+	}
+	if (pd->state != OSDP_CP_STATE_ONLINE) {
+		printf(SUB_2 "CP never got the PD online (state %d)\n",
+		       pd->state);
+		return false;
+	}
+	return true;
+}
+
+/*
+ * The handshake brings the PD online and keeps it there, and osdp_ACURXSIZE is
+ * sent once per link, not once per visit to ONLINE.
+ */
+static bool test_cp_state_update_reaches_online(struct test *t)
+{
+	bool result;
+
+	printf(SUB_1 "state_update() brings the PD online\n");
+
+	s_fsm_rx_size_count = 0;
+	if (test_cp_fsm_setup(t)) {
+		return false;
+	}
+	result = fsm_step_to_online(GET_CURRENT_PD(TO_OSDP(t->mock_data)),
+				    300, false);
+	if (result && s_fsm_rx_size_count != 1) {
+		printf(SUB_2 "osdp_ACURXSIZE sent %d times, want 1\n",
+		       s_fsm_rx_size_count);
+		result = false;
+	}
+	test_cp_fsm_teardown(t);
+	return result;
+}
+
+static bool test_cp_seq_nak_link_reset(struct test *t)
+{
+	struct osdp_pd *pd;
+	bool result = false;
 	int count = 0;
 
 	printf(SUB_1 "NAK(SEQ_NUM) resets the link\n");
 
-	if (pd->state != OSDP_CP_STATE_ONLINE) {
-		printf(SUB_2 "CP not online to begin with\n");
+	if (test_cp_fsm_setup(t)) {
 		return false;
+	}
+	pd = GET_CURRENT_PD(TO_OSDP(t->mock_data));
+	if (!fsm_step_to_online(pd, 300, true)) {
+		goto out;
 	}
 
 	/* Over the wire: every reply is now NAK(SEQ_NUM). */
@@ -434,11 +547,11 @@ static bool test_cp_seq_nak_link_reset(struct osdp *ctx)
 	s_fsm_force_seq_nak = false;
 	if (pd->state != OSDP_CP_STATE_OFFLINE) {
 		printf(SUB_2 "CP did not go offline on NAK(SEQ_NUM)\n");
-		return false;
+		goto out;
 	}
 	if (pd->request & CP_REQ_LINK_RESET) {
 		printf(SUB_2 "LINK_RESET request left pending\n");
-		return false;
+		goto out;
 	}
 
 	/* White-box: LINK_RESET outranks a pending session-scoped request,
@@ -448,14 +561,17 @@ static bool test_cp_seq_nak_link_reset(struct osdp *ctx)
 	test_state_update(pd);
 	if (pd->state != OSDP_CP_STATE_OFFLINE) {
 		printf(SUB_2 "LINK_RESET did not win over RESTART_SC\n");
-		return false;
+		goto out;
 	}
 	if (pd->request & (CP_REQ_LINK_RESET | CP_REQ_RESTART_SC)) {
 		printf(SUB_2 "stale request bits survived: 0x%x\n",
 		       pd->request);
-		return false;
+		goto out;
 	}
-	return true;
+	result = true;
+out:
+	test_cp_fsm_teardown(t);
+	return result;
 }
 
 /* Records OSDP_NOTIFICATION_PD_ID deliveries for the change-detection test. */
@@ -580,19 +696,7 @@ static bool test_cp_rx_size_nak_keeps_pd_online(struct test *t)
 	}
 	pd = GET_CURRENT_PD((struct osdp *)t->mock_data);
 
-	for (int i = 0; i < 300; i++) {
-		test_state_update(pd);
-		if (pd->state == OSDP_CP_STATE_OFFLINE) {
-			printf(SUB_2 "CP took the PD offline\n");
-			result = false;
-			break;
-		}
-		usleep(1000);
-	}
-	if (result && pd->state != OSDP_CP_STATE_ONLINE) {
-		printf(SUB_2 "CP never got the PD online\n");
-		result = false;
-	}
+	result = fsm_step_to_online(pd, 300, false);
 	if (result && s_fsm_rx_size_count != 1) {
 		printf(SUB_2 "osdp_ACURXSIZE sent %d times, want 1\n",
 		       s_fsm_rx_size_count);
@@ -644,49 +748,17 @@ out:
 
 void run_cp_fsm_tests(struct test *t)
 {
-	int result = true;
-	uint32_t count = 0;
-	struct osdp *ctx;
+	printf("\nStarting CP FSM tests\n");
 
-	printf("\nStarting CP Phy state tests\n");
-
-	test_cp_soft_failure_matrix(t);
-	test_cp_crc_nak_fallback(t);
-	test_cp_transition_table_purity(t);
-	TEST_REPORT(t, test_cp_pd_id_notification());
-
-	TEST_REPORT(t, test_cp_rx_size_nak_keeps_pd_online(t));
-	TEST_REPORT(t, test_cp_tells_pd_its_rx_size(t));
-
-	s_fsm_rx_size_count = 0;
-	if (test_cp_fsm_setup(t))
-		return;
-
-	ctx = t->mock_data;
-
-	printf(SUB_1 "executing state_update()\n");
-	while (1) {
-		test_state_update(GET_CURRENT_PD(ctx));
-
-		if (GET_CURRENT_PD(ctx)->state == OSDP_CP_STATE_OFFLINE) {
-			printf(SUB_2 "state_update() CP went offline\n");
-			result = false;
-			break;
-		}
-		if (count++ > 300)
-			break;
-		usleep(1000);
-	}
-	printf(SUB_1 "state_update test %s\n", result ? "succeeded" : "failed");
-
-	TEST_REPORT(t, result);
-
-	printf(SUB_1 "osdp_ACURXSIZE sent once per link\n");
-	TEST_REPORT(t, s_fsm_rx_size_count == 1);
-
-	TEST_REPORT(t, test_cp_seq_nak_link_reset(ctx));
-
-	test_cp_fsm_teardown(t);
+	TEST_CASE(t, "soft_failure_matrix", test_cp_soft_failure_matrix());
+	TEST_CASE(t, "crc_nak_fallback", test_cp_crc_nak_fallback());
+	TEST_CASE(t, "transition_table_purity",
+		  test_cp_transition_table_purity());
+	TEST_CASE(t, "pd_id_notification", test_cp_pd_id_notification());
+	TEST_CASE(t, "rx_size_nak_keeps_pd_online",
+		  test_cp_rx_size_nak_keeps_pd_online(t));
+	TEST_CASE(t, "tells_pd_its_rx_size", test_cp_tells_pd_its_rx_size(t));
+	TEST_CASE(t, "state_update_reaches_online",
+		  test_cp_state_update_reaches_online(t));
+	TEST_CASE(t, "seq_nak_link_reset", test_cp_seq_nak_link_reset(t));
 }
-
-// unnecessary
