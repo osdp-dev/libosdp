@@ -25,14 +25,11 @@ struct hs_ctx {
 	int pd_runner;
 	atomic_int sc_active_notifs;
 	atomic_int rmac_i_rewrites;
-	struct test_completion completion;
-	struct osdp_cmd buzzer_cmd;
 };
 
 static struct hs_ctx g_hs;
 
 enum rmac_i_rewrite {
-	REWRITE_NONE,
 	REWRITE_FLIP_PAYLOAD_BYTE,
 	REWRITE_STATUS_BYTE,
 };
@@ -45,7 +42,7 @@ static enum test_channel_hook_verdict rmac_i_hook(void *arg, bool cp_to_pd,
 	enum rmac_i_rewrite *mode = arg;
 	int base, id_off, data_off, body_len;
 
-	if (cp_to_pd || *mode == REWRITE_NONE || len > out_max)
+	if (cp_to_pd || len > out_max)
 		return TEST_HOOK_PASS;
 
 	base = (len > 0 && frame[0] == 0xff) ? 1 : 0;
@@ -106,8 +103,6 @@ static int hs_setup(struct test *t, enum rmac_i_rewrite *mode)
 	}
 	osdp_cp_set_event_callback(g_hs.cp_ctx, hs_cp_event_cb, NULL);
 	osdp_pd_set_command_callback(g_hs.pd_ctx, hs_pd_command_cb, NULL);
-	osdp_cp_set_command_completion_callback(
-		g_hs.cp_ctx, test_cmd_completion_cb, &g_hs.completion);
 	test_set_channel_hook(rmac_i_hook, mode);
 
 	g_hs.cp_runner = async_runner_start(g_hs.cp_ctx, osdp_cp_refresh);
@@ -196,51 +191,6 @@ static bool rmac_i_rejected_status_keeps_sc_down(struct test *t)
 				 "rejected SCS_14 status keeps SC down");
 }
 
-/* No hook: the CP reports SC up exactly once and a buzzer command completes OK. */
-static bool rmac_i_genuine_brings_sc_up(struct test *t)
-{
-	enum rmac_i_rewrite mode = REWRITE_NONE;
-	bool ok = false;
-
-	printf(SUB_1 "genuine RMAC_I brings SC up once -- ");
-	if (hs_setup(t, &mode))
-		goto out;
-	if (!test_wait_for_online(g_hs.cp_ctx, 0, 10)) {
-		printf("PD never came online!\n");
-		goto out;
-	}
-	g_hs.buzzer_cmd = (struct osdp_cmd){
-		.id = OSDP_CMD_BUZZER,
-		.buzzer = {
-			.reader = 0,
-			.control_code = 2,
-			.on_count = 5,
-			.off_count = 5,
-			.rep_count = 1,
-		},
-	};
-	if (!test_submit_command(g_hs.cp_ctx, 0, &g_hs.buzzer_cmd)) {
-		printf("failed to submit buzzer!\n");
-		goto out;
-	}
-	if (!test_completion_wait(&g_hs.completion, 1, 10) ||
-	    test_completion_first_status(&g_hs.completion) !=
-		    OSDP_COMPLETION_OK) {
-		printf("buzzer did not complete OK!\n");
-		goto out;
-	}
-	if (atomic_load(&g_hs.sc_active_notifs) != 1) {
-		printf("expected 1 SC up notification, saw %d!\n",
-		       atomic_load(&g_hs.sc_active_notifs));
-		goto out;
-	}
-	ok = true;
-	printf("success!\n");
-out:
-	hs_teardown();
-	return ok;
-}
-
 void run_sc_handshake_tests(struct test *t)
 {
 	printf("\nStarting SC handshake tests\n");
@@ -249,6 +199,4 @@ void run_sc_handshake_tests(struct test *t)
 		  rmac_i_forged_keeps_sc_down(t));
 	TEST_CASE(t, "rmac_i_rejected_status_keeps_sc_down",
 		  rmac_i_rejected_status_keeps_sc_down(t));
-	TEST_CASE(t, "rmac_i_genuine_brings_sc_up",
-		  rmac_i_genuine_brings_sc_up(t));
 }

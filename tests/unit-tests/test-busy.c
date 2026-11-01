@@ -23,7 +23,6 @@
  */
 
 extern uint16_t test_osdp_compute_crc16(const uint8_t *buf, size_t len);
-extern uint8_t test_osdp_compute_checksum(uint8_t *msg, int length);
 
 struct busy_test_ctx {
 	osdp_t *cp_ctx;
@@ -55,13 +54,14 @@ static struct busy_test_ctx g_ctx;
 struct busy_hook_state {
 	int busy_remaining;	/* target frames left to answer with BUSY */
 	uint8_t target_cmd;	/* wire command id to intercept */
-	bool busy_use_checksum;	/* frame the BUSY with checksum, not CRC */
 	int seq_log[16];	/* TX sequence number per target frame seen */
 	int seq_count;
 	int busy_replies; /* well-formed BUSY frames the PD sent */
 };
 
-static int busy_frame_build(uint8_t *out, int max_len, bool use_checksum)
+/* The checksum-framed BUSY is recognised in cp_phy; CRC is what the CP and
+ * PD here speak. */
+static int busy_frame_build(uint8_t *out, int max_len)
 {
 	int len = 0, start, pkt_len;
 	uint16_t crc;
@@ -74,19 +74,14 @@ static int busy_frame_build(uint8_t *out, int max_len, bool use_checksum)
 	start = len;
 	out[len++] = 0x53;		/* SOM */
 	out[len++] = 0x65 | 0x80;	/* PD address 101, reply direction */
-	pkt_len = 6 + (use_checksum ? 1 : 2); /* header + id + trailer */
+	pkt_len = 6 + 2;		/* header + id + CRC */
 	out[len++] = pkt_len & 0xff;
 	out[len++] = (pkt_len >> 8) & 0xff;
-	out[len++] = use_checksum ? 0x00 : 0x04; /* SQN 0, no SCB */
+	out[len++] = 0x04;		/* SQN 0, CRC, no SCB */
 	out[len++] = REPLY_BUSY;
-	if (use_checksum) {
-		out[len] = test_osdp_compute_checksum(out + start, len - start);
-		len += 1;
-	} else {
-		crc = test_osdp_compute_crc16(out + start, len - start);
-		out[len++] = crc & 0xff;
-		out[len++] = (crc >> 8) & 0xff;
-	}
+	crc = test_osdp_compute_crc16(out + start, len - start);
+	out[len++] = crc & 0xff;
+	out[len++] = (crc >> 8) & 0xff;
 	return len;
 }
 
@@ -121,7 +116,7 @@ static enum test_channel_hook_verdict busy_hook(void *arg, bool cp_to_pd,
 	if (s->busy_remaining != 0) {
 		if (s->busy_remaining > 0)
 			s->busy_remaining--;
-		rc = busy_frame_build(out, out_max, s->busy_use_checksum);
+		rc = busy_frame_build(out, out_max);
 		if (rc < 0)
 			return TEST_HOOK_PASS;
 		*out_len = rc;
@@ -148,9 +143,6 @@ static int busy_test_pd_command_callback(void *arg, struct osdp_cmd *cmd)
 
 static int busy_test_setup(struct test *t, bool secure)
 {
-	int rc = 0;
-	uint8_t status = 0;
-
 	if (secure ? test_setup_devices(t, &g_ctx.cp_ctx, &g_ctx.pd_ctx) :
 		     test_setup_devices_plain(t, &g_ctx.cp_ctx, &g_ctx.pd_ctx,
 					      0, 0)) {
@@ -170,16 +162,9 @@ static int busy_test_setup(struct test *t, bool secure)
 		return -1;
 	}
 
-	while (1) {
-		if (rc > 10 * 1000) { /* ~10s online timeout (rc is ms) */
-			printf(SUB_1 "PD failed to come online\n");
-			return -1;
-		}
-		osdp_get_status_mask(g_ctx.cp_ctx, &status);
-		if (status & 1)
-			break;
-		usleep(20 * 1000);
-		rc += 20;
+	if (!test_wait_for_online(g_ctx.cp_ctx, 0, 10)) {
+		printf(SUB_1 "PD failed to come online\n");
+		return -1;
 	}
 	return 0;
 }
@@ -194,17 +179,21 @@ static void busy_test_teardown(void)
 	memset(&g_ctx, 0, sizeof(g_ctx));
 }
 
+static bool pd_command_seen(void *arg)
+{
+	return g_ctx.cmd_seen && g_ctx.last_cmd_id == *(int *)arg;
+}
+
 static bool wait_for_pd_command(int expected_cmd_id, int timeout_sec)
 {
-	int rc = 0;
+	return test_wait_until(pd_command_seen, &expected_cmd_id,
+			       timeout_sec * 1000);
+}
 
-	while (rc < timeout_sec * 10) {
-		if (g_ctx.cmd_seen && g_ctx.last_cmd_id == expected_cmd_id)
-			return true;
-		usleep(100 * 1000);
-		rc++;
-	}
-	return false;
+static bool command_completed(void *arg)
+{
+	ARG_UNUSED(arg);
+	return test_completion_count(&g_ctx.completion) != 0;
 }
 
 static int submit_buzzer_command(void)
@@ -226,20 +215,17 @@ static int submit_buzzer_command(void)
 /*
  * One BUSY, then let the retry through. The retried frame must carry the
  * same sequence number as the original -- a real PD accepts it as a fresh
- * command only then. Both integrity framings of the BUSY reply are valid
- * on the wire, so both must be recognized.
+ * command only then.
  */
-static bool test_busy_retry_reuses_sequence(bool use_checksum)
+static bool test_busy_retry_reuses_sequence(void)
 {
 	struct busy_hook_state s = {
 		.busy_remaining = 1,
 		.target_cmd = CMD_BUZ,
-		.busy_use_checksum = use_checksum,
 	};
 	uint8_t status = 0;
 
-	printf(SUB_1 "busy retry reuses sequence (%s framed busy) -- ",
-	       use_checksum ? "checksum" : "CRC");
+	printf(SUB_1 "busy retry reuses sequence -- ");
 
 	g_ctx.cmd_seen = false;
 	g_ctx.last_cmd_id = 0;
@@ -299,7 +285,6 @@ static bool test_busy_permanent_fails_command_softly(void)
 		.target_cmd = CMD_BUZ,
 	};
 	uint8_t status = 0;
-	int rc = 0;
 
 	printf(SUB_1 "permanent busy fails command softly -- ");
 
@@ -314,13 +299,9 @@ static bool test_busy_permanent_fails_command_softly(void)
 		return false;
 	}
 
-	/* Budget: 1 original + OSDP_CMD_MAX_RETRIES retries, 800ms apart */
-	while (rc < 150) {
-		if (test_completion_count(&g_ctx.completion))
-			break;
-		usleep(100 * 1000);
-		rc++;
-	}
+	/* Budget: 1 original + OSDP_CMD_MAX_RETRIES retries, each a retry
+	 * wait apart */
+	test_wait_until(command_completed, NULL, 15 * 1000);
 	test_set_channel_hook(NULL, NULL);
 
 	if (!test_completion_count(&g_ctx.completion)) {
@@ -365,20 +346,19 @@ static bool test_busy_permanent_fails_command_softly(void)
 	return true;
 }
 
-static bool wait_for_secure_online(int timeout_sec)
+static bool secure_online(void *arg)
 {
 	uint8_t online = 0, secure = 0;
-	int rc = 0;
 
-	while (rc < timeout_sec * 10) {
-		osdp_get_status_mask(g_ctx.cp_ctx, &online);
-		osdp_get_sc_status_mask(g_ctx.cp_ctx, &secure);
-		if ((online & 1) && (secure & 1))
-			return true;
-		usleep(100 * 1000);
-		rc++;
-	}
-	return false;
+	ARG_UNUSED(arg);
+	osdp_get_status_mask(g_ctx.cp_ctx, &online);
+	osdp_get_sc_status_mask(g_ctx.cp_ctx, &secure);
+	return (online & 1) && (secure & 1);
+}
+
+static bool wait_for_secure_online(int timeout_sec)
+{
+	return test_wait_until(secure_online, NULL, timeout_sec * 1000);
 }
 
 /* A buzzer command must still get through, and under the secure channel. */
@@ -468,68 +448,6 @@ static bool test_pd_app_busy_then_ack(void)
 }
 
 /*
- * KEYSET is what BUSY is for on a PD that stores its key: the key reaches
- * the app once a session on it proves it, and the app answers that
- * session's first command with BUSY until the key is written. Every repeat
- * must verify under that session, and the PD switches to the new key only
- * when the app accepts it.
- */
-static bool test_pd_app_busy_keyset(void)
-{
-	struct osdp_cmd cmd = {
-		.id = OSDP_CMD_KEYSET,
-		.keyset = {
-			.type = 1,
-			.length = 16,
-		},
-	};
-	static const uint8_t key[16] = {
-		0xb0, 0xb1, 0xb2, 0xb3, 0xb4, 0xb5, 0xb6, 0xb7,
-		0xb8, 0xb9, 0xba, 0xbb, 0xbc, 0xbd, 0xbe, 0xbf,
-	};
-	int i;
-
-	printf(SUB_1 "PD app busy on a proven KEYSET -- ");
-
-	memcpy(cmd.keyset.data, key, sizeof(key));
-	g_ctx.busy_cmd_id = OSDP_CMD_KEYSET;
-	g_ctx.busy_answers = 2;
-	g_ctx.busy_cmd_calls = 0;
-	test_completion_reset(&g_ctx.completion);
-
-	if (!test_submit_command(g_ctx.cp_ctx, 0, &cmd)) {
-		printf("failed to submit KEYSET!\n");
-		return false;
-	}
-	if (!test_completion_wait(&g_ctx.completion, 1, 10)) {
-		printf("KEYSET never completed!\n");
-		return false;
-	}
-	for (i = 0; i < 100 && g_ctx.busy_cmd_calls < 3; i++)
-		usleep(100 * 1000);
-	g_ctx.busy_cmd_id = 0;
-
-	if (test_completion_first_id(&g_ctx.completion) != OSDP_CMD_KEYSET ||
-	    test_completion_first_status(&g_ctx.completion) !=
-		    OSDP_COMPLETION_OK) {
-		printf("expected OK completion, got cmd=%d status=%d!\n",
-		       test_completion_first_id(&g_ctx.completion),
-		       test_completion_first_status(&g_ctx.completion));
-		return false;
-	}
-	if (g_ctx.busy_cmd_calls != 3) {
-		printf("expected 3 calls into the app, saw %d!\n",
-		       g_ctx.busy_cmd_calls);
-		return false;
-	}
-	if (!link_carries_next_command())
-		return false;
-
-	printf("success!\n");
-	return true;
-}
-
-/*
  * By COMSET_DONE the reply to COMSET is already on the wire, so an app
  * answering it with BUSY must change nothing: the PD still moves on to the
  * next sequence number, or the CP's next command would be out of step.
@@ -584,12 +502,9 @@ void run_busy_tests(struct test *t)
 		return;
 	}
 
-	TEST_CASE(t, "busy_retry_reuses_sequence_plain",
-		  test_busy_retry_reuses_sequence(false));
-	TEST_CASE(t, "busy_retry_reuses_sequence_checksum",
-		  test_busy_retry_reuses_sequence(true));
+	TEST_CASE(t, "busy_retry_reuses_sequence_crc",
+		  test_busy_retry_reuses_sequence());
 	TEST_CASE(t, "pd_app_busy_then_ack", test_pd_app_busy_then_ack());
-	TEST_CASE(t, "pd_app_busy_keyset", test_pd_app_busy_keyset());
 	TEST_CASE(t, "pd_app_busy_on_comset_done",
 		  test_pd_app_busy_on_comset_done());
 

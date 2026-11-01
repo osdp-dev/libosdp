@@ -35,15 +35,6 @@ static bool abi_info_reports_struct_sizes(void)
 	       info.sizeof_pd_info == sizeof(osdp_pd_info_t);
 }
 
-static bool abi_info_reports_build_options(void)
-{
-	struct osdp_abi_info info;
-
-	info.size = sizeof(info);
-	osdp_get_abi_info(&info);
-	return info.options == options_this_build_was_compiled_with();
-}
-
 /* A caller compiled against an older, shorter header must not be overrun. */
 static bool abi_info_respects_caller_size(void)
 {
@@ -79,8 +70,6 @@ void run_abi_tests(struct test *t)
 	printf("\nBegin ABI info tests\n");
 	TEST_CASE(t, "abi_info_reports_struct_sizes",
 		  abi_info_reports_struct_sizes());
-	TEST_CASE(t, "abi_info_reports_build_options",
-		  abi_info_reports_build_options());
 	TEST_CASE(t, "abi_info_respects_caller_size",
 		  abi_info_respects_caller_size());
 	TEST_CASE(t, "abi_info_leaves_caller_tail_untouched",

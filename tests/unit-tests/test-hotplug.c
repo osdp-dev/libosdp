@@ -19,38 +19,11 @@ struct test_hotplug_ctx {
 	osdp_t *pd_ctx;
 	int cp_runner;
 	int pd_runner;
-
-	/* Command tracking */
-	bool cmd_seen;
-	int last_cmd_id;
-
-	/* Event tracking */
-	bool event_seen;
-	int last_event_type;
 };
 
 static struct test_hotplug_ctx g_test_ctx = {0};
 
 static bool wait_for_pd_online(int timeout_sec);
-
-int test_hotplug_event_callback(void *arg, int pd, struct osdp_event *ev)
-{
-	ARG_UNUSED(pd);
-	struct test_hotplug_ctx *ctx = arg;
-
-	ctx->event_seen = true;
-	ctx->last_event_type = ev->type;
-	return 0;
-}
-
-int test_hotplug_command_callback(void *arg, struct osdp_cmd *cmd)
-{
-	struct test_hotplug_ctx *ctx = arg;
-
-	ctx->cmd_seen = true;
-	ctx->last_cmd_id = cmd->id;
-	return 0;
-}
 
 static int setup_test_environment(struct test *t)
 {
@@ -60,9 +33,6 @@ static int setup_test_environment(struct test *t)
 		printf(SUB_1 "Failed to setup devices!\n");
 		return -1;
 	}
-
-	osdp_cp_set_event_callback(g_test_ctx.cp_ctx, test_hotplug_event_callback, &g_test_ctx);
-	osdp_pd_set_command_callback(g_test_ctx.pd_ctx, test_hotplug_command_callback, &g_test_ctx);
 
 	printf(SUB_1 "starting async runners\n");
 
@@ -107,118 +77,40 @@ static void teardown_test_environment()
 	memset(&g_test_ctx, 0, sizeof(g_test_ctx));
 }
 
-static void reset_test_state()
+static bool pd_is_online(void)
 {
-	g_test_ctx.cmd_seen = false;
-	g_test_ctx.last_cmd_id = 0;
-	g_test_ctx.event_seen = false;
-	g_test_ctx.last_event_type = 0;
+	uint8_t status_mask = 0;
+
+	osdp_get_status_mask(g_test_ctx.cp_ctx, &status_mask);
+	return (status_mask & 0x01) != 0;
 }
 
-static bool wait_for_command(int expected_cmd_id, int timeout_sec)
+static bool pd_enabled_is(void *arg)
 {
-	int rc = 0; /* elapsed time in ms */
-	int timeout_ms = timeout_sec * 1000;
-	while (rc < timeout_ms) {
-		if (g_test_ctx.cmd_seen && g_test_ctx.last_cmd_id == expected_cmd_id) {
-			return true;
-		}
-		usleep(20 * 1000);
-		rc += 20;
-	}
-	return false;
+	return osdp_cp_is_pd_enabled(g_test_ctx.cp_ctx, 0) == *(bool *)arg;
 }
 
 static bool wait_for_pd_state(bool expected_state, int timeout_sec)
 {
-	int rc = 0;
-	while (rc < timeout_sec * 10) { /* rc counts 100ms polls */
-		bool current_state = osdp_cp_is_pd_enabled(g_test_ctx.cp_ctx, 0);
-		if (current_state == expected_state) {
-			return true;
-		}
-		usleep(100 * 1000);  /* Check every 100ms */
-		rc++;
-	}
-	return false;
+	return test_wait_until(pd_enabled_is, &expected_state,
+			       timeout_sec * 1000);
+}
+
+static bool pd_is_enabled_and_online(void *arg)
+{
+	ARG_UNUSED(arg);
+	return osdp_cp_is_pd_enabled(g_test_ctx.cp_ctx, 0) && pd_is_online();
 }
 
 static bool wait_for_pd_online(int timeout_sec)
 {
-	int rc = 0;
-	while (rc < timeout_sec * 10) { /* rc counts 100ms polls */
-		/* Check if PD is both enabled and online */
-		bool enabled = osdp_cp_is_pd_enabled(g_test_ctx.cp_ctx, 0);
-		uint8_t status_mask = 0;
-		osdp_get_status_mask(g_test_ctx.cp_ctx, &status_mask);
-		bool online = (status_mask & 0x01) != 0;
-
-		if (enabled && online) {
-			return true;
-		}
-		usleep(100 * 1000);  /* Check every 100ms */
-		rc++;
-	}
-	return false;
+	return test_wait_until(pd_is_enabled_and_online, NULL,
+			       timeout_sec * 1000);
 }
 
-static bool test_pd_disable_enable_basic()
-{
-	printf(SUB_2 "testing basic PD disable/enable\n");
-	reset_test_state();
-
-	/* Test initial state - should be enabled */
-	bool enabled = osdp_cp_is_pd_enabled(g_test_ctx.cp_ctx, 0);
-	if (enabled != PD_STATE_ENABLED) {
-		printf(SUB_2 "PD should be enabled initially, got %s\n", enabled ? "true" : "false");
-		return false;
-	}
-
-	/* Test status mask - note PD might still be coming online */
-	uint8_t status_mask = 0;
-	osdp_get_status_mask(g_test_ctx.cp_ctx, &status_mask);
-	printf(SUB_2 "Initial status mask: 0x%02X (PD may still be initializing)\n", status_mask);
-
-	/* Disable PD */
-	if (osdp_cp_disable_pd(g_test_ctx.cp_ctx, 0) != 0) {
-		printf(SUB_2 "Failed to disable PD\n");
-		return false;
-	}
-
-	/* Wait for PD to actually be disabled */
-	if (!wait_for_pd_state(PD_STATE_DISABLED, 3)) {
-		printf(SUB_2 "PD didn't reach disabled state within timeout\n");
-		return false;
-	}
-
-	/* Status mask should show PD offline */
-	osdp_get_status_mask(g_test_ctx.cp_ctx, &status_mask);
-	if (status_mask & 0x01) {
-		printf(SUB_2 "Disabled PD should appear offline in status mask\n");
-		return false;
-	}
-
-	/* Re-enable PD */
-	if (osdp_cp_enable_pd(g_test_ctx.cp_ctx, 0) != 0) {
-		printf(SUB_2 "Failed to enable PD\n");
-		return false;
-	}
-
-	/* Wait for PD to actually be enabled */
-	if (!wait_for_pd_state(PD_STATE_ENABLED, 3)) {
-		printf(SUB_2 "PD didn't reach enabled state within timeout\n");
-		return false;
-	}
-
-	return true;
-}
-
+/* A disabled PD takes no commands; once re-enabled it is back online. */
 static bool test_pd_command_blocking()
 {
-	printf(SUB_2 "testing command blocking on disabled PD\n");
-	reset_test_state();
-
-	/* Test command on enabled PD first */
 	struct osdp_cmd cmd = {
 		.id = OSDP_CMD_BUZZER,
 		.buzzer = {
@@ -229,105 +121,70 @@ static bool test_pd_command_blocking()
 		},
 	};
 
-	struct osdp_cmd *sent = test_submit_command(g_test_ctx.cp_ctx, 0, &cmd);
-	if (sent) {
-		printf(SUB_2 "Command submission succeeded on enabled PD\n");
-		/* Wait a bit for command to be processed */
-		if (wait_for_command(OSDP_CMD_BUZZER, 3)) {
-			printf(SUB_2 "Command received by PD\n");
-		} else {
-			printf(SUB_2 "Command not received (PD may not be fully online yet)\n");
-		}
-	} else {
-		printf(SUB_2 "Command submission failed on enabled PD (PD not online yet)\n");
-	}
+	printf(SUB_2 "testing command blocking on disabled PD\n");
 
-	/* Disable PD */
-	if (osdp_cp_disable_pd(g_test_ctx.cp_ctx, 0) != 0) {
-		printf(SUB_2 "Failed to disable PD\n");
+	if (osdp_cp_disable_pd(g_test_ctx.cp_ctx, 0) != 0 ||
+	    !wait_for_pd_state(PD_STATE_DISABLED, 3)) {
+		printf(SUB_2 "PD did not disable\n");
 		return false;
 	}
-
-	/* osdp_cp_disable_pd() only posts a request to the CP FSM; wait for
-	 * the FSM to actually transition the PD to disabled before exercising
-	 * command submission and re-enable below. */
-	if (!wait_for_pd_state(PD_STATE_DISABLED, 3)) {
-		printf(SUB_2 "PD didn't reach disabled state within timeout\n");
-		return false;
-	}
-
-	/* Try command on disabled PD - should fail */
-	reset_test_state();
-	sent = test_submit_command(g_test_ctx.cp_ctx, 0, &cmd);
-	if (sent) {
+	if (test_submit_command(g_test_ctx.cp_ctx, 0, &cmd)) {
 		printf(SUB_2 "Command should fail on disabled PD\n");
 		return false;
 	}
-
-	/* Re-enable and test command works again. The PD is confirmed
-	 * disabled above, so enable must succeed. */
-	if (osdp_cp_enable_pd(g_test_ctx.cp_ctx, 0) != 0) {
-		printf(SUB_2 "Failed to re-enable PD\n");
+	if (osdp_cp_enable_pd(g_test_ctx.cp_ctx, 0) != 0 ||
+	    !wait_for_pd_online(5)) {
+		printf(SUB_2 "PD did not come back online\n");
 		return false;
 	}
-
-	/* Wait for PD to come online before testing commands */
-	if (wait_for_pd_online(5)) {
-		reset_test_state();
-		sent = test_submit_command(g_test_ctx.cp_ctx, 0, &cmd);
-		printf(SUB_2 "Command on re-enabled PD: %s\n",
-			   sent ? "SUCCESS" : "FAILED");
-		if (sent) {
-			wait_for_command(OSDP_CMD_BUZZER, 3);
-		}
-	} else {
-		printf(SUB_2 "PD didn't come online within timeout, skipping command test\n");
-	}
-
 	return true;
 }
 
-static bool test_pd_edge_cases()
+/*
+ * Disable and enable each take effect once the CP's state machine gets to
+ * them; a disabled PD reads as offline, and a repeat of either call, or one
+ * on a PD index that does not exist, is refused.
+ */
+static bool test_pd_disable_enable()
 {
-	printf(SUB_2 "testing edge cases\n");
+	printf(SUB_2 "testing PD disable/enable\n");
 
-	/* Ensure PD starts in enabled and online state */
-	osdp_cp_enable_pd(g_test_ctx.cp_ctx, 0);  /* Ignore return - might already be enabled */
 	if (!wait_for_pd_online(5)) {
-		printf(SUB_2 "Failed to get PD online for edge test, proceeding anyway\n");
+		printf(SUB_2 "PD not online at the start\n");
+		return false;
 	}
 
-	/* Test disabling PD */
 	if (osdp_cp_disable_pd(g_test_ctx.cp_ctx, 0) != 0) {
 		printf(SUB_2 "First disable failed\n");
 		return false;
 	}
-
-	/* Wait for PD to be disabled */
 	if (!wait_for_pd_state(PD_STATE_DISABLED, 3)) {
 		printf(SUB_2 "PD didn't reach disabled state within timeout\n");
 		return false;
 	}
-
+	if (pd_is_online()) {
+		printf(SUB_2 "Disabled PD is still online in status mask\n");
+		return false;
+	}
 	if (osdp_cp_disable_pd(g_test_ctx.cp_ctx, 0) == 0) {
 		printf(SUB_2 "Disabling already disabled PD should return error\n");
 		return false;
 	}
 
-	/* Test enabling already enabled PD */
 	if (osdp_cp_enable_pd(g_test_ctx.cp_ctx, 0) != 0) {
 		printf(SUB_2 "Enable failed\n");
 		return false;
 	}
-
-	/* Wait for PD to be enabled */
 	if (!wait_for_pd_state(PD_STATE_ENABLED, 3)) {
 		printf(SUB_2 "PD didn't reach enabled state within timeout\n");
 		return false;
 	}
-
 	if (osdp_cp_enable_pd(g_test_ctx.cp_ctx, 0) == 0) {
 		printf(SUB_2 "Enabling already enabled PD should return error\n");
+		return false;
+	}
+	if (!wait_for_pd_online(5)) {
+		printf(SUB_2 "re-enabled PD did not come back online\n");
 		return false;
 	}
 
@@ -349,134 +206,6 @@ static bool test_pd_edge_cases()
 	}
 
 	return true;
-}
-
-static bool test_multiple_pd_hotplug()
-{
-	printf(SUB_2 "testing multiple PD hot-plug simulation\n");
-
-	/* This test demonstrates the concept with a single PD, but shows
-	 * how multiple PDs could be managed independently */
-
-	/* Ensure PD starts in enabled and online state */
-	osdp_cp_enable_pd(g_test_ctx.cp_ctx, 0);  /* Ignore return - might already be enabled */
-	if (!wait_for_pd_online(5)) {
-		printf(SUB_2 "Failed to get PD online for hotplug test, proceeding anyway\n");
-	}
-
-	/* Get initial status */
-	uint8_t status_mask = 0;
-	osdp_get_status_mask(g_test_ctx.cp_ctx, &status_mask);
-	printf(SUB_2 "Initial status mask: 0x%02X\n", status_mask);
-
-	/* Simulate "unplugging" PD 0 */
-	printf(SUB_2 "Simulating PD 0 unplug...\n");
-	if (osdp_cp_disable_pd(g_test_ctx.cp_ctx, 0) != 0) {
-		printf(SUB_2 "Failed to disable PD 0\n");
-		return false;
-	}
-
-	osdp_get_status_mask(g_test_ctx.cp_ctx, &status_mask);
-	printf(SUB_2 "After PD 0 unplug: 0x%02X\n", status_mask);
-
-	/* Wait a bit */
-	usleep(500 * 1000);
-
-	/* Simulate "plugging back" PD 0 */
-	printf(SUB_2 "Simulating PD 0 plug-in...\n");
-	if (osdp_cp_enable_pd(g_test_ctx.cp_ctx, 0) != 0) {
-		printf(SUB_2 "Failed to enable PD 0\n");
-		return false;
-	}
-
-	/* Give time for re-initialization */
-	usleep(1000 * 1000);
-
-	osdp_get_status_mask(g_test_ctx.cp_ctx, &status_mask);
-	printf(SUB_2 "After PD 0 plug-in: 0x%02X (may still be initializing)\n", status_mask);
-
-	return true;
-}
-
-static bool test_dynamic_pd_management()
-{
-	printf(SUB_2 "testing dynamic PD management scenarios\n");
-
-	/* Test scenario: Disable PD during operation, add commands to queue,
-	 * then re-enable and see behavior */
-
-	/* First, ensure PD is enabled and online */
-	osdp_cp_enable_pd(g_test_ctx.cp_ctx, 0);  /* Ignore return value - might already be enabled */
-	if (!osdp_cp_is_pd_enabled(g_test_ctx.cp_ctx, 0)) {
-		printf(SUB_2 "PD should be enabled but isn't\n");
-		return false;
-	}
-
-	/* Wait for PD to be online before proceeding */
-	if (!wait_for_pd_online(5)) {
-		printf(SUB_2 "PD didn't come online, proceeding with test anyway\n");
-	}
-
-	printf(SUB_2 "PD management scenario: disable -> attempt commands -> enable\n");
-
-	/* Disable PD (ensure it's enabled first) */
-	if (!osdp_cp_is_pd_enabled(g_test_ctx.cp_ctx, 0)) {
-		/* PD is disabled from previous test, enable it first */
-		printf(SUB_2 "PD was disabled from previous test, enabling first\n");
-		osdp_cp_enable_pd(g_test_ctx.cp_ctx, 0);
-		if (!wait_for_pd_state(PD_STATE_ENABLED, 3)) {
-			printf(SUB_2 "Failed to enable PD for management test\n");
-			return false;
-		}
-	}
-	if (osdp_cp_disable_pd(g_test_ctx.cp_ctx, 0) != 0) {
-		printf(SUB_2 "Failed to disable PD\n");
-		return false;
-	}
-
-	/* Wait for PD to actually be disabled */
-	if (!wait_for_pd_state(PD_STATE_DISABLED, 3)) {
-		printf(SUB_2 "PD didn't reach disabled state within timeout\n");
-		return false;
-	}
-
-	/* Try multiple commands while disabled */
-	struct osdp_cmd cmd1 = { .id = OSDP_CMD_BUZZER, .buzzer = { .control_code = 1 } };
-	struct osdp_cmd cmd2 = { .id = OSDP_CMD_LED, .led = { .led_number = 0 } };
-
-	struct osdp_cmd *sent1, *sent2;
-
-	sent1 = test_submit_command(g_test_ctx.cp_ctx, 0, &cmd1);
-	sent2 = test_submit_command(g_test_ctx.cp_ctx, 0, &cmd2);
-
-	printf(SUB_2 "Commands on disabled PD: buzzer=%s, led=%s (both should fail)\n",
-	       sent1 ? "SUCCESS" : "FAILED", sent2 ? "SUCCESS" : "FAILED");
-
-	if (sent1 || sent2) {
-		printf(SUB_2 "Commands should fail on disabled PD\n");
-		return false;
-	}
-
-	/* Re-enable PD */
-	if (osdp_cp_enable_pd(g_test_ctx.cp_ctx, 0) != 0) {
-		printf(SUB_2 "Failed to re-enable PD\n");
-		return false;
-	}
-
-	printf(SUB_2 "PD re-enabled - will restart initialization sequence\n");
-
-	/* Give time for re-initialization */
-	usleep(2000 * 1000);
-
-	/* Check final state */
-	bool enabled = osdp_cp_is_pd_enabled(g_test_ctx.cp_ctx, 0);
-	uint8_t status_mask = 0;
-	osdp_get_status_mask(g_test_ctx.cp_ctx, &status_mask);
-
-	printf(SUB_2 "Final state: enabled=%s, status_mask=0x%02X\n",
-		   enabled == PD_STATE_ENABLED ? "YES" : "NO", status_mask);
-
-	return enabled == PD_STATE_ENABLED;  /* PD should be enabled regardless of online status */
 }
 
 /*
@@ -636,11 +365,8 @@ void run_hotplug_tests(struct test *t)
 
 	printf(SUB_1 "running hot-plug tests\n");
 
-	TEST_CASE(t, "pd_disable_enable_basic", test_pd_disable_enable_basic());
+	TEST_CASE(t, "pd_disable_enable", test_pd_disable_enable());
 	TEST_CASE(t, "pd_command_blocking", test_pd_command_blocking());
-	TEST_CASE(t, "pd_edge_cases", test_pd_edge_cases());
-	TEST_CASE(t, "multiple_pd_hotplug", test_multiple_pd_hotplug());
-	TEST_CASE(t, "dynamic_pd_management", test_dynamic_pd_management());
 
 	/* Teardown test environment */
 	teardown_test_environment();

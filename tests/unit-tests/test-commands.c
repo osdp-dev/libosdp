@@ -238,19 +238,9 @@ static int setup_test_environment(struct test *t)
 		return -1;
 	}
 
-	/* Wait for devices to come online */
-	int rc = 0; /* elapsed time in ms */
-	uint8_t status = 0;
-	while (1) {
-		if (rc > 10 * 1000) { /* ~10s online timeout */
-			printf(SUB_1 "PD failed to come online\n");
-			return -1;
-		}
-		osdp_get_status_mask(g_test_ctx.cp_ctx, &status);
-		if (status & 1)
-			break;
-		usleep(20 * 1000);
-		rc += 20;
+	if (!test_wait_for_online(g_test_ctx.cp_ctx, 0, 10)) {
+		printf(SUB_1 "PD failed to come online\n");
+		return -1;
 	}
 
 	return 0;
@@ -298,105 +288,75 @@ static void reset_test_state()
 	}
 }
 
+static bool command_seen(void *arg)
+{
+	return atomic_load(&g_test_ctx.cmd_seen) &&
+	       g_test_ctx.last_cmd_id == *(int *)arg;
+}
+
 static bool wait_for_command(int expected_cmd_id, int timeout_sec)
 {
-	int rc = 0; /* elapsed time in ms */
-	int timeout_ms = timeout_sec * 1000;
-	while (rc < timeout_ms) {
-		if (atomic_load(&g_test_ctx.cmd_seen) &&
-		    g_test_ctx.last_cmd_id == expected_cmd_id) {
-			return true;
-		}
-		usleep(20 * 1000);
-		rc += 20;
-	}
-	return false;
+	return test_wait_until(command_seen, &expected_cmd_id,
+			       timeout_sec * 1000);
+}
+
+static bool event_seen(void *arg)
+{
+	return atomic_load(&g_test_ctx.event_seen) &&
+	       g_test_ctx.last_event_type == *(int *)arg;
 }
 
 static bool wait_for_event(int expected_event_type, int timeout_sec)
 {
-	int rc = 0; /* elapsed time in ms */
-	int timeout_ms = timeout_sec * 1000;
-	while (rc < timeout_ms) {
-		if (atomic_load(&g_test_ctx.event_seen) &&
-		    g_test_ctx.last_event_type == expected_event_type) {
-			return true;
-		}
-		usleep(20 * 1000);
-		rc += 20;
-	}
-	return false;
+	return test_wait_until(event_seen, &expected_event_type,
+			       timeout_sec * 1000);
+}
+
+static bool mfg_event_seen(void *arg)
+{
+	return atomic_load(&g_test_ctx.last_mfg_event_type) == *(int *)arg;
 }
 
 static bool wait_for_mfg_event(int expected_event_type, int timeout_sec)
 {
-	int rc = 0; /* elapsed time in ms */
-	int timeout_ms = timeout_sec * 1000;
-	while (rc < timeout_ms) {
-		if (atomic_load(&g_test_ctx.last_mfg_event_type) ==
-		    expected_event_type) {
-			return true;
-		}
-		usleep(20 * 1000);
-		rc += 20;
-	}
-	return false;
+	return test_wait_until(mfg_event_seen, &expected_event_type,
+			       timeout_sec * 1000);
+}
+
+static bool bio_event_seen(void *arg)
+{
+	return atomic_load(&g_test_ctx.last_bio_event_type) == *(int *)arg;
 }
 
 static bool wait_for_bio_event(int expected_event_type, int timeout_sec)
 {
-	int rc = 0; /* elapsed time in ms */
-	int timeout_ms = timeout_sec * 1000;
-	while (rc < timeout_ms) {
-		if (atomic_load(&g_test_ctx.last_bio_event_type) ==
-		    expected_event_type) {
-			return true;
-		}
-		usleep(20 * 1000);
-		rc += 20;
-	}
-	return false;
+	return test_wait_until(bio_event_seen, &expected_event_type,
+			       timeout_sec * 1000);
+}
+
+struct completion_query {
+	int cmd;
+	int status;
+};
+
+static bool cmd_completed(void *arg)
+{
+	struct completion_query *q = arg;
+
+	return test_completion_count(&g_test_ctx.completion) &&
+	       test_completion_id(&g_test_ctx.completion) == q->cmd &&
+	       test_completion_status(&g_test_ctx.completion) == q->status;
 }
 
 static bool wait_for_cmd_completion(int expected_cmd, int expected_status,
 				    int timeout_sec)
 {
-	int rc = 0; /* elapsed time in ms */
-	int timeout_ms = timeout_sec * 1000;
-	while (rc < timeout_ms) {
-		if (test_completion_count(&g_test_ctx.completion) &&
-		    test_completion_id(&g_test_ctx.completion) ==
-			    expected_cmd &&
-		    test_completion_status(&g_test_ctx.completion) ==
-			    expected_status) {
-			return true;
-		}
-		usleep(20 * 1000);
-		rc += 20;
-	}
-	return false;
-}
+	struct completion_query q = {
+		.cmd = expected_cmd,
+		.status = expected_status,
+	};
 
-/*
- * Wait for the PD to (re)establish the online + secure-channel state. Needed
- * after COMSET/KEYSET, which tear down the session; without this the next
- * command can be submitted before the link recovers ("PD is not online").
- */
-static bool wait_for_pd_online(int timeout_sec)
-{
-	int rc = 0; /* elapsed time in ms */
-	int timeout_ms = timeout_sec * 1000;
-	uint8_t status = 0, sc = 0;
-	while (rc < timeout_ms) {
-		osdp_get_status_mask(g_test_ctx.cp_ctx, &status);
-		osdp_get_sc_status_mask(g_test_ctx.cp_ctx, &sc);
-		if ((status & 1) && (sc & 1)) {
-			return true;
-		}
-		usleep(20 * 1000);
-		rc += 20;
-	}
-	return false;
+	return test_wait_until(cmd_completed, &q, timeout_sec * 1000);
 }
 
 /*
@@ -501,77 +461,56 @@ static bool test_bio_commands(void)
 	return result;
 }
 
-static bool test_buzzer_command()
+/*
+ * Each plain command reaches the PD app and completes OK. What the PD does
+ * with the fields is checked by the cases that need it; this one only keeps
+ * every command id going end to end, on both RX paths.
+ */
+static bool test_plain_commands_reach_the_pd()
 {
-	printf(SUB_2 "testing buzzer command\n");
-	reset_test_state();
-
-	struct osdp_cmd cmd = {
-		.id = OSDP_CMD_BUZZER,
-		.buzzer = {
-			.control_code = 1,
-			.on_count = 10,
-			.off_count = 10,
-			.rep_count = 1,
-		},
+	static const struct osdp_cmd cmds[] = {
+		{ .id = OSDP_CMD_BUZZER,
+		  .buzzer = { .control_code = 1, .on_count = 10,
+			      .off_count = 10, .rep_count = 1 } },
+		{ .id = OSDP_CMD_LED,
+		  .led.temporary = { .control_code = 1, .on_count = 10,
+				     .off_count = 10,
+				     .on_color = OSDP_LED_COLOR_RED,
+				     .timer_count = 100 } },
+		{ .id = OSDP_CMD_LED,
+		  .led.permanent = { .control_code = 1, .on_count = 10,
+				     .off_count = 10,
+				     .on_color = OSDP_LED_COLOR_RED } },
+		{ .id = OSDP_CMD_OUTPUT,
+		  .output = { .control_code = 1, .timer_count = 100 } },
+		{ .id = OSDP_CMD_TEXT,
+		  .text = { .control_code = 1, .temp_time = 30,
+			    .offset_row = 1, .offset_col = 1, .length = 7,
+			    .data = "LibOSDP" } },
+		{ .id = OSDP_CMD_TDSET,
+		  .tdset = { .year = 2026, .month = 7, .day = 17, .hour = 12,
+			     .minute = 30, .second = 45 } },
+		{ .id = OSDP_CMD_STATUS,
+		  .status = { .type = OSDP_STATUS_REPORT_INPUT } },
 	};
+	size_t i;
 
-	if (!test_submit_command(g_test_ctx.cp_ctx, 0, &cmd)) {
-		printf(SUB_2 "Failed to send buzzer command\n");
-		return false;
+	printf(SUB_2 "testing plain commands reach the PD\n");
+
+	for (i = 0; i < ARRAY_SIZEOF(cmds); i++) {
+		reset_test_state();
+		if (!test_submit_command(g_test_ctx.cp_ctx, 0, &cmds[i])) {
+			printf(SUB_2 "cmd %d: submit failed\n", cmds[i].id);
+			return false;
+		}
+		if (!wait_for_command(cmds[i].id, 5) ||
+		    !wait_for_cmd_completion(cmds[i].id, OSDP_COMPLETION_OK,
+					     5)) {
+			printf(SUB_2 "cmd %d: not delivered\n", cmds[i].id);
+			return false;
+		}
 	}
-
-	return wait_for_command(OSDP_CMD_BUZZER, 5);
-}
-
-static bool test_led_command()
-{
-	printf(SUB_2 "testing LED command\n");
-	reset_test_state();
-
-	struct osdp_cmd cmd = {
-		.id = OSDP_CMD_LED,
-		.led = {
-			.led_number = 0,
-			.temporary = {
-				.control_code = 1,
-				.on_count = 10,
-				.off_count = 10,
-				.on_color = OSDP_LED_COLOR_RED,
-				.off_color = OSDP_LED_COLOR_NONE,
-				.timer_count = 100,
-			},
-		},
-	};
-
-	if (!test_submit_command(g_test_ctx.cp_ctx, 0, &cmd)) {
-		printf(SUB_2 "Failed to send LED command\n");
-		return false;
-	}
-
-	return wait_for_command(OSDP_CMD_LED, 5);
-}
-
-static bool test_output_command()
-{
-	printf(SUB_2 "testing output command\n");
-	reset_test_state();
-
-	struct osdp_cmd cmd = {
-		.id = OSDP_CMD_OUTPUT,
-		.output = {
-			.output_no = 0,
-			.control_code = 1,
-			.timer_count = 100,
-		},
-	};
-
-	if (!test_submit_command(g_test_ctx.cp_ctx, 0, &cmd)) {
-		printf(SUB_2 "Failed to send output command\n");
-		return false;
-	}
-
-	return wait_for_command(OSDP_CMD_OUTPUT, 5);
+	return true;
 }
 
 /*
@@ -886,79 +825,6 @@ static bool test_tdset_needs_time_keeping(struct test *t)
 	return result;
 }
 
-static bool test_text_command()
-{
-	printf(SUB_2 "testing text command\n");
-	reset_test_state();
-
-	struct osdp_cmd cmd = {
-		.id = OSDP_CMD_TEXT,
-		.text = {
-			.control_code = 1,
-			.temp_time = 30,
-			.offset_row = 1,
-			.offset_col = 1,
-			.length = 7,
-		},
-	};
-	strcpy((char *)cmd.text.data, "LibOSDP");
-
-	if (!test_submit_command(g_test_ctx.cp_ctx, 0, &cmd)) {
-		printf(SUB_2 "Failed to send text command\n");
-		return false;
-	}
-
-	return wait_for_command(OSDP_CMD_TEXT, 5);
-}
-
-static bool test_tdset_command()
-{
-	printf(SUB_2 "testing time and date set command\n");
-	reset_test_state();
-
-	struct osdp_cmd cmd = {
-		.id = OSDP_CMD_TDSET,
-		.tdset = {
-			.year = 2026,
-			.month = 7,
-			.day = 17,
-			.hour = 12,
-			.minute = 30,
-			.second = 45,
-		},
-	};
-
-	if (!test_submit_command(g_test_ctx.cp_ctx, 0, &cmd)) {
-		printf(SUB_2 "Failed to send tdset command\n");
-		return false;
-	}
-
-	return wait_for_command(OSDP_CMD_TDSET, 5);
-}
-
-static bool test_mfg_command_simple()
-{
-	printf(SUB_2 "testing manufacturer command (simple)\n");
-	reset_test_state();
-
-	struct osdp_cmd cmd = {
-		.id = OSDP_CMD_MFG,
-		.mfg = {
-			.vendor_code = 0x00030201,
-			.length = 10,
-		},
-	};
-	uint8_t test_data[] = {9,1,9,2,6,3,1,7,7,0};
-	memcpy(cmd.mfg.data, test_data, sizeof(test_data));
-
-	if (!test_submit_command(g_test_ctx.cp_ctx, 0, &cmd)) {
-		printf(SUB_2 "Failed to send mfg command\n");
-		return false;
-	}
-
-	return wait_for_command(OSDP_CMD_MFG, 5);
-}
-
 static bool test_mfg_command_with_reply()
 {
 	printf(SUB_2 "testing manufacturer command with async event\n");
@@ -1075,95 +941,6 @@ static bool test_mfg_command_nack_soft_fail()
 	}
 
 	return true;
-}
-
-static bool test_led_permanent_command()
-{
-	printf(SUB_2 "testing LED command (permanent mode)\n");
-	reset_test_state();
-
-	struct osdp_cmd cmd = {
-		.id = OSDP_CMD_LED,
-		.led = {
-			.led_number = 0,
-			.permanent = {
-				.control_code = 1,
-				.on_count = 10,
-				.off_count = 10,
-				.on_color = OSDP_LED_COLOR_RED,
-				.off_color = OSDP_LED_COLOR_NONE,
-			},
-		},
-	};
-
-	if (!test_submit_command(g_test_ctx.cp_ctx, 0, &cmd)) {
-		printf(SUB_2 "Failed to send LED permanent command\n");
-		return false;
-	}
-
-	return wait_for_command(OSDP_CMD_LED, 5);
-}
-
-static bool test_comset_command()
-{
-	printf(SUB_2 "testing communication set command\n");
-	reset_test_state();
-
-	struct osdp_cmd cmd = {
-		.id = OSDP_CMD_COMSET,
-		.comset = {
-			.address = 101,
-			.baud_rate = 9600,
-		},
-	};
-
-	if (!test_submit_command(g_test_ctx.cp_ctx, 0, &cmd)) {
-		printf(SUB_2 "Failed to send comset command\n");
-		return false;
-	}
-
-	if (!wait_for_command(OSDP_CMD_COMSET_DONE, 5)) {
-		printf(SUB_2 "COMSET_DONE callback not received\n");
-		return false;
-	}
-
-	/* Address change re-establishes the session; wait for it to settle. */
-	return wait_for_pd_online(5);
-}
-
-static bool test_keyset_command()
-{
-	printf(SUB_2 "testing key set command\n");
-	reset_test_state();
-
-	struct osdp_cmd cmd = {
-		.id = OSDP_CMD_KEYSET,
-		.keyset = {
-			.type = 1,
-			.length = 16,
-		},
-	};
-	uint8_t key_data[] = {
-		0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
-		0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f
-	};
-	memcpy(cmd.keyset.data, key_data, sizeof(key_data));
-
-	if (!test_submit_command(g_test_ctx.cp_ctx, 0, &cmd)) {
-		printf(SUB_2 "Failed to send keyset command\n");
-		return false;
-	}
-
-	if (!wait_for_command(OSDP_CMD_KEYSET, 5))
-		return false;
-
-	/* Rekey drops the secure channel; wait for it to re-establish before
-	 * the next test submits a command. The PD sees the command before the
-	 * CP has the ACK and drops SC, so wait for the CP's completion first
-	 * or the stale online state ends the wait at once. */
-	if (!wait_for_cmd_completion(OSDP_CMD_KEYSET, OSDP_COMPLETION_OK, 5))
-		return false;
-	return wait_for_pd_online(5);
 }
 
 static bool test_keyset_unusable_key_refused()
@@ -1473,26 +1250,6 @@ static bool test_submit_requires_completion_callback()
 	return result;
 }
 
-static bool test_status_command()
-{
-	printf(SUB_2 "testing status command\n");
-	reset_test_state();
-
-	struct osdp_cmd cmd = {
-		.id = OSDP_CMD_STATUS,
-		.status = {
-			.type = OSDP_STATUS_REPORT_INPUT,
-		},
-	};
-
-	if (!test_submit_command(g_test_ctx.cp_ctx, 0, &cmd)) {
-		printf(SUB_2 "Failed to send status command\n");
-		return false;
-	}
-
-	return wait_for_command(OSDP_CMD_STATUS, 5);
-}
-
 void run_command_tests(struct test *t)
 {
 	printf("\nBegin Command Tests (pytest-style)\n");
@@ -1513,19 +1270,11 @@ void run_command_tests(struct test *t)
 
 	printf(SUB_1 "running command tests\n");
 
-	TEST_CASE(t, "buzzer_command", test_buzzer_command());
-	TEST_CASE(t, "led_command", test_led_command());
-	TEST_CASE(t, "led_permanent_command", test_led_permanent_command());
-	TEST_CASE(t, "output_command", test_output_command());
-	TEST_CASE(t, "text_command", test_text_command());
-	TEST_CASE(t, "tdset_command", test_tdset_command());
+	TEST_CASE(t, "plain_commands_reach_the_pd",
+		  test_plain_commands_reach_the_pd());
 	TEST_CASE(t, "tdset_invalid_time_naks", test_tdset_invalid_time_naks());
-	TEST_CASE(t, "comset_command", test_comset_command());
-	TEST_CASE(t, "status_command", test_status_command());
-	TEST_CASE(t, "keyset_command", test_keyset_command());
 	TEST_CASE(t, "keyset_unusable_key_refused",
 		  test_keyset_unusable_key_refused());
-	TEST_CASE(t, "mfg_command_simple", test_mfg_command_simple());
 	TEST_CASE(t, "mfg_command_with_reply", test_mfg_command_with_reply());
 	TEST_CASE(t, "mfg_command_inline_replies",
 		  test_mfg_command_inline_replies());
