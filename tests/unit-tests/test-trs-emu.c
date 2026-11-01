@@ -208,6 +208,10 @@ static int emu_setup(struct test *t)
 {
 	printf(SUB_1 "setting up OSDP devices with an emulated PIV card\n");
 
+	memset(&g_emu, 0, sizeof(g_emu));
+	g_emu.cp_runner = -1;
+	g_emu.pd_runner = -1;
+	test_completion_reset(&g_emu.completion);
 	if (test_setup_devices_ext(t, &g_emu.cp_ctx, &g_emu.pd_ctx,
 				   OSDP_FLAG_ENABLE_NOTIFICATION, 0)) {
 		printf(SUB_1 "Failed to setup devices!\n");
@@ -235,29 +239,64 @@ static int emu_setup(struct test *t)
 	return 0;
 }
 
+/* Undoes as much of emu_setup() as got done */
 static void emu_teardown(void)
 {
 	printf(SUB_1 "tearing down emu test environment\n");
 	test_set_channel_hook(NULL, NULL);
-	async_runner_stop(g_emu.cp_runner);
-	async_runner_stop(g_emu.pd_runner);
-	osdp_cp_teardown(g_emu.cp_ctx);
-	osdp_pd_teardown(g_emu.pd_ctx);
+	if (g_emu.cp_runner >= 0) {
+		async_runner_stop(g_emu.cp_runner);
+	}
+	if (g_emu.pd_runner >= 0) {
+		async_runner_stop(g_emu.pd_runner);
+	}
+	if (g_emu.cp_ctx) {
+		osdp_cp_teardown(g_emu.cp_ctx);
+	}
+	if (g_emu.pd_ctx) {
+		osdp_pd_teardown(g_emu.pd_ctx);
+	}
 	memset(&g_emu, 0, sizeof(g_emu));
+}
+
+static bool emu_status_is(void *arg)
+{
+	enum osdp_trs_session_status_e want =
+		*(enum osdp_trs_session_status_e *)arg;
+
+	return g_emu.status_seen && g_emu.last_status == want;
 }
 
 static bool emu_wait_status(enum osdp_trs_session_status_e want,
 			    int timeout_sec)
 {
-	int rc = 0;
+	return test_wait_until(emu_status_is, &want, timeout_sec * 1000);
+}
 
-	while (rc++ < timeout_sec * 10) {
-		if (g_emu.status_seen && g_emu.last_status == want) {
-			return true;
-		}
-		usleep(100 * 1000);
-	}
-	return false;
+static bool emu_flag_set(void *arg)
+{
+	return *(volatile bool *)arg;
+}
+
+static bool emu_wait_flag(bool *flag, int timeout_ms)
+{
+	return test_wait_until(emu_flag_set, flag, timeout_ms);
+}
+
+static bool emu_completed(void *arg)
+{
+	ARG_UNUSED(arg);
+	return test_completion_count(&g_emu.completion) > 0;
+}
+
+static bool emu_wait_completion(int timeout_ms)
+{
+	return test_wait_until(emu_completed, NULL, timeout_ms);
+}
+
+static bool emu_count_positive(void *arg)
+{
+	return *(volatile int *)arg > 0;
 }
 
 static bool emu_session(enum osdp_trs_cmd_e command,
@@ -285,7 +324,7 @@ static int emu_xfer(const uint8_t *capdu, int clen, uint8_t *rapdu,
 		    int max_rlen)
 {
 	static struct osdp_cmd cmd;
-	int rc = 0, rlen;
+	int rlen;
 
 	g_emu.event_seen = false;
 	test_completion_reset(&g_emu.completion);
@@ -300,9 +339,7 @@ static int emu_xfer(const uint8_t *capdu, int clen, uint8_t *rapdu,
 	if (!test_submit_command(g_emu.cp_ctx, 0, &cmd)) {
 		return -1;
 	}
-	while (rc++ < 150 && !test_completion_count(&g_emu.completion)) {
-		usleep(100 * 1000);
-	}
+	emu_wait_completion(15000);
 	if (!test_completion_count(&g_emu.completion) || !g_emu.event_seen ||
 	    g_emu.last_reply.reply != OSDP_TRS_REPLY_CARD_DATA) {
 		return -1;
@@ -452,7 +489,7 @@ static bool test_emu_permanent_busy_fails_softly(void)
 	uint8_t capdu[] = { 0x00, 0xA4, 0x04, 0x00, 0x00 };
 	uint8_t rapdu[OSDP_TRS_APDU_MAX_LEN];
 	uint8_t status = 0;
-	int rc = 0, rlen;
+	int rlen;
 
 	printf(SUB_2 "testing emu permanently busy reader\n");
 
@@ -472,9 +509,6 @@ static bool test_emu_permanent_busy_fails_softly(void)
 	}
 	test_set_channel_hook(NULL, NULL);
 
-	while (rc++ < 20 && !test_completion_count(&g_emu.completion)) {
-		usleep(100 * 1000);
-	}
 	if (!test_completion_count(&g_emu.completion) ||
 	    test_completion_status(&g_emu.completion) !=
 		    OSDP_COMPLETION_FAILED) {
@@ -514,7 +548,7 @@ static bool test_emu_permanent_busy_fails_softly(void)
 static bool test_emu_card_removed_mid_band(void)
 {
 	uint8_t capdu[16], rapdu[OSDP_TRS_APDU_MAX_LEN];
-	int rlen, clen, rc = 0;
+	int rlen, clen;
 
 	printf(SUB_2 "testing emu card removed mid-band\n");
 
@@ -546,9 +580,6 @@ static bool test_emu_card_removed_mid_band(void)
 		printf(SUB_2 "APDU to an absent card cannot succeed\n");
 		return false;
 	}
-	while (rc++ < 50 && !test_completion_count(&g_emu.completion)) {
-		usleep(100 * 1000);
-	}
 	if (!test_completion_count(&g_emu.completion) ||
 	    test_completion_status(&g_emu.completion) !=
 		    OSDP_COMPLETION_FAILED ||
@@ -565,20 +596,14 @@ static bool test_emu_card_removed_mid_band(void)
 	return emu_session(OSDP_TRS_CMD_STOP, OSDP_TRS_SESSION_CLOSED);
 }
 
-/* Sample the emulated reader's mode every 10ms until it reads @want */
+static bool emu_mode_is(void *arg)
+{
+	return osdp_to_pd(g_emu.pd_ctx, 0)->trs.mode == *(uint8_t *)arg;
+}
+
 static bool emu_wait_mode(uint8_t want, int timeout_ms)
 {
-	struct osdp_pd *pd = osdp_to_pd(g_emu.pd_ctx, 0);
-	int waited = 0;
-
-	while (waited < timeout_ms) {
-		if (pd->trs.mode == want) {
-			return true;
-		}
-		usleep(10 * 1000);
-		waited += 10;
-	}
-	return false;
+	return test_wait_until(emu_mode_is, &want, timeout_ms);
 }
 
 /* Event submitted by reference; must outlive the callback that ships it */
@@ -589,8 +614,6 @@ static struct osdp_event g_rpk40_ev;
  * app received it */
 static bool emu_rpk40_standard_read(void)
 {
-	int rc = 0;
-
 	g_emu.cardread_seen = false;
 	if (!emu_wait_mode(TRS_MODE_00, 5000)) {
 		printf(SUB_2 "reader never in default mode\n");
@@ -609,10 +632,7 @@ static bool emu_rpk40_standard_read(void)
 		printf(SUB_2 "failed to submit standard read\n");
 		return false;
 	}
-	while (rc++ < 30 && !g_emu.cardread_seen) {
-		usleep(100 * 1000);
-	}
-	if (!g_emu.cardread_seen) {
+	if (!emu_wait_flag(&g_emu.cardread_seen, 3000)) {
 		printf(SUB_2 "standard read never reached the app\n");
 		return false;
 	}
@@ -669,11 +689,7 @@ static bool test_emu_rpk40_time_slice(void)
 		printf(SUB_2 "failed to submit sighting\n");
 		return false;
 	}
-	int rc = 0;
-	while (rc++ < 30 && !g_emu.event_seen) {
-		usleep(100 * 1000);
-	}
-	if (!g_emu.event_seen ||
+	if (!emu_wait_flag(&g_emu.event_seen, 3000) ||
 	    g_emu.last_reply.reply != OSDP_TRS_REPLY_CARD_PRESENT) {
 		printf(SUB_2 "sighting never reached the app\n");
 		return false;
@@ -707,7 +723,6 @@ static bool test_emu_card_departure_detected(void)
 		.mode0_dwell_ms = 100,
 		.mode1_dwell_ms = 200,
 	};
-	int waited = 0;
 
 	printf(SUB_2 "testing emu card departure is detected\n");
 
@@ -722,11 +737,8 @@ static bool test_emu_card_departure_detected(void)
 	}
 
 	emu_card_set_present(&g_emu.card, true);
-	while (waited < 6000 && g_emu.present_events < 1) {
-		usleep(50 * 1000);
-		waited += 50;
-	}
-	if (g_emu.present_events < 1) {
+	if (!test_wait_until(emu_count_positive, &g_emu.present_events,
+			     6000)) {
 		osdp_cp_trs_scan_disable(g_emu.cp_ctx, 0);
 		printf(SUB_2 "card arrival never reported (%d scans)\n",
 		       g_emu.card_scan_count);
@@ -734,11 +746,7 @@ static bool test_emu_card_departure_detected(void)
 	}
 
 	emu_card_set_present(&g_emu.card, false);
-	waited = 0;
-	while (waited < 6000 && g_emu.absent_events < 1) {
-		usleep(50 * 1000);
-		waited += 50;
-	}
+	test_wait_until(emu_count_positive, &g_emu.absent_events, 6000);
 	osdp_cp_trs_scan_disable(g_emu.cp_ctx, 0);
 
 	if (g_emu.absent_events < 1) {
@@ -753,28 +761,28 @@ static bool test_emu_card_departure_detected(void)
 	return emu_rpk40_standard_read();
 }
 
+/* Each case gets a CP/PD pair and a card of its own */
+static bool emu_run_case(struct test *t, bool (*fn)(void))
+{
+	bool result = false;
+
+	if (emu_setup(t) == 0) {
+		result = fn();
+	}
+	emu_teardown();
+	return result;
+}
+
+#define EMU_CASE(t, name) TEST_CASE(t, #name, emu_run_case(t, test_emu_##name))
+
 void run_trs_emu_tests(struct test *t)
 {
-	bool result = true;
-
 	printf("\nBegin TRS card-emulation Tests\n");
 
-	if (emu_setup(t) != 0) {
-		printf(SUB_1 "Failed to setup emu test environment\n");
-		TEST_REPORT(t, false);
-		return;
-	}
-
-	result &= test_emu_piv_certificate_read();
-	result &= test_emu_session_survives_busy();
-	result &= test_emu_permanent_busy_fails_softly();
-	result &= test_emu_card_removed_mid_band();
-	result &= test_emu_rpk40_time_slice();
-	result &= test_emu_card_departure_detected();
-
-	emu_teardown();
-
-	printf(SUB_1 "TRS card-emulation tests %s\n",
-	       result ? "succeeded" : "failed");
-	TEST_REPORT(t, result);
+	EMU_CASE(t, piv_certificate_read);
+	EMU_CASE(t, session_survives_busy);
+	EMU_CASE(t, permanent_busy_fails_softly);
+	EMU_CASE(t, card_removed_mid_band);
+	EMU_CASE(t, rpk40_time_slice);
+	EMU_CASE(t, card_departure_detected);
 }
