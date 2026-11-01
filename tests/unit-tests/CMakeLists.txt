@@ -35,11 +35,14 @@ target_link_libraries(${OSDP_UNIT_TEST} ${LIB_OSDP_TEST} osdp utils pthread)
 
 # Zero-copy lane. OPT_OSDP_RX_ZERO_COPY defaults OFF, so the suite above never
 # compiles the zero-copy RX path (its mocks use the byte-wise .recv callback).
-# Build a second lib + test binary with the flag forced on so the whole suite
-# runs under zero-copy too, even in the default CMake config. The general suites
-# drive real CP<->PD exchanges over the packet-queue mock channel (test.c); the
-# byte-stream framer tests (cp_phy/pd_phy) self-skip there, and test-pd-zc.c adds
-# zero-copy-specific coverage. osdptest_zc's PUBLIC define propagates the flag to
+# Build a second lib + test binary with the flag forced on, even in the default
+# CMake config. The flag changes only how phy takes a frame off the channel and
+# releases it, so the lane runs OSDP_ZC_SUITES: the suites whose CP<->PD
+# exchanges reach every RX release path (each command and reply type, multipart
+# legs, secure-channel frames, BUSY retransmits, rejected frames). Suites that
+# re-drive protocol logic above phy, or never touch the channel, would only
+# repeat the default lane. test-pd-zc.c adds zero-copy-specific coverage.
+# osdptest_zc's PUBLIC define propagates the flag to
 # the test binary's own sources; it links the zero-copy lib only (never the
 # default-config `osdp` shared lib, which would pull in non-zero-copy objects).
 set(LIB_OSDP_TEST_ZC osdptest_zc)
@@ -102,6 +105,15 @@ foreach(_line ${_osdp_suite_lines})
 	endif()
 endforeach()
 
+set(OSDP_ZC_SUITES ${OSDP_SUITES_ZC_ONLY} abi commands events busy completion
+		   file_tx piv sc_handshake)
+foreach(_suite ${OSDP_ZC_SUITES})
+	if(NOT _suite IN_LIST OSDP_SUITES AND
+	   NOT _suite IN_LIST OSDP_SUITES_ZC_ONLY)
+		message(FATAL_ERROR "OSDP_ZC_SUITES: unknown suite '${_suite}'")
+	endif()
+endforeach()
+
 # Both binaries are EXCLUDE_FROM_ALL, so a plain `cmake --build` does not
 # produce them. A fixture builds each on demand when ctest runs.
 add_test(NAME osdp_unit_test_build
@@ -133,48 +145,39 @@ set_tests_properties(osdp_unit_test_static_build PROPERTIES
 # long suite would erase the parallel speedup.
 set(OSDP_SERIAL_SUITES file_tx)
 
-foreach(_suite ${OSDP_SUITES})
-	add_test(NAME ut_${_suite}
-		COMMAND ${OSDP_UNIT_TEST} ${_suite}
-		WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
-	)
-	set_tests_properties(ut_${_suite} PROPERTIES
-		FIXTURES_REQUIRED osdp_unit_test_built
-	)
-	if(_suite IN_LIST OSDP_SERIAL_SUITES)
-		set_tests_properties(ut_${_suite} PROPERTIES RUN_SERIAL TRUE)
-	endif()
-endforeach()
+# Each suite writes per-case JUnit XML next to the build, for CI reporting.
+set(OSDP_JUNIT_DIR ${CMAKE_BINARY_DIR}/junit)
+file(MAKE_DIRECTORY ${OSDP_JUNIT_DIR})
 
-foreach(_suite ${OSDP_SUITES} ${OSDP_SUITES_ZC_ONLY})
-	add_test(NAME ut_zc_${_suite}
-		COMMAND ${OSDP_UNIT_TEST}_zc ${_suite}
-		WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
-	)
-	set_tests_properties(ut_zc_${_suite} PROPERTIES
-		FIXTURES_REQUIRED osdp_unit_test_zc_built
-	)
-	if(_suite IN_LIST OSDP_SERIAL_SUITES)
-		set_tests_properties(ut_zc_${_suite} PROPERTIES RUN_SERIAL TRUE)
-	endif()
-endforeach()
+function(osdp_add_suite_tests prefix binary fixture)
+	foreach(_suite ${ARGN})
+		add_test(NAME ${prefix}${_suite}
+			COMMAND ${binary} ${_suite}
+				--junit ${OSDP_JUNIT_DIR}/${prefix}${_suite}.xml
+			WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+		)
+		set_tests_properties(${prefix}${_suite} PROPERTIES
+			FIXTURES_REQUIRED ${fixture}
+		)
+		if(_suite IN_LIST OSDP_SERIAL_SUITES)
+			set_tests_properties(${prefix}${_suite} PROPERTIES
+				RUN_SERIAL TRUE)
+		endif()
+	endforeach()
+endfunction()
 
-foreach(_suite ${OSDP_STATIC_SUITES})
-	add_test(NAME ut_static_${_suite}
-		COMMAND ${OSDP_UNIT_TEST}_static ${_suite}
-		WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
-	)
-	set_tests_properties(ut_static_${_suite} PROPERTIES
-		FIXTURES_REQUIRED osdp_unit_test_static_built
-	)
-	if(_suite IN_LIST OSDP_SERIAL_SUITES)
-		set_tests_properties(ut_static_${_suite} PROPERTIES RUN_SERIAL TRUE)
-	endif()
-endforeach()
+osdp_add_suite_tests(ut_ ${OSDP_UNIT_TEST} osdp_unit_test_built
+		     ${OSDP_SUITES})
+osdp_add_suite_tests(ut_zc_ ${OSDP_UNIT_TEST}_zc osdp_unit_test_zc_built
+		     ${OSDP_ZC_SUITES})
+osdp_add_suite_tests(ut_static_ ${OSDP_UNIT_TEST}_static
+		     osdp_unit_test_static_built ${OSDP_STATIC_SUITES})
 
 # `check` / `check-ut` stay as the single convenience wrapper around ctest.
+cmake_host_system_information(RESULT _osdp_ncpu QUERY NUMBER_OF_LOGICAL_CORES)
 add_custom_target(check
-	COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure -R "^ut_"
+	COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure -j ${_osdp_ncpu}
+		-R "^ut_"
 	DEPENDS ${OSDP_UNIT_TEST} ${OSDP_UNIT_TEST}_zc ${OSDP_UNIT_TEST}_static
 	USES_TERMINAL
 )

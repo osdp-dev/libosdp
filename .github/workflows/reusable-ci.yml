@@ -46,23 +46,10 @@ jobs:
       run: ./configure.sh
     - name: make
       run: make V=1
-    - name: make check
-      # JUNIT_DIR makes the parallel runner emit one per-case JUnit file per
-      # suite; the steps below publish and archive them even on test failure.
-      run: JUNIT_DIR=junit-results make V=1 check
-    - name: Publish unit-test summary
-      # Renders a per-case table into the run's job summary. Writes only to
-      # $GITHUB_STEP_SUMMARY, so it needs no GITHUB_TOKEN permissions.
-      uses: test-summary/action@v2
-      if: always()
-      with:
-        paths: junit-results/*.xml
-    - name: Upload JUnit XML
-      uses: actions/upload-artifact@v7
-      if: always()
-      with:
-        name: junit-results
-        path: junit-results/*.xml
+    # The suites themselves run in the Test job; this only proves the lean
+    # build still links them.
+    - name: make unit-test
+      run: make V=1 unit-test
 
   DoxygenCheck:
     runs-on: ubuntu-latest
@@ -89,6 +76,19 @@ jobs:
       run: cmake -DCMAKE_BUILD_TYPE=Debug .
     - name: Run unit-tests
       run: cmake --build . --parallel 7 --target check
+    - name: Publish unit-test summary
+      # Renders a per-case table into the run's job summary. Writes only to
+      # $GITHUB_STEP_SUMMARY, so it needs no GITHUB_TOKEN permissions.
+      uses: test-summary/action@v2
+      if: always()
+      with:
+        paths: junit/*.xml
+    - name: Upload JUnit XML
+      uses: actions/upload-artifact@v7
+      if: always()
+      with:
+        name: junit-results
+        path: junit/*.xml
 
   CheckPatch:
     runs-on: ubuntu-latest
@@ -149,6 +149,12 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
+      # test_docs.py checks the public header's Doxygen output and skips
+      # without doxygen.
+      - name: Install Doxygen
+        run: |
+          sudo apt update
+          sudo apt install -y doxygen
       - name: Run pytest suite
         run: ./scripts/run_pytests.sh
 
