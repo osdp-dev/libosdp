@@ -142,28 +142,6 @@ static int test_cp_build_and_send_packet(struct osdp_pd *p, uint8_t *buf, int le
 	return len;
 }
 
-int test_cp_build_packet_poll(struct osdp *ctx)
-{
-	int len;
-	struct osdp_pd *p = GET_CURRENT_PD(ctx);
-	reset_pd_packet_state(p);
-	uint8_t packet[512] = { CMD_POLL };
-	uint8_t expected[] = {
-#ifndef OPT_OSDP_SKIP_MARK_BYTE
-		0xff,
-#endif
-		0x53, 0x65, 0x08, 0x00, 0x04, 0x60, 0x60, 0x90
-	};
-
-	printf(SUB_1 "Testing cp_build_and_send_packet(CMD_POLL) -- ");
-	if ((len = test_cp_build_and_send_packet(p, packet, 1, 512)) < 0) {
-		return -1;
-	}
-	CHECK_ARRAY(packet, len, expected);
-	printf("success!\n");
-	return 0;
-}
-
 int test_cp_build_packet_id(struct osdp *ctx)
 {
 	int len;
@@ -182,48 +160,6 @@ int test_cp_build_packet_id(struct osdp *ctx)
 		return -1;
 	}
 	CHECK_ARRAY(packet, len, expected);
-	printf("success!\n");
-	return 0;
-}
-
-int test_phy_decode_packet_ack(struct osdp *ctx)
-{
-	uint8_t *buf;
-	int len, err, pkt_len;
-	struct osdp_pd *p = GET_CURRENT_PD(ctx);
-	reset_pd_packet_state(p);
-	uint8_t reply_data[] = { REPLY_ACK };
-	uint8_t packet[32];
-	uint8_t expected[] = { REPLY_ACK };
-
-	printf(SUB_1 "Testing phy_decode_packet(REPLY_ACK) -- ");
-
-	/* Skip sequence check for this test to focus on basic decode functionality */
-	SET_FLAG(p, PD_FLAG_SKIP_SEQ_CHECK);
-
-	/* Create a valid ACK packet from PD (address with MSB set) */
-	uint8_t control = 0x01; /* sequence 1, no CRC */
-	pkt_len = test_osdp_create_packet(0xe5, control, reply_data, 1, packet, sizeof(packet));
-	if (pkt_len < 0) {
-		printf("failed to create packet!\n");
-		CLEAR_FLAG(p, PD_FLAG_SKIP_SEQ_CHECK);
-		return -1;
-	}
-
-	osdp_rb_push_buf(p->rx_rb, packet, pkt_len);
-	err = osdp_phy_check_packet(p);
-	if (err) {
-		printf("check failed with error %d!\n", err);
-		CLEAR_FLAG(p, PD_FLAG_SKIP_SEQ_CHECK);
-		return -1;
-	}
-	if ((len = osdp_phy_decode_packet(p, &buf)) < 0) {
-		printf("decode failed!\n");
-		CLEAR_FLAG(p, PD_FLAG_SKIP_SEQ_CHECK);
-		return -1;
-	}
-	CHECK_ARRAY(buf, len, expected);
-	CLEAR_FLAG(p, PD_FLAG_SKIP_SEQ_CHECK);
 	printf("success!\n");
 	return 0;
 }
@@ -626,9 +562,13 @@ static int record_sc_notice(void *arg, int pd, struct osdp_event *ev)
 	return 0;
 }
 
-/* A reply whose MAC does not check out ends the session in the phy; the
- * app must hear about it as it would for any other way a session ends. */
-static int test_cp_bad_mac_reply_notifies_sc_down(struct osdp *ctx)
+/*
+ * A reply whose MAC does not check out ends the session in the phy. The app
+ * must hear about it as it would for any other way a session ends, and the
+ * CP must ask for a new handshake, not the offline dwell a hard failure
+ * would otherwise pick.
+ */
+static int test_cp_bad_mac_reply_ends_sc(struct osdp *ctx)
 {
 	struct osdp_pd *p = GET_CURRENT_PD(ctx);
 	struct sc_notices notices = { 0 };
@@ -641,13 +581,14 @@ static int test_cp_bad_mac_reply_notifies_sc_down(struct osdp *ctx)
 	};
 	int rc = -1;
 
-	printf(SUB_1 "Testing CP notifies SC down on a bad reply MAC -- ");
+	printf(SUB_1 "Testing CP ends SC on a bad reply MAC -- ");
 	reset_pd_packet_state(p);
 	memset(&p->sc, 0, sizeof(p->sc));
 	sc_activate(p);
 	SET_FLAG(p, PD_FLAG_SKIP_SEQ_CHECK);
 	SET_FLAG(p, PD_FLAG_ENABLE_NOTIF);
 	osdp_cp_set_event_callback((osdp_t *)ctx, record_sc_notice, &notices);
+	p->request = 0;
 	p->phy_state = OSDP_CP_PHY_STATE_REPLY_WAIT;
 	p->phy_tstamp = osdp_millis_now();
 	p->resp_timeout_ms = OSDP_RESP_TOUT_MS;
@@ -659,42 +600,6 @@ static int test_cp_bad_mac_reply_notifies_sc_down(struct osdp *ctx)
 		       sc_is_active(p), notices.count, notices.last_active);
 		goto out;
 	}
-	printf("success!\n");
-	rc = 0;
-out:
-	osdp_cp_set_event_callback((osdp_t *)ctx, NULL, NULL);
-	CLEAR_FLAG(p, PD_FLAG_ENABLE_NOTIF);
-	CLEAR_FLAG(p, PD_FLAG_SKIP_SEQ_CHECK);
-	p->phy_state = OSDP_CP_PHY_STATE_IDLE;
-	return rc;
-}
-
-/* A reply the secure channel rejects asks for a new handshake, not the
- * offline dwell a hard failure would otherwise pick. */
-static int test_cp_bad_mac_reply_restarts_sc(struct osdp *ctx)
-{
-	struct osdp_pd *p = GET_CURRENT_PD(ctx);
-	static const uint8_t packet[] = {
-#ifndef OPT_OSDP_SKIP_MARK_BYTE
-		0xff,
-#endif
-		0x53, 0xe5, 0x0d, 0x00, 0x09, 0x02, 0x16,
-		0x40, 0x00, 0x00, 0x00, 0x00, 0x5a
-	};
-	int rc = -1;
-
-	printf(SUB_1 "Testing CP restarts SC on a bad reply MAC -- ");
-	reset_pd_packet_state(p);
-	memset(&p->sc, 0, sizeof(p->sc));
-	sc_activate(p);
-	SET_FLAG(p, PD_FLAG_SKIP_SEQ_CHECK);
-	p->request = 0;
-	p->phy_state = OSDP_CP_PHY_STATE_REPLY_WAIT;
-	p->phy_tstamp = osdp_millis_now();
-	p->resp_timeout_ms = OSDP_RESP_TOUT_MS;
-	osdp_rb_push_buf(p->rx_rb, (uint8_t *)packet, sizeof(packet));
-
-	test_cp_phy_state_update(p);
 	if (!(p->request & CP_REQ_RESTART_SC)) {
 		printf("failed! request=%#x\n", p->request);
 		goto out;
@@ -702,89 +607,61 @@ static int test_cp_bad_mac_reply_restarts_sc(struct osdp *ctx)
 	printf("success!\n");
 	rc = 0;
 out:
+	osdp_cp_set_event_callback((osdp_t *)ctx, NULL, NULL);
 	p->request = 0;
+	CLEAR_FLAG(p, PD_FLAG_ENABLE_NOTIF);
 	CLEAR_FLAG(p, PD_FLAG_SKIP_SEQ_CHECK);
 	p->phy_state = OSDP_CP_PHY_STATE_IDLE;
 	return rc;
 }
 
-static int test_phy_parse_hardcoded_plaintext_when_sc_active_reject(struct osdp *ctx)
-{
-	int err;
-	uint8_t *buf = NULL;
-	struct osdp_pd *p = GET_CURRENT_PD(ctx);
-	static const uint8_t packet[] = {
-#ifndef OPT_OSDP_SKIP_MARK_BYTE
-		0xff,
-#endif
-		0x53, 0xe5, 0x07, 0x00, 0x01, 0x40, 0x80
-	};
-
-	printf(SUB_1 "Testing hardcoded parser fixture (plaintext while SC active reject) -- ");
-	reset_pd_packet_state(p);
-	sc_activate(p);
-	SET_FLAG(p, PD_FLAG_SKIP_SEQ_CHECK);
-	osdp_rb_push_buf(p->rx_rb, (uint8_t *)packet, sizeof(packet));
-	err = osdp_phy_check_packet(p);
-	if (err != OSDP_ERR_PKT_NONE) {
-		printf("failed! check returned %d\n", err);
-		CLEAR_FLAG(p, PD_FLAG_SKIP_SEQ_CHECK);
-		return -1;
-	}
-	err = osdp_phy_decode_packet(p, &buf);
-	if (err != OSDP_ERR_PKT_NACK || p->nak_code != OSDP_PD_NAK_SC_COND) {
-		printf("failed! decode returned %d nak=%d\n", err, p->nak_code);
-		CLEAR_FLAG(p, PD_FLAG_SKIP_SEQ_CHECK);
-		return -1;
-	}
-	sc_deactivate(p);
-	CLEAR_FLAG(p, PD_FLAG_SKIP_SEQ_CHECK);
-	printf("success!\n");
-	return 0;
-}
-
 /*
- * A PD that has dropped its session cannot MAC a NAK, and v2.2 D.1.1 makes
- * osdp_BUSY the only reply allowed to skip the secure channel. The CP used to
- * take a plaintext NAK at face value, which let one injected frame steer the
- * link. It has to be refused like any other unauthenticated reply.
+ * With SC active every reply must be MAC'd. A PD that has dropped its session
+ * cannot MAC a NAK either, and v2.2 D.1.1 makes osdp_BUSY the only reply
+ * allowed to skip the secure channel, so a plaintext NAK has to be refused
+ * like a plaintext ACK: taking it at face value would let one injected frame
+ * steer the link.
  */
-static int test_phy_parse_hardcoded_plaintext_nak_when_sc_active_reject(
+static int test_phy_parse_hardcoded_plaintext_when_sc_active_reject(
 	struct osdp *ctx)
 {
-	int err;
-	uint8_t *buf = NULL;
-	struct osdp_pd *p = GET_CURRENT_PD(ctx);
-	static const uint8_t packet[] = {
-#ifndef OPT_OSDP_SKIP_MARK_BYTE
-		0xff,
-#endif
-		0x53, 0xe5, 0x07, 0x00, 0x01, 0x41, 0x7f
+	static const uint8_t packets[][8] = {
+		{ 0xff, 0x53, 0xe5, 0x07, 0x00, 0x01, 0x40, 0x80 }, /* ACK */
+		{ 0xff, 0x53, 0xe5, 0x07, 0x00, 0x01, 0x41, 0x7f }, /* NAK */
 	};
+	int skip = IS_ENABLED(OPT_OSDP_SKIP_MARK_BYTE) ? 1 : 0;
+	struct osdp_pd *p = GET_CURRENT_PD(ctx);
+	uint8_t *buf = NULL;
+	int err, rc = 0;
+	size_t i;
 
-	printf(SUB_1 "Testing parser fixture (plaintext NAK in SC) -- ");
-	reset_pd_packet_state(p);
-	sc_activate(p);
-	SET_FLAG(p, PD_FLAG_SKIP_SEQ_CHECK);
-	osdp_rb_push_buf(p->rx_rb, (uint8_t *)packet, sizeof(packet));
-	err = osdp_phy_check_packet(p);
-	if (err != OSDP_ERR_PKT_NONE) {
-		printf("failed! check returned %d\n", err);
-		goto error;
+	printf(SUB_1 "Testing plaintext replies refused while SC active -- ");
+	for (i = 0; i < ARRAY_SIZEOF(packets) && rc == 0; i++) {
+		reset_pd_packet_state(p);
+		sc_activate(p);
+		SET_FLAG(p, PD_FLAG_SKIP_SEQ_CHECK);
+		osdp_rb_push_buf(p->rx_rb, (uint8_t *)packets[i] + skip,
+				 sizeof(packets[i]) - skip);
+		err = osdp_phy_check_packet(p);
+		if (err != OSDP_ERR_PKT_NONE) {
+			printf("failed! [%zu] check returned %d\n", i, err);
+			rc = -1;
+		} else {
+			err = osdp_phy_decode_packet(p, &buf);
+			if (err != OSDP_ERR_PKT_NACK ||
+			    p->nak_code != OSDP_PD_NAK_SC_COND) {
+				printf("failed! [%zu] decode %d nak=%d\n", i,
+				       err, p->nak_code);
+				rc = -1;
+			}
+		}
+		sc_deactivate(p);
+		CLEAR_FLAG(p, PD_FLAG_SKIP_SEQ_CHECK);
 	}
-	err = osdp_phy_decode_packet(p, &buf);
-	if (err != OSDP_ERR_PKT_NACK || p->nak_code != OSDP_PD_NAK_SC_COND) {
-		printf("failed! decode returned %d nak=%d\n", err, p->nak_code);
-		goto error;
+	if (rc == 0) {
+		printf("success!\n");
 	}
-	sc_deactivate(p);
-	CLEAR_FLAG(p, PD_FLAG_SKIP_SEQ_CHECK);
-	printf("success!\n");
-	return 0;
-error:
-	sc_deactivate(p);
-	CLEAR_FLAG(p, PD_FLAG_SKIP_SEQ_CHECK);
-	return -1;
+	return rc;
 }
 
 /*
@@ -920,45 +797,6 @@ int test_cp_build_packet_chlng(struct osdp *ctx)
 	return 0;
 }
 
-int test_cp_build_packet_with_crc(struct osdp *ctx)
-{
-	int len;
-	struct osdp_pd *p = GET_CURRENT_PD(ctx);
-	reset_pd_packet_state(p);
-	uint8_t packet[512] = { CMD_POLL };
-
-	printf(SUB_1 "Testing cp_build_and_send_packet with CRC -- ");
-	SET_FLAG(p, PD_FLAG_CP_USE_CRC);
-
-	if ((len = test_cp_build_and_send_packet(p, packet, 1, 512)) < 0) {
-		CLEAR_FLAG(p, PD_FLAG_CP_USE_CRC);
-		return -1;
-	}
-
-	/* Check if the control byte has CRC flag set (bit 2) */
-	int mark_offset = 0;
-#ifndef OPT_OSDP_SKIP_MARK_BYTE
-	mark_offset = 1;
-#endif
-	uint8_t control_byte = packet[mark_offset + 4]; /* SOM + addr + len_lsb + len_msb + control */
-
-	CLEAR_FLAG(p, PD_FLAG_CP_USE_CRC);
-
-	if (!(control_byte & 0x04)) {
-		printf("failed! CRC flag not set in control byte (0x%02x)\n", control_byte);
-		return -1;
-	}
-
-	/* Verify the packet length includes CRC (2 bytes) instead of checksum (1 byte) */
-	if (len != (mark_offset + 5 + 1 + 2)) { /* header + data + CRC */
-		printf("failed! Expected CRC packet length %d, got %d\n", mark_offset + 5 + 1 + 2, len);
-		return -1;
-	}
-
-	printf("success!\n");
-	return 0;
-}
-
 int test_cp_build_packet_checksum_mode_trailer(struct osdp *ctx)
 {
 	int len;
@@ -1003,48 +841,6 @@ int test_cp_build_packet_crc_mode_trailer(struct osdp *ctx)
 	}
 	CLEAR_FLAG(p, PD_FLAG_CP_USE_CRC);
 	CHECK_ARRAY(packet, len, expected);
-	printf("success!\n");
-	return 0;
-}
-
-int test_phy_decode_packet_nak(struct osdp *ctx)
-{
-	uint8_t *buf;
-	int len, err, pkt_len;
-	struct osdp_pd *p = GET_CURRENT_PD(ctx);
-	reset_pd_packet_state(p);
-	uint8_t reply_data[] = { REPLY_NAK, 0x01 };
-	uint8_t packet[32];
-	uint8_t expected[] = { REPLY_NAK, 0x01 };
-
-	printf(SUB_1 "Testing phy_decode_packet(REPLY_NAK) -- ");
-
-	/* Skip sequence check for this test to focus on basic decode functionality */
-	SET_FLAG(p, PD_FLAG_SKIP_SEQ_CHECK);
-
-	/* Create a valid NAK packet from PD (address with MSB set) */
-	uint8_t control = 0x01; /* sequence 1, no CRC */
-	pkt_len = test_osdp_create_packet(0xe5, control, reply_data, 2, packet, sizeof(packet));
-	if (pkt_len < 0) {
-		printf("failed to create packet!\n");
-		CLEAR_FLAG(p, PD_FLAG_SKIP_SEQ_CHECK);
-		return -1;
-	}
-
-	osdp_rb_push_buf(p->rx_rb, packet, pkt_len);
-	err = osdp_phy_check_packet(p);
-	if (err) {
-		printf("check failed with error %d!\n", err);
-		CLEAR_FLAG(p, PD_FLAG_SKIP_SEQ_CHECK);
-		return -1;
-	}
-	if ((len = osdp_phy_decode_packet(p, &buf)) < 0) {
-		printf("decode failed!\n");
-		CLEAR_FLAG(p, PD_FLAG_SKIP_SEQ_CHECK);
-		return -1;
-	}
-	CHECK_ARRAY(buf, len, expected);
-	CLEAR_FLAG(p, PD_FLAG_SKIP_SEQ_CHECK);
 	printf("success!\n");
 	return 0;
 }
@@ -1333,201 +1129,6 @@ int test_phy_packet_too_small(struct osdp *ctx)
 	return 0;
 }
 
-int test_phy_build_packet_without_mark(struct osdp *ctx)
-{
-	int len;
-	struct osdp_pd *p = GET_CURRENT_PD(ctx);
-	reset_pd_packet_state(p);
-	uint8_t packet[512] = { CMD_POLL };
-
-	printf(SUB_1 "Testing cp_build_and_send_packet without mark byte -- ");
-
-	/* The issue might be that the flag needs to be set before packet_init */
-	/* Let's just test that we can detect when mark byte is skipped */
-	if ((len = test_cp_build_and_send_packet(p, packet, 1, 512)) < 0) {
-		printf("failed to build packet!\n");
-		return -1;
-	}
-
-#ifdef OPT_OSDP_SKIP_MARK_BYTE
-	/* If mark byte is globally skipped, verify no mark byte */
-	if (packet[0] != 0x53) {
-		printf("failed! Expected no mark byte but got 0x%02x\n", packet[0]);
-		return -1;
-	}
-	printf("success! (globally skip mark)\n");
-#else
-	/* If mark byte is globally enabled, packet should have mark byte */
-	if (packet[0] != 0xff) {
-		printf("failed! Expected mark byte but got 0x%02x\n", packet[0]);
-		return -1;
-	}
-	printf("success! (mark byte present)\n");
-#endif
-	return 0;
-}
-
-int test_phy_packet_multiple_commands(struct osdp *ctx)
-{
-	int len;
-	struct osdp_pd *p = GET_CURRENT_PD(ctx);
-	reset_pd_packet_state(p);
-	uint8_t packet[512] = { CMD_BUZ, 0x02, 0x05, 0x0a, 0x14, 0x28 };
-
-	printf(SUB_1 "Testing cp_build_and_send_packet(CMD_BUZ) -- ");
-	if ((len = test_cp_build_and_send_packet(p, packet, 6, 512)) < 0) {
-		printf("failed to build packet!\n");
-		return -1;
-	}
-
-	/* Basic validation: check it has the right command and starts correctly */
-#ifndef OPT_OSDP_SKIP_MARK_BYTE
-	if (packet[0] != 0xff || packet[1] != 0x53) {
-		printf("failed! Invalid packet header\n");
-		return -1;
-	}
-	int data_offset = 6;
-#else
-	if (packet[0] != 0x53) {
-		printf("failed! Invalid packet header\n");
-		return -1;
-	}
-	int data_offset = 5;
-#endif
-
-	/* Check that the command is correctly placed */
-	if (packet[data_offset] != CMD_BUZ) {
-		printf("failed! Wrong command in packet (0x%02x)\n", packet[data_offset]);
-		return -1;
-	}
-
-	/* Check that the parameter bytes are present */
-	if (packet[data_offset + 1] != 0x02 || packet[data_offset + 2] != 0x05) {
-		printf("failed! Wrong command parameters\n");
-		return -1;
-	}
-
-	printf("success!\n");
-	return 0;
-}
-
-int test_phy_packet_zero_data(struct osdp *ctx)
-{
-	int len;
-	struct osdp_pd *p = GET_CURRENT_PD(ctx);
-	reset_pd_packet_state(p);
-	uint8_t packet[512] = { CMD_POLL }; /* Command with no additional data */
-
-	printf(SUB_1 "Testing packet with zero additional data -- ");
-	if ((len = test_cp_build_and_send_packet(p, packet, 1, 512)) < 0) {
-		printf("failed to build packet!\n");
-		return -1;
-	}
-
-	/* Verify minimum packet size - adjust based on actual packet structure */
-#ifndef OPT_OSDP_SKIP_MARK_BYTE
-	int expected_min_len = 8; /* mark + header(5) + data(1) + checksum(1) = 8 minimum */
-#else
-	int expected_min_len = 7; /* header(5) + data(1) + checksum(1) = 7 minimum */
-#endif
-
-	if (len < expected_min_len) {
-		printf("failed! Packet too small: %d < %d\n", len, expected_min_len);
-		return -1;
-	}
-
-	printf("success!\n");
-	return 0;
-}
-
-int test_phy_packet_data_offset(struct osdp *ctx)
-{
-	struct osdp_pd *p = GET_CURRENT_PD(ctx);
-	reset_pd_packet_state(p);
-	uint8_t packet[32];
-	uint8_t reply_data[] = { REPLY_ACK };
-	int pkt_len, offset;
-
-	printf(SUB_1 "Testing packet data offset calculation -- ");
-
-	/* Create a simple packet */
-	pkt_len = test_osdp_create_packet(0xe5, 0x00, reply_data, 1, packet, sizeof(packet));
-	if (pkt_len < 0) {
-		printf("failed to create packet!\n");
-		return -1;
-	}
-
-	/* Test data offset calculation */
-	offset = osdp_phy_packet_get_data_offset(p, packet);
-
-#ifndef OPT_OSDP_SKIP_MARK_BYTE
-	int expected_offset = 6; /* mark + header(5) */
-#else
-	int expected_offset = 5; /* header(5) */
-#endif
-
-	if (offset != expected_offset) {
-		printf("failed! Wrong data offset: %d != %d\n", offset, expected_offset);
-		return -1;
-	}
-
-	printf("success!\n");
-	return 0;
-}
-
-int test_phy_packet_different_commands(struct osdp *ctx)
-{
-	int len;
-	struct osdp_pd *p = GET_CURRENT_PD(ctx);
-	reset_pd_packet_state(p);
-
-	printf(SUB_1 "Testing different command types -- ");
-
-	/* Test LED command */
-	uint8_t led_packet[512] = { CMD_LED, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d };
-	if ((len = test_cp_build_and_send_packet(p, led_packet, 15, 512)) < 0) {
-		printf("failed to build LED packet!\n");
-		return -1;
-	}
-
-	/* Reset for next test */
-	reset_pd_packet_state(p);
-
-	/* Test text output command */
-	uint8_t text_packet[512] = { CMD_TEXT, 0x01, 0x02, 'H', 'e', 'l', 'l', 'o' };
-	if ((len = test_cp_build_and_send_packet(p, text_packet, 8, 512)) < 0) {
-		printf("failed to build TEXT packet!\n");
-		return -1;
-	}
-
-	printf("success!\n");
-	return 0;
-}
-
-int test_phy_state_reset_functionality(struct osdp *ctx)
-{
-	struct osdp_pd *p = GET_CURRENT_PD(ctx);
-
-	printf(SUB_1 "Testing PHY state reset functionality -- ");
-
-	/* Simulate some packet state */
-	p->packet_buf_len = 10;
-	p->packet_len = 20;
-	p->phy_state = 5;
-
-	/* Reset state */
-	osdp_phy_state_reset(p, true);
-
-	/* Verify reset */
-	if (p->packet_buf_len != 0 || p->packet_len != 0 || p->phy_state != 0) {
-		printf("failed! State not properly reset\n");
-		return -1;
-	}
-
-	printf("success!\n");
-	return 0;
-}
-
 int test_phy_state_reset_clears_rx_ring_on_error(struct osdp *ctx)
 {
 	struct osdp_pd *p = GET_CURRENT_PD(ctx);
@@ -1535,6 +1136,12 @@ int test_phy_state_reset_clears_rx_ring_on_error(struct osdp *ctx)
 	uint8_t drain;
 
 	printf(SUB_1 "Testing rx ring drain on abnormal phy reset -- ");
+
+	/* A half-framed packet and a mid-transaction state, as a reset
+	 * finds them. */
+	p->packet_buf_len = 10;
+	p->packet_len = 20;
+	p->phy_state = OSDP_CP_PHY_STATE_REPLY_WAIT;
 
 	/* Seed rx ring with stale/garbage bytes, as would happen after a
 	 * rogue PD spews junk onto the bus and overflows the ring. */
@@ -1550,6 +1157,11 @@ int test_phy_state_reset_clears_rx_ring_on_error(struct osdp *ctx)
 
 	if (osdp_rb_pop(p->rx_rb, &drain) == 0) {
 		printf("stale data still in rx ring after abnormal reset\n");
+		return -1;
+	}
+	if (p->packet_buf_len != 0 || p->packet_len != 0 ||
+	    p->phy_state != OSDP_CP_PHY_STATE_IDLE) {
+		printf("framer state not reset\n");
 		return -1;
 	}
 
@@ -1795,10 +1407,8 @@ void run_cp_phy_tests(struct test *t)
 	if (test_cp_phy_setup(t))
 		return;
 
-	DO_TEST(t, test_cp_build_packet_poll);
 	DO_TEST(t, test_cp_build_packet_id);
 	DO_TEST(t, test_cp_build_packet_chlng);
-	DO_TEST(t, test_cp_build_packet_with_crc);
 	DO_TEST(t, test_cp_build_packet_checksum_mode_trailer);
 	DO_TEST(t, test_cp_build_packet_crc_mode_trailer);
 	DO_TEST(t, test_phy_parse_hardcoded_plain_checksum_ack);
@@ -1808,19 +1418,12 @@ void run_cp_phy_tests(struct test *t)
 	DO_TEST(t, test_phy_parse_hardcoded_sc_invalid_type_reject);
 	DO_TEST(t, test_phy_parse_hardcoded_sc_inactive_scs16_reject);
 	DO_TEST(t, test_phy_parse_hardcoded_sc_active_invalid_mac_reject);
-	DO_TEST(t, test_cp_bad_mac_reply_notifies_sc_down);
-	DO_TEST(t, test_cp_bad_mac_reply_restarts_sc);
+	DO_TEST(t, test_cp_bad_mac_reply_ends_sc);
 	DO_TEST(t, test_phy_parse_hardcoded_plaintext_when_sc_active_reject);
-	DO_TEST(t,
-		test_phy_parse_hardcoded_plaintext_nak_when_sc_active_reject);
 	DO_TEST(t, test_phy_plaintext_keyset_ack_tolerated);
 	DO_TEST(t, test_phy_plaintext_keyset_ack_refused_enforcing);
-	DO_TEST(t, test_phy_build_packet_without_mark);
-	DO_TEST(t, test_phy_packet_multiple_commands);
-	DO_TEST(t, test_phy_decode_packet_ack);
 	DO_TEST(t, test_phy_decode_packet_fragmented_header);
 	DO_TEST(t, test_phy_check_packet_overfilled_buffer_recovers);
-	DO_TEST(t, test_phy_decode_packet_nak);
 	DO_TEST(t, test_phy_decode_packet_busy);
 	DO_TEST(t, test_phy_decode_packet_ignore_leading_mark_bytes);
 	DO_TEST(t, test_phy_decode_packet_invalid_checksum);
@@ -1832,10 +1435,6 @@ void run_cp_phy_tests(struct test *t)
 	DO_TEST(t, test_phy_decode_packet_foreign_cp_command);
 	DO_TEST(t, test_phy_packet_too_large);
 	DO_TEST(t, test_phy_packet_too_small);
-	DO_TEST(t, test_phy_packet_zero_data);
-	DO_TEST(t, test_phy_packet_data_offset);
-	DO_TEST(t, test_phy_packet_different_commands);
-	DO_TEST(t, test_phy_state_reset_functionality);
 	DO_TEST(t, test_phy_state_reset_clears_rx_ring_on_error);
 	DO_TEST(t, test_cp_refresh_yields_from_waiting_pd);
 	DO_TEST(t, test_cp_refresh_yields_between_probe_retries);

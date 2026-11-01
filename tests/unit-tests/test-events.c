@@ -87,19 +87,9 @@ static int setup_test_environment(struct test *t)
 		return -1;
 	}
 
-	/* Wait for devices to come online */
-	int rc = 0; /* elapsed time in ms */
-	uint8_t status = 0;
-	while (1) {
-		if (rc > 10 * 1000) { /* ~10s online timeout */
-			printf(SUB_1 "PD failed to come online\n");
-			return -1;
-		}
-		osdp_get_status_mask(g_test_ctx.cp_ctx, &status);
-		if (status & 1)
-			break;
-		usleep(20 * 1000);
-		rc += 20;
+	if (!test_wait_for_online(g_test_ctx.cp_ctx, 0, 10)) {
+		printf(SUB_1 "PD failed to come online\n");
+		return -1;
 	}
 
 	return 0;
@@ -137,60 +127,16 @@ static void reset_test_state()
 	}
 }
 
-static bool wait_for_event(int expected_event_type, int timeout_sec)
+static bool event_seen(void *arg)
 {
-	int rc = 0; /* elapsed time in ms */
-	int timeout_ms = timeout_sec * 1000;
-	while (rc < timeout_ms) {
-		if (atomic_load(&g_test_ctx.event_seen) &&
-		    g_test_ctx.last_event_type == expected_event_type) {
-			return true;
-		}
-		usleep(20 * 1000);
-		rc += 20;
-	}
-	return false;
+	return atomic_load(&g_test_ctx.event_seen) &&
+	       g_test_ctx.last_event_type == *(int *)arg;
 }
 
-static bool test_cardread_event()
+static bool wait_for_event(int expected_event_type, int timeout_sec)
 {
-	printf(SUB_2 "testing cardread event\n");
-	reset_test_state();
-
-	struct osdp_event event = {
-		.type = OSDP_EVENT_CARDREAD,
-		.cardread = {
-			.format = OSDP_CARD_FMT_RAW_WIEGAND,
-			.direction = 0,
-			.length = 32,
-		},
-	};
-	uint8_t card_data[] = {0x01, 0x23, 0x45, 0x67};
-	memcpy(event.cardread.data, card_data, sizeof(card_data));
-
-	if (!test_submit_event(g_test_ctx.pd_ctx, &event)) {
-		printf(SUB_2 "Failed to submit cardread event\n");
-		return false;
-	}
-
-	if (!wait_for_event(OSDP_EVENT_CARDREAD, 5)) {
-		printf(SUB_2 "Cardread event not received\n");
-		return false;
-	}
-
-	/* Verify event data */
-	if (g_test_ctx.last_event_data) {
-		struct osdp_event *ev = (struct osdp_event *)g_test_ctx.last_event_data;
-		if (ev->cardread.reader_no != event.cardread.reader_no ||
-		    ev->cardread.format != event.cardread.format ||
-		    ev->cardread.length != event.cardread.length ||
-		    memcmp(ev->cardread.data, event.cardread.data, 4) != 0) {
-			printf(SUB_2 "Cardread event data mismatch\n");
-			return false;
-		}
-	}
-
-	return true;
+	return test_wait_until(event_seen, &expected_event_type,
+			       timeout_sec * 1000);
 }
 
 static bool test_keypress_event()
@@ -531,14 +477,16 @@ static bool test_cardread_formats()
 		OSDP_CARD_FMT_RAW_UNSPECIFIED,
 		OSDP_CARD_FMT_RAW_WIEGAND,
 	};
+	/* A raw read's length is in bits */
 	struct osdp_event event = {
 		.type = OSDP_EVENT_CARDREAD,
 		.cardread = {
 			.format = OSDP_CARD_FMT_ASCII,
-			.length = 8,
-			.data = {0x5a},
+			.length = 32,
+			.data = {0x01, 0x23, 0x45, 0x67},
 		},
 	};
+	struct osdp_event *rx;
 	size_t i;
 
 	printf(SUB_2 "testing cardread format acceptance\n");
@@ -558,10 +506,17 @@ static bool test_cardread_formats()
 			       raw_formats[i]);
 			return false;
 		}
-		if (!wait_for_event(OSDP_EVENT_CARDREAD, 5) ||
-		    ((struct osdp_event *)g_test_ctx.last_event_data)
-				    ->cardread.format != raw_formats[i]) {
+		if (!wait_for_event(OSDP_EVENT_CARDREAD, 5)) {
 			printf(SUB_2 "format %d cardread not delivered\n",
+			       raw_formats[i]);
+			return false;
+		}
+		rx = g_test_ctx.last_event_data;
+		if (rx->cardread.reader_no != event.cardread.reader_no ||
+		    rx->cardread.format != raw_formats[i] ||
+		    rx->cardread.length != event.cardread.length ||
+		    memcmp(rx->cardread.data, event.cardread.data, 4) != 0) {
+			printf(SUB_2 "format %d cardread data mismatch\n",
 			       raw_formats[i]);
 			return false;
 		}
@@ -728,7 +683,6 @@ void run_event_tests(struct test *t)
 
 	printf(SUB_1 "running event tests\n");
 
-	TEST_CASE(t, "cardread_event", test_cardread_event());
 	TEST_CASE(t, "keypress_event", test_keypress_event());
 	TEST_CASE(t, "input_status_event", test_input_status_event());
 	TEST_CASE(t, "output_status_event", test_output_status_event());

@@ -33,6 +33,7 @@ struct notif_ctx {
 	pthread_mutex_t lock;
 	struct notif_record pd_pd_status;
 	struct notif_record pd_sc_status;
+	struct notif_record cp_sc_status;
 	struct notif_record cp_file_tx_done;
 	struct notif_record pd_file_tx_done;
 	struct notif_record pd_mp_start; /* arg0 = mp.total */
@@ -108,6 +109,10 @@ static int cp_event_cb(void *arg, int pd, struct osdp_event *ev)
 	if (ev->notif.type == OSDP_NOTIFICATION_MP_DONE) {
 		notif_record_update(&nx->cp_file_tx_done, ev->notif.type,
 				    ev->notif.mp.object_id, ev->notif.mp.outcome);
+	} else if (ev->notif.type == OSDP_NOTIFICATION_SC_STATUS) {
+		notif_record_update(&nx->cp_sc_status, ev->notif.type,
+				    ev->notif.sc_status.active,
+				    ev->notif.sc_status.scbk_d);
 	}
 	pthread_mutex_unlock(&nx->lock);
 	return 0;
@@ -171,35 +176,29 @@ static int notif_create_file(void)
 	return 0;
 }
 
-static bool wait_for_pd_online(int timeout_sec)
+static bool notif_seen(void *arg)
 {
-	int rc = 0;
-	uint8_t status = 0;
+	struct notif_record *r = arg;
+	bool hit;
 
-	while (rc < timeout_sec * 10) {
-		osdp_get_status_mask(g_nx.cp_ctx, &status);
-		if (status & 1)
-			return true;
-		usleep(100 * 1000);
-		rc++;
-	}
-	return false;
+	pthread_mutex_lock(&g_nx.lock);
+	hit = r->count > 0;
+	pthread_mutex_unlock(&g_nx.lock);
+	return hit;
 }
 
 static bool wait_for_notif(struct notif_record *r, int timeout_ms)
 {
-	int elapsed = 0;
-	bool hit;
+	return test_wait_until(notif_seen, r, timeout_ms);
+}
 
-	while (elapsed <= timeout_ms) {
-		pthread_mutex_lock(&g_nx.lock);
-		hit = r->count > 0;
-		pthread_mutex_unlock(&g_nx.lock);
-		if (hit) return true;
-		usleep(50 * 1000);
-		elapsed += 50;
-	}
-	return false;
+/* @arg is the CP or PD context whose side of the transfer to check */
+static bool file_tx_under_way(void *arg)
+{
+	uint32_t size, offset;
+
+	return osdp_get_file_tx_status(arg, 0, &size, &offset) == 0 &&
+	       offset > 0;
 }
 
 /* File ops can only be registered before the first refresh, so they are
@@ -227,7 +226,7 @@ static int setup_env(const struct osdp_file_ops *cp_fops,
 	if (g_nx.cp_runner < 0 || g_nx.pd_runner < 0)
 		return -1;
 
-	if (!wait_for_pd_online(10)) {
+	if (!test_wait_for_online(g_nx.cp_ctx, 0, 10)) {
 		printf(SUB_1 "PD did not come online\n");
 		return -1;
 	}
@@ -272,6 +271,14 @@ static bool test_pd_online_and_sc_notifications(void)
 		       g_nx.pd_sc_status.last_arg0);
 		return false;
 	}
+	/* The CP may report the link online a moment before it reports SC;
+	 * once it has, it must have done so exactly once. */
+	if (!wait_for_notif(&g_nx.cp_sc_status, 1000) ||
+	    g_nx.cp_sc_status.count != 1 || g_nx.cp_sc_status.last_arg0 != 1) {
+		printf(SUB_2 "CP SC_STATUS count=%d arg0=%d, want 1 active\n",
+		       g_nx.cp_sc_status.count, g_nx.cp_sc_status.last_arg0);
+		return false;
+	}
 	return true;
 }
 
@@ -291,7 +298,6 @@ static bool test_cp_file_tx_abort_on_disable(void)
 		.open = notif_fops_open, .read = notif_fops_read,
 		.write = notif_fops_write, .close = notif_fops_close,
 	};
-	int rc;
 	uint32_t size, offset;
 
 	printf(SUB_2 "CP aborts in-flight transfer when PD is disabled\n");
@@ -314,14 +320,7 @@ static bool test_cp_file_tx_abort_on_disable(void)
 	}
 
 	/* Wait until transfer is observably in progress before we yank it. */
-	rc = 0;
-	while (rc++ < 50) {
-		if (osdp_get_file_tx_status(g_nx.cp_ctx, 0, &size, &offset) == 0 &&
-		    offset > 0)
-			break;
-		usleep(20 * 1000);
-	}
-	if (rc >= 50) {
+	if (!test_wait_until(file_tx_under_way, g_nx.cp_ctx, 1000)) {
 		printf(SUB_2 "file-tx: never observed tx in progress\n");
 		goto err;
 	}
@@ -394,7 +393,6 @@ static bool test_pd_offline_aborts_file_tx(void)
 		.open = notif_fops_open, .read = notif_fops_read,
 		.write = notif_fops_write, .close = notif_fops_close,
 	};
-	int rc;
 	uint32_t size, offset;
 
 	printf(SUB_2 "PD goes offline and aborts its transfer on CP silence\n");
@@ -417,14 +415,7 @@ static bool test_pd_offline_aborts_file_tx(void)
 	}
 
 	/* Wait until the PD has actually started receiving. */
-	rc = 0;
-	while (rc++ < 50) {
-		if (osdp_get_file_tx_status(g_nx.pd_ctx, 0, &size, &offset) == 0 &&
-		    offset > 0)
-			break;
-		usleep(20 * 1000);
-	}
-	if (rc >= 50) {
+	if (!test_wait_until(file_tx_under_way, g_nx.pd_ctx, 1000)) {
 		printf(SUB_2 "pd-file-tx: never observed PD-side rx\n");
 		goto err;
 	}

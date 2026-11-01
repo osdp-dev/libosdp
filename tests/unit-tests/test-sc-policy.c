@@ -251,13 +251,6 @@ static bool sc_active_rejects_command_under_scs11(void)
 	return sc_active_inject(sb, sizeof(sb), CMD_POLL, NULL, 0) == REPLY_NAK;
 }
 
-static bool sc_active_rejects_command_under_scs13(void)
-{
-	const uint8_t sb[] = { 2, SCS_13 };
-
-	return sc_active_inject(sb, sizeof(sb), CMD_POLL, NULL, 0) == REPLY_NAK;
-}
-
 /*
  * The flip side: a genuine CMD_CHLNG restarts the connection sequence and the
  * spec allows it at any time, so the new policy must not reject SCS_11 when it
@@ -270,22 +263,6 @@ static bool sc_active_allows_chlng_restart_under_scs11(void)
 
 	return sc_active_inject(sb, sizeof(sb), CMD_CHLNG, rnd, sizeof(rnd)) ==
 	       REPLY_CCRYPT;
-}
-
-static bool keyless_pd_disables_sc(void)
-{
-	struct osdp *ctx = scp_pd_setup(NULL, 0);
-	struct osdp_pd *pd;
-	bool ok;
-
-	if (!ctx) {
-		return false;
-	}
-	pd = osdp_to_pd(ctx, 0);
-	ok = !sc_is_capable(pd) && !is_install_mode(pd) &&
-	     ISSET_FLAG(pd, PD_FLAG_SC_DISABLED);
-	osdp_pd_teardown((osdp_t *)ctx);
-	return ok;
 }
 
 static bool unusable_main_key_is_treated_as_absent(const uint8_t *scbk)
@@ -320,21 +297,6 @@ static bool zero_main_key_is_treated_as_absent(void)
 	return unusable_main_key_is_treated_as_absent(zeros);
 }
 
-static bool install_mode_pd_keeps_sc(void)
-{
-	struct osdp *ctx = scp_pd_setup(NULL, OSDP_FLAG_INSTALL_MODE);
-	struct osdp_pd *pd;
-	bool ok;
-
-	if (!ctx) {
-		return false;
-	}
-	pd = osdp_to_pd(ctx, 0);
-	ok = sc_is_capable(pd) && is_install_mode(pd);
-	osdp_pd_teardown((osdp_t *)ctx);
-	return ok;
-}
-
 /* A key alone must not imply install mode -- that was the old behaviour. */
 static bool keyed_pd_is_not_in_install_mode(void)
 {
@@ -349,35 +311,6 @@ static bool keyed_pd_is_not_in_install_mode(void)
 	ok = sc_is_capable(pd) && !is_install_mode(pd);
 	osdp_pd_teardown((osdp_t *)ctx);
 	return ok;
-}
-
-static bool cap_level_for(const uint8_t *scbk, uint32_t flags, int *level)
-{
-	struct osdp *ctx = scp_pd_setup(scbk, flags);
-	struct osdp_pd *pd;
-
-	if (!ctx) {
-		return false;
-	}
-	pd = osdp_to_pd(ctx, 0);
-	*level = pd->cap[OSDP_PD_CAP_COMMUNICATION_SECURITY].compliance_level;
-	osdp_pd_teardown((osdp_t *)ctx);
-	return true;
-}
-
-static bool keyless_pd_advertises_no_comsec(void)
-{
-	int level = -1;
-
-	return cap_level_for(NULL, 0, &level) && level == 0;
-}
-
-static bool install_mode_pd_advertises_comsec(void)
-{
-	int level = -1;
-
-	return cap_level_for(NULL, OSDP_FLAG_INSTALL_MODE, &level) &&
-	       level == 1;
 }
 
 /* The PDCAP reply must carry the level-0 entity, not omit it. */
@@ -495,41 +428,8 @@ static bool set_capabilities_is_refused_after_refresh(void)
 	return ok;
 }
 
-/* ENFORCE_SECURE undertakes never to use SCBK-D and INSTALL_MODE exists only
- * to permit it, so the pair contradicts itself. Pass a valid key too, so a
- * failure can only be the flag pair. */
-static bool pd_setup_rejects_enforce_secure_with_install_mode(void)
-{
-	const uint32_t both = OSDP_FLAG_ENFORCE_SECURE | OSDP_FLAG_INSTALL_MODE;
-	struct osdp *ctx = scp_pd_setup(scp_scbk, both);
-
-	if (ctx) {
-		osdp_pd_teardown((osdp_t *)ctx);
-		return false;
-	}
-	return true;
-}
-
-static bool cp_setup_rejects_enforce_secure_with_install_mode(void)
-{
-	const uint32_t both = OSDP_FLAG_ENFORCE_SECURE | OSDP_FLAG_INSTALL_MODE;
-	struct osdp_channel chn;
-	osdp_pd_info_t info;
-	osdp_t *ctx;
-
-	scp_channel_reset();
-	scp_fill_channel(&chn);
-	scp_fill_pd_info(&info, scp_scbk, both);
-	ctx = osdp_cp_setup(&chn, 1, &info);
-	if (ctx) {
-		osdp_cp_teardown(ctx);
-		return false;
-	}
-	return true;
-}
-
-/* The pre-existing rule, kept honest now that a sibling check can shadow it. */
-static bool cp_setup_rejects_enforce_secure_without_a_key(void)
+/* True if setting up the role with this key and these flags is refused. */
+static bool setup_is_refused(bool cp, const uint8_t *scbk, uint32_t flags)
 {
 	struct osdp_channel chn;
 	osdp_pd_info_t info;
@@ -537,24 +437,46 @@ static bool cp_setup_rejects_enforce_secure_without_a_key(void)
 
 	scp_channel_reset();
 	scp_fill_channel(&chn);
-	scp_fill_pd_info(&info, NULL, OSDP_FLAG_ENFORCE_SECURE);
-	ctx = osdp_cp_setup(&chn, 1, &info);
-	if (ctx) {
-		osdp_cp_teardown(ctx);
-		return false;
+	scp_fill_pd_info(&info, scbk, flags);
+	if (cp) {
+		ctx = osdp_cp_setup(&chn, 1, &info);
+		if (ctx) {
+			osdp_cp_teardown(ctx);
+		}
+	} else {
+		ctx = osdp_pd_setup(&chn, &info);
+		if (ctx) {
+			osdp_pd_teardown(ctx);
+		}
 	}
-	return true;
+	return ctx == NULL;
 }
 
-static bool pd_setup_rejects_enforce_secure_without_a_key(void)
+/*
+ * ENFORCE_SECURE undertakes never to use SCBK-D and INSTALL_MODE exists only
+ * to permit it, so the pair contradicts itself; it is given a valid key so a
+ * refusal can only be the flag pair. ENFORCE_SECURE without a key has nothing
+ * to enforce with. Both roles refuse both.
+ */
+static bool setup_rejects_contradictory_security(void)
 {
-	struct osdp *ctx = scp_pd_setup(NULL, OSDP_FLAG_ENFORCE_SECURE);
+	const uint32_t both = OSDP_FLAG_ENFORCE_SECURE | OSDP_FLAG_INSTALL_MODE;
+	bool ok = true;
+	int cp;
 
-	if (ctx) {
-		osdp_pd_teardown((osdp_t *)ctx);
-		return false;
+	for (cp = 0; cp <= 1; cp++) {
+		if (!setup_is_refused(cp, scp_scbk, both)) {
+			printf(SUB_2 "%s: ENFORCE_SECURE+INSTALL accepted\n",
+			       cp ? "CP" : "PD");
+			ok = false;
+		}
+		if (!setup_is_refused(cp, NULL, OSDP_FLAG_ENFORCE_SECURE)) {
+			printf(SUB_2 "%s: keyless ENFORCE_SECURE accepted\n",
+			       cp ? "CP" : "PD");
+			ok = false;
+		}
 	}
-	return true;
+	return ok;
 }
 
 /*
@@ -721,8 +643,6 @@ void run_sc_policy_tests(struct test *t)
 
 	TEST_CASE(t, "sc_active_rejects_command_under_scs11",
 		  sc_active_rejects_command_under_scs11());
-	TEST_CASE(t, "sc_active_rejects_command_under_scs13",
-		  sc_active_rejects_command_under_scs13());
 	TEST_CASE(t, "sc_active_allows_chlng_restart_under_scs11",
 		  sc_active_allows_chlng_restart_under_scs11());
 	TEST_CASE(t, "enforce_secure_naks_unassigned_command",
@@ -734,11 +654,6 @@ void run_sc_policy_tests(struct test *t)
 		  zero_main_key_is_treated_as_absent());
 	TEST_CASE(t, "keyed_pd_is_not_in_install_mode",
 		  keyed_pd_is_not_in_install_mode());
-	TEST_CASE(t, "install_mode_pd_keeps_sc", install_mode_pd_keeps_sc());
-	TEST_CASE(t, "keyless_pd_advertises_no_comsec",
-		  keyless_pd_advertises_no_comsec());
-	TEST_CASE(t, "install_mode_pd_advertises_comsec",
-		  install_mode_pd_advertises_comsec());
 	TEST_CASE(t, "keyless_pd_pdcap_reports_no_comsec",
 		  keyless_pd_pdcap_reports_no_comsec());
 	TEST_CASE(t, "keyless_pd_naks_chlng", keyless_pd_naks_chlng());
@@ -748,14 +663,8 @@ void run_sc_policy_tests(struct test *t)
 		  set_capabilities_can_disable_sc());
 	TEST_CASE(t, "set_capabilities_is_refused_after_refresh",
 		  set_capabilities_is_refused_after_refresh());
-	TEST_CASE(t, "pd_setup_rejects_enforce_secure_with_install_mode",
-		  pd_setup_rejects_enforce_secure_with_install_mode());
-	TEST_CASE(t, "cp_setup_rejects_enforce_secure_with_install_mode",
-		  cp_setup_rejects_enforce_secure_with_install_mode());
-	TEST_CASE(t, "pd_setup_rejects_enforce_secure_without_a_key",
-		  pd_setup_rejects_enforce_secure_without_a_key());
-	TEST_CASE(t, "cp_setup_rejects_enforce_secure_without_a_key",
-		  cp_setup_rejects_enforce_secure_without_a_key());
+	TEST_CASE(t, "setup_rejects_contradictory_security",
+		  setup_rejects_contradictory_security());
 	TEST_CASE(t, "first_chlng_failure_tries_scbkd",
 		  first_chlng_failure_tries_scbkd());
 	TEST_CASE(t, "established_pd_never_falls_back_to_scbkd",

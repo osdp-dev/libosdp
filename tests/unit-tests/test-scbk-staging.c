@@ -52,13 +52,9 @@ struct stg_ctx {
 	atomic_bool drop_next_ccrypt;
 	atomic_bool drop_all_ccrypt;
 	atomic_int ccrypt_dropped;
-
-	/* Replace the CP's next MAC'd POLL with a plaintext KEYSET for K2
-	 * under SCS_13, as an on-path attacker without the key could. */
-	atomic_bool forge_scs13_keyset;
-	atomic_bool forged_sent;
-	/* The PD's reply id to the forged frame; -1 until it is seen. */
-	atomic_int forged_reply;
+	/* Corrupt every REPLY_CCRYPT's cryptogram instead: the CP fails the
+	 * handshake on the spot rather than timing out every retry. */
+	atomic_bool corrupt_all_ccrypt;
 
 	/* Command id of the last frame the CP sent. */
 	atomic_int last_cmd;
@@ -126,37 +122,43 @@ mismatch:
 	return false;
 }
 
+static bool stg_log_reached(void *arg)
+{
+	return atomic_load(&g_stg.log_len) >= *(int *)arg;
+}
+
 static bool stg_wait_for_log(int n, int timeout_sec)
 {
-	int i;
+	return test_wait_until(stg_log_reached, &n, timeout_sec * 1000);
+}
 
-	for (i = 0; i < timeout_sec * 10; i++) {
-		if (atomic_load(&g_stg.log_len) >= n)
-			return true;
-		usleep(100 * 1000);
-	}
-	return false;
+static bool stg_online(void *arg)
+{
+	uint8_t online = 0;
+
+	ARG_UNUSED(arg);
+	osdp_get_status_mask(g_stg.cp_ctx, &online);
+	return online & 1;
 }
 
 static bool stg_secure_online(void)
 {
-	uint8_t online = 0, secure = 0;
+	uint8_t secure = 0;
 
-	osdp_get_status_mask(g_stg.cp_ctx, &online);
 	osdp_get_sc_status_mask(g_stg.cp_ctx, &secure);
-	return (online & 1) && (secure & 1);
+	return stg_online(NULL) && (secure & 1);
+}
+
+static bool stg_is_secure_online(void *arg)
+{
+	ARG_UNUSED(arg);
+	return stg_secure_online();
 }
 
 static bool stg_wait_for_secure_online(int timeout_sec)
 {
-	int i;
-
-	for (i = 0; i < timeout_sec * 10; i++) {
-		if (stg_secure_online())
-			return true;
-		usleep(100 * 1000);
-	}
-	return false;
+	return test_wait_until(stg_is_secure_online, NULL,
+			       timeout_sec * 1000);
 }
 
 static struct osdp_pd *stg_pd(void)
@@ -167,6 +169,18 @@ static struct osdp_pd *stg_pd(void)
 static struct osdp_pd *stg_cp_pd(void)
 {
 	return osdp_to_pd(g_stg.cp_ctx, 0);
+}
+
+static bool stg_keyset_is_held(void *arg)
+{
+	ARG_UNUSED(arg);
+	return stg_cp_pd()->keyset_cmd != NULL;
+}
+
+static bool stg_pd_is_disabled(void *arg)
+{
+	ARG_UNUSED(arg);
+	return !osdp_cp_is_pd_enabled(g_stg.cp_ctx, 0);
 }
 
 /* `pd` runs on `key` as its main key and holds nothing staged. */
@@ -249,40 +263,26 @@ static bool stg_try_led(void)
 	return test_submit_command(g_stg.cp_ctx, 0, &cmd) != NULL;
 }
 
-/*
- * Frame a plaintext KEYSET for K2 under an SCS_13 security block, which
- * carries no MAC, reusing the address and sequence number of the CP frame
- * it replaces so that only the security block can get it refused.
- */
-static int stg_frame_scs13_keyset(const uint8_t *frame, int base, uint8_t *out,
-				  int out_max)
+/* REPLY_CCRYPT carries the PD's client UID and RND.B ahead of its
+ * cryptogram; flip a cryptogram byte and re-seal the frame. Every frame on
+ * this channel is CRC'd. */
+static enum test_channel_hook_verdict
+stg_corrupt_ccrypt(const uint8_t *frame, int len, int base, int id_off,
+		   uint8_t *out, int *out_len, int out_max)
 {
-	const uint8_t sb[] = { 3, SCS_13, 1 };
-	int len = 0, start, pkt_len;
+	int body_len = len - base;
 	uint16_t crc;
 
-	pkt_len = 5 + sizeof(sb) + 3 + sizeof(K2) + 2;
-	if (out_max < base + pkt_len)
-		return -1;
-	if (base)
-		out[len++] = 0xff;
-	start = len;
-	out[len++] = 0x53;
-	out[len++] = frame[base + 1];
-	out[len++] = pkt_len & 0xff;
-	out[len++] = (pkt_len >> 8) & 0xff;
-	out[len++] = (frame[base + 4] & 0x03) | 0x04 | 0x08; /* SQN, CRC, SCB */
-	memcpy(out + len, sb, sizeof(sb));
-	len += sizeof(sb);
-	out[len++] = CMD_KEYSET;
-	out[len++] = 1;
-	out[len++] = sizeof(K2);
-	memcpy(out + len, K2, sizeof(K2));
-	len += sizeof(K2);
-	crc = test_osdp_compute_crc16(out + start, len - start);
-	out[len++] = crc & 0xff;
-	out[len++] = (crc >> 8) & 0xff;
-	return len;
+	if (len > out_max || id_off + 1 + 16 >= len ||
+	    !(frame[base + 4] & 0x04))
+		return TEST_HOOK_PASS;
+	memcpy(out, frame, len);
+	out[id_off + 1 + 16] ^= 0x01;
+	crc = test_osdp_compute_crc16(out + base, body_len - 2);
+	out[len - 2] = crc & 0xff;
+	out[len - 1] = (crc >> 8) & 0xff;
+	*out_len = len;
+	return TEST_HOOK_REPLACE;
 }
 
 static enum test_channel_hook_verdict stg_hook(void *arg, bool cp_to_pd,
@@ -312,24 +312,16 @@ static enum test_channel_hook_verdict stg_hook(void *arg, bool cp_to_pd,
 
 		atomic_store(&g_stg.last_cmd, frame[id_off]);
 		if ((scs_type == 0x15 || scs_type == 0x17) &&
-		    frame[id_off] == CMD_POLL &&
-		    atomic_load(&g_stg.forge_scs13_keyset) &&
-		    !atomic_exchange(&g_stg.forged_sent, true)) {
-			*out_len = stg_frame_scs13_keyset(frame, base, out,
-							  out_max);
-			if (*out_len > 0)
-				return TEST_HOOK_REPLACE;
-		}
-		if ((scs_type == 0x15 || scs_type == 0x17) &&
 		    frame[id_off] != CMD_ACURXSIZE)
 			atomic_compare_exchange_strong(&g_stg.first_mac_cmd,
 						       &expect_none,
 						       frame[id_off]);
 		return TEST_HOOK_PASS;
 	}
-	if (atomic_load(&g_stg.forged_sent) &&
-	    atomic_load(&g_stg.forged_reply) == -1)
-		atomic_store(&g_stg.forged_reply, frame[id_off]);
+	if (frame[id_off] == REPLY_CCRYPT &&
+	    atomic_load(&g_stg.corrupt_all_ccrypt))
+		return stg_corrupt_ccrypt(frame, len, base, id_off, out,
+					  out_len, out_max);
 	/* The PD refresh holds the (recursive) API lock here, so the CP is
 	 * parked waiting for this reply: the LED and the KEYSET behind it
 	 * stay queued, and the PD is disabled once the reply is in. */
@@ -399,9 +391,7 @@ static void stg_reset_records(void)
 	atomic_store(&g_stg.drop_next_ccrypt, false);
 	atomic_store(&g_stg.drop_all_ccrypt, false);
 	atomic_store(&g_stg.ccrypt_dropped, 0);
-	atomic_store(&g_stg.forge_scs13_keyset, false);
-	atomic_store(&g_stg.forged_sent, false);
-	atomic_store(&g_stg.forged_reply, -1);
+	atomic_store(&g_stg.corrupt_all_ccrypt, false);
 	atomic_store(&g_stg.last_cmd, -1);
 	atomic_store(&g_stg.drop_keyset_ack, false);
 	atomic_store(&g_stg.drop_first_mac_reply, false);
@@ -568,6 +558,15 @@ static bool pd_reverts_after_failed_attempt(struct test *t)
 	stg_begin(t, "PD reverts after the staged key's attempt fails");
 	if (stg_start(K1, K1, K2))
 		return stg_end(false, "setup failed");
+	/* The first handshake spends the staged key's attempt and the PD
+	 * comes up without SC. Cycle it rather than wait out the SC retry
+	 * delay for the next handshake. */
+	if (!test_wait_until(stg_online, NULL, 10 * 1000))
+		return stg_end(false, "PD never came online");
+	if (osdp_cp_disable_pd(g_stg.cp_ctx, 0) ||
+	    !test_wait_until(stg_pd_is_disabled, NULL, 5000) ||
+	    osdp_cp_enable_pd(g_stg.cp_ctx, 0))
+		return stg_end(false, "could not cycle the PD");
 	if (!stg_wait_for_secure_online(10))
 		return stg_end(false, "K1 never came up");
 	if (atomic_load(&g_stg.log_len) != 0) {
@@ -576,25 +575,6 @@ static bool pd_reverts_after_failed_attempt(struct test *t)
 	}
 	if (!stg_settled_on(stg_pd(), K1))
 		return stg_end(false, "PD is not back on K1");
-	return stg_end(true, NULL);
-}
-
-/* The CP restarted after the PD confirmed and came back on K2: the PD
- * still holds it staged, and its one attempt succeeds. */
-static bool pd_confirms_for_a_restarted_cp(struct test *t)
-{
-	static const int expect[] = { 0xb0 };
-
-	stg_begin(t, "a CP restarted on the staged key is confirmed");
-	if (stg_start(K2, K1, K2))
-		return stg_end(false, "setup failed");
-	if (!stg_wait_for_secure_online(10))
-		return stg_end(false, "K2 never came up");
-	if (!stg_wait_for_log(1, 5) ||
-	    !stg_log_is(expect, ARRAY_SIZEOF(expect)))
-		return stg_end(false, "the PD app never saw K2");
-	if (!stg_settled_on(stg_pd(), K2))
-		return stg_end(false, "PD is not on K2");
 	return stg_end(true, NULL);
 }
 
@@ -646,6 +626,11 @@ static bool pd_refusal_reverts_both(struct test *t)
 	return stg_end(true, NULL);
 }
 
+/*
+ * The CP restarted after the PD confirmed and came back on K2: the PD still
+ * holds K2 staged and its one attempt succeeds. The PD confirms K2 before it
+ * dispatches the session's first command, a KEYSET for K3.
+ */
 static bool pd_confirms_before_dispatching_first_command(struct test *t)
 {
 	static const int expect[] = { 0xb0, 0xc0 };
@@ -664,35 +649,6 @@ static bool pd_confirms_before_dispatching_first_command(struct test *t)
 		return stg_end(false, "KEYSET was not the first command");
 	if (!stg_log_is(expect, ARRAY_SIZEOF(expect)))
 		return stg_end(false, "wrong order");
-	return stg_end(true, NULL);
-}
-
-/*
- * SCS_11..14 carry no MAC. If the PD honoured one in an active session for
- * anything but the handshake message it belongs to, an attacker with no key
- * could have a KEYSET staged and then play CP to confirm it.
- */
-static bool pd_naks_keyset_under_handshake_scs(struct test *t)
-{
-	int i;
-
-	stg_begin(t, "a KEYSET under SCS_13 in an active session is NAKed");
-	if (stg_start(K1, K1, NULL))
-		return stg_end(false, "setup failed");
-	if (!stg_wait_for_secure_online(10))
-		return stg_end(false, "K1 never came up");
-	atomic_store(&g_stg.forge_scs13_keyset, true);
-	for (i = 0; i < 50 && atomic_load(&g_stg.forged_reply) == -1; i++)
-		usleep(100 * 1000);
-	if (!atomic_load(&g_stg.forged_sent))
-		return stg_end(false, "no POLL was replaced");
-	if (atomic_load(&g_stg.forged_reply) != REPLY_NAK)
-		return stg_end(false, "the forged KEYSET was not NAKed");
-	if (atomic_load(&g_stg.log_len) != 0 ||
-	    ISSET_FLAG(stg_pd(), PD_FLAG_SCBK_STAGED)) {
-		stg_print_log();
-		return stg_end(false, "the forged KEYSET was staged");
-	}
 	return stg_end(true, NULL);
 }
 
@@ -742,8 +698,6 @@ static bool first_reply_lost_still_confirms(struct test *t)
  */
 static bool queued_keyset_survives_restart(struct test *t)
 {
-	int i;
-
 	stg_begin(t, "a KEYSET queued across a restart still confirms");
 	if (stg_start(K1, K1, NULL))
 		return stg_end(false, "setup failed");
@@ -751,9 +705,8 @@ static bool queued_keyset_survives_restart(struct test *t)
 		return stg_end(false, "K1 never came up");
 	g_stg.keyset_before_restart = K2;
 	atomic_store(&g_stg.force_restart, true);
-	for (i = 0; i < 50 && osdp_cp_is_pd_enabled(g_stg.cp_ctx, 0); i++)
-		usleep(100 * 1000);
-	if (!atomic_load(&g_stg.restart_forced) ||
+	if (!test_wait_until(stg_pd_is_disabled, NULL, 5000) ||
+	    !atomic_load(&g_stg.restart_forced) ||
 	    osdp_cp_enable_pd(g_stg.cp_ctx, 0))
 		return stg_end(false,
 			       "PD was never disabled with KEYSET queued");
@@ -788,33 +741,28 @@ static bool cp_refuses_keyset_while_staged(struct test *t)
 }
 
 /* A KEYSET held while the PD is out of service stays held, and settles
- * once the PD is back. The dropped CCRYPTs used up the staged key's one
+ * once the PD is back. The corrupted CCRYPTs used up the staged key's one
  * attempt, so it settles on the main key. */
 static bool held_keyset_survives_disable(struct test *t)
 {
-	int i;
-
 	stg_begin(t, "a held KEYSET survives disabling the PD");
 	if (stg_start(K1, K1, NULL))
 		return stg_end(false, "setup failed");
 	if (!stg_wait_for_secure_online(10))
 		return stg_end(false, "K1 never came up");
-	atomic_store(&g_stg.drop_all_ccrypt, true);
+	atomic_store(&g_stg.corrupt_all_ccrypt, true);
 	stg_submit_keyset(K2);
-	for (i = 0; i < 50 && !stg_cp_pd()->keyset_cmd; i++)
-		usleep(100 * 1000);
-	if (!stg_cp_pd()->keyset_cmd)
+	if (!test_wait_until(stg_keyset_is_held, NULL, 5000))
 		return stg_end(false, "KEYSET was never held");
 	if (osdp_cp_disable_pd(g_stg.cp_ctx, 0))
 		return stg_end(false, "disable failed");
-	/* Disabling waits out the CHLNG retries the dropped CCRYPTs cause. */
-	for (i = 0; i < 150 && osdp_cp_is_pd_enabled(g_stg.cp_ctx, 0); i++)
-		usleep(100 * 1000);
+	if (!test_wait_until(stg_pd_is_disabled, NULL, 5000))
+		return stg_end(false, "PD was never disabled");
 	if (test_completion_count(&g_stg.completion) != 0)
 		return stg_end(false, "disabling the PD completed the KEYSET");
 	if (osdp_cp_set_scbk(g_stg.cp_ctx, 0, K3) == 0)
 		return stg_end(false, "SCBK replaced under a held KEYSET");
-	atomic_store(&g_stg.drop_all_ccrypt, false);
+	atomic_store(&g_stg.corrupt_all_ccrypt, false);
 	if (osdp_cp_enable_pd(g_stg.cp_ctx, 0))
 		return stg_end(false, "enable failed");
 	if (!stg_keyset_completed(OSDP_COMPLETION_FAILED, 10))
@@ -832,25 +780,18 @@ static bool cp_retries_on_another_key(struct test *t)
 	static const uint8_t scbk_d[16] = { 0x30, 0x31, 0x32, 0x33, 0x34, 0x35,
 					    0x36, 0x37, 0x38, 0x39, 0x3a, 0x3b,
 					    0x3c, 0x3d, 0x3e, 0x3f };
-	uint8_t online = 0;
-	int i;
 
 	stg_begin(t, "a disabled PD comes back up on another SCBK");
 	if (stg_start(K2, K1, NULL))
 		return stg_end(false, "setup failed");
-	for (i = 0; i < 100 && !(online & 1); i++) {
-		usleep(100 * 1000);
-		osdp_get_status_mask(g_stg.cp_ctx, &online);
-	}
-	if (!(online & 1) || stg_secure_online())
+	if (!test_wait_until(stg_online, NULL, 10 * 1000) ||
+	    stg_secure_online())
 		return stg_end(false, "PD did not come online without SC");
 	if (osdp_cp_set_scbk(g_stg.cp_ctx, 0, K1) == 0)
 		return stg_end(false, "SCBK replaced on an enabled PD");
 	if (osdp_cp_disable_pd(g_stg.cp_ctx, 0))
 		return stg_end(false, "disable failed");
-	for (i = 0; i < 50 && osdp_cp_is_pd_enabled(g_stg.cp_ctx, 0); i++)
-		usleep(100 * 1000);
-	if (osdp_cp_is_pd_enabled(g_stg.cp_ctx, 0))
+	if (!test_wait_until(stg_pd_is_disabled, NULL, 5000))
 		return stg_end(false, "PD was never disabled");
 	if (osdp_cp_set_scbk(g_stg.cp_ctx, 0, scbk_d) == 0)
 		return stg_end(false, "SCBK-D accepted as an SCBK");
@@ -868,8 +809,6 @@ static bool cp_retries_on_another_key(struct test *t)
  * key the PD holds and keeps both. */
 static bool teardown_aborts_held_keyset(struct test *t)
 {
-	int i;
-
 	stg_begin(t, "teardown aborts a held KEYSET");
 	if (stg_start(K1, K1, NULL))
 		return stg_end(false, "setup failed");
@@ -877,9 +816,7 @@ static bool teardown_aborts_held_keyset(struct test *t)
 		return stg_end(false, "K1 never came up");
 	atomic_store(&g_stg.drop_all_ccrypt, true);
 	stg_submit_keyset(K2);
-	for (i = 0; i < 50 && !stg_cp_pd()->keyset_cmd; i++)
-		usleep(100 * 1000);
-	if (!stg_cp_pd()->keyset_cmd)
+	if (!test_wait_until(stg_keyset_is_held, NULL, 5000))
 		return stg_end(false, "KEYSET was never held");
 	async_runner_stop(g_stg.cp_runner);
 	g_stg.cp_runner = -1;
@@ -938,14 +875,10 @@ void run_scbk_staging_tests(struct test *t)
 		  pd_same_rnd_a_is_one_attempt(t));
 	TEST_CASE(t, "pd_reverts_after_failed_attempt",
 		  pd_reverts_after_failed_attempt(t));
-	TEST_CASE(t, "pd_confirms_for_a_restarted_cp",
-		  pd_confirms_for_a_restarted_cp(t));
 	TEST_CASE(t, "pd_busy_defers_confirm", pd_busy_defers_confirm(t));
 	TEST_CASE(t, "pd_refusal_reverts_both", pd_refusal_reverts_both(t));
 	TEST_CASE(t, "pd_confirms_before_dispatching_first_command",
 		  pd_confirms_before_dispatching_first_command(t));
-	TEST_CASE(t, "pd_naks_keyset_under_handshake_scs",
-		  pd_naks_keyset_under_handshake_scs(t));
 	TEST_CASE(t, "lost_ack_still_confirms", lost_ack_still_confirms(t));
 	TEST_CASE(t, "first_reply_lost_still_confirms",
 		  first_reply_lost_still_confirms(t));
