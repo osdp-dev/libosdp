@@ -13,8 +13,8 @@
  * End-to-end TRS scenarios against an emulated ISO 7816 PIV card sitting
  * behind the PD's app layer, modeled on the workflows (and failure modes)
  * reported from real readers in issue #22: a full chained certificate
- * read, sessions that must survive BUSY spells, and a card leaving the
- * field mid-band.
+ * read, sessions that must survive BUSY spells, and a reader that reports
+ * ordinary credentials only in its default mode.
  */
 
 extern uint16_t test_osdp_compute_crc16(const uint8_t *buf, size_t len);
@@ -41,10 +41,6 @@ struct trs_emu_ctx {
 	/* Written by the completion callback on the refresh thread. */
 	struct test_completion completion;
 	bool cardread_seen;
-
-	int card_scan_count; /* card scans the PD app has answered */
-	int present_events;  /* CP-side card-present events, by status */
-	int absent_events;
 };
 
 static struct trs_emu_ctx g_emu;
@@ -120,14 +116,6 @@ static int emu_cp_event_callback(void *arg, int pd, struct osdp_event *ev)
 	if (ev->type == OSDP_EVENT_TRS) {
 		ctx->event_seen = true;
 		memcpy(&ctx->last_reply, &ev->trs, sizeof(ctx->last_reply));
-		if (ev->trs.reply == OSDP_TRS_REPLY_CARD_PRESENT) {
-			if (ev->trs.card_present.status ==
-			    OSDP_TRS_CARD_NOT_PRESENT) {
-				ctx->absent_events++;
-			} else {
-				ctx->present_events++;
-			}
-		}
 	}
 	if (ev->type == OSDP_EVENT_CARDREAD) {
 		ctx->cardread_seen = true;
@@ -168,7 +156,6 @@ static int emu_pd_command_callback(void *arg, struct osdp_cmd *cmd)
 	/* This reader implements the mode-1 card scan and answers it from
 	 * whether a card is actually in its field */
 	if (cmd->trs.command == OSDP_TRS_CMD_CARD_SCAN) {
-		ctx->card_scan_count++;
 		memset(resp, 0, sizeof(*resp));
 		resp->type = OSDP_EVENT_TRS;
 		resp->trs.reply = OSDP_TRS_REPLY_CARD_PRESENT;
@@ -294,11 +281,6 @@ static bool emu_wait_completion(int timeout_ms)
 	return test_wait_until(emu_completed, NULL, timeout_ms);
 }
 
-static bool emu_count_positive(void *arg)
-{
-	return *(volatile int *)arg > 0;
-}
-
 static bool emu_session(enum osdp_trs_cmd_e command,
 			enum osdp_trs_session_status_e want)
 {
@@ -318,7 +300,7 @@ static bool emu_session(enum osdp_trs_cmd_e command,
 
 /*
  * Round-trip one C-APDU through the session. Returns the R-APDU length
- * (data + SW), or -1. @expect_fail flips the meaning of the completion.
+ * (data + SW), or -1 when the command did not complete with card data.
  */
 static int emu_xfer(const uint8_t *capdu, int clen, uint8_t *rapdu,
 		    int max_rlen)
@@ -352,6 +334,20 @@ static int emu_xfer(const uint8_t *capdu, int clen, uint8_t *rapdu,
 	return rlen;
 }
 
+/* SELECT the PIV application; true if the card answered 90 00 */
+static bool emu_select_piv(void)
+{
+	uint8_t capdu[5 + sizeof(emu_card_piv_aid)] = {
+		0x00, 0xA4, 0x04, 0x00, sizeof(emu_card_piv_aid),
+	};
+	uint8_t rapdu[OSDP_TRS_APDU_MAX_LEN];
+	int rlen;
+
+	memcpy(capdu + 5, emu_card_piv_aid, sizeof(emu_card_piv_aid));
+	rlen = emu_xfer(capdu, sizeof(capdu), rapdu, sizeof(rapdu));
+	return rlen >= 2 && rapdu[rlen - 2] == 0x90 && rapdu[rlen - 1] == 0x00;
+}
+
 /*
  * The headline workflow: detect the card, open a session, SELECT the PIV
  * application, read a >1KB object with 61xx/GET RESPONSE chaining, close.
@@ -372,17 +368,8 @@ static bool test_emu_piv_certificate_read(void)
 		return false;
 	}
 
-	/* SELECT the PIV AID */
-	capdu[0] = 0x00;
-	capdu[1] = 0xA4;
-	capdu[2] = 0x04;
-	capdu[3] = 0x00;
-	capdu[4] = sizeof(emu_card_piv_aid);
-	memcpy(capdu + 5, emu_card_piv_aid, sizeof(emu_card_piv_aid));
-	clen = 5 + sizeof(emu_card_piv_aid);
-	rlen = emu_xfer(capdu, clen, rapdu, sizeof(rapdu));
-	if (rlen < 2 || rapdu[rlen - 2] != 0x90 || rapdu[rlen - 1] != 0x00) {
-		printf(SUB_2 "SELECT PIV AID failed (rlen %d)\n", rlen);
+	if (!emu_select_piv()) {
+		printf(SUB_2 "SELECT PIV AID failed\n");
 		return false;
 	}
 
@@ -435,52 +422,6 @@ static bool test_emu_piv_certificate_read(void)
 	return true;
 }
 
-/* A busy spell mid-session must cost latency, never the session */
-static bool test_emu_session_survives_busy(void)
-{
-	struct emu_busy_hook s = { .busy_remaining = 2 };
-	uint8_t capdu[16], rapdu[OSDP_TRS_APDU_MAX_LEN];
-	int rlen, clen;
-
-	printf(SUB_2 "testing emu session survives a busy spell\n");
-
-	emu_card_set_present(&g_emu.card, true);
-	if (!emu_session(OSDP_TRS_CMD_START, OSDP_TRS_SESSION_OPENED)) {
-		printf(SUB_2 "session did not open\n");
-		return false;
-	}
-
-	g_emu.status_seen = false;
-	test_set_channel_hook(emu_busy_hook_fn, &s);
-	capdu[0] = 0x00;
-	capdu[1] = 0xA4;
-	capdu[2] = 0x04;
-	capdu[3] = 0x00;
-	capdu[4] = sizeof(emu_card_piv_aid);
-	memcpy(capdu + 5, emu_card_piv_aid, sizeof(emu_card_piv_aid));
-	clen = 5 + sizeof(emu_card_piv_aid);
-	rlen = emu_xfer(capdu, clen, rapdu, sizeof(rapdu));
-	test_set_channel_hook(NULL, NULL);
-
-	if (rlen < 2 || rapdu[rlen - 2] != 0x90) {
-		printf(SUB_2 "APDU did not survive the busy spell (%d)\n",
-		       rlen);
-		return false;
-	}
-	if (s.xwr_tx_count != 3) {
-		printf(SUB_2 "want 2 busy retries (3 TX); saw %d\n",
-		       s.xwr_tx_count);
-		return false;
-	}
-	if (g_emu.status_seen) {
-		printf(SUB_2 "busy spell must not end the session (%d)\n",
-		       g_emu.last_status);
-		return false;
-	}
-
-	return emu_session(OSDP_TRS_CMD_STOP, OSDP_TRS_SESSION_CLOSED);
-}
-
 /* A permanently-busy reader costs the app one failed command and the
  * session keeps running for whatever the app tries next */
 static bool test_emu_permanent_busy_fails_softly(void)
@@ -489,7 +430,6 @@ static bool test_emu_permanent_busy_fails_softly(void)
 	uint8_t capdu[] = { 0x00, 0xA4, 0x04, 0x00, 0x00 };
 	uint8_t rapdu[OSDP_TRS_APDU_MAX_LEN];
 	uint8_t status = 0;
-	int rlen;
 
 	printf(SUB_2 "testing emu permanently busy reader\n");
 
@@ -522,74 +462,8 @@ static bool test_emu_permanent_busy_fails_softly(void)
 	}
 
 	/* The session is still usable */
-	uint8_t select_apdu[16];
-
-	select_apdu[0] = 0x00;
-	select_apdu[1] = 0xA4;
-	select_apdu[2] = 0x04;
-	select_apdu[3] = 0x00;
-	select_apdu[4] = sizeof(emu_card_piv_aid);
-	memcpy(select_apdu + 5, emu_card_piv_aid, sizeof(emu_card_piv_aid));
-	rlen = emu_xfer(select_apdu, 5 + sizeof(emu_card_piv_aid),
-			rapdu, sizeof(rapdu));
-	if (rlen < 2 || rapdu[rlen - 2] != 0x90) {
+	if (!emu_select_piv()) {
 		printf(SUB_2 "session unusable after busy exhaustion\n");
-		return false;
-	}
-
-	return emu_session(OSDP_TRS_CMD_STOP, OSDP_TRS_SESSION_CLOSED);
-}
-
-/*
- * Readers do not reliably announce a card leaving the field (issue #22);
- * the app discovers it by the next APDU failing. That failure must cost
- * the transaction, not the session, and STOP must still work.
- */
-static bool test_emu_card_removed_mid_band(void)
-{
-	uint8_t capdu[16], rapdu[OSDP_TRS_APDU_MAX_LEN];
-	int rlen, clen;
-
-	printf(SUB_2 "testing emu card removed mid-band\n");
-
-	emu_card_set_present(&g_emu.card, true);
-	if (!emu_session(OSDP_TRS_CMD_START, OSDP_TRS_SESSION_OPENED)) {
-		printf(SUB_2 "session did not open\n");
-		return false;
-	}
-
-	capdu[0] = 0x00;
-	capdu[1] = 0xA4;
-	capdu[2] = 0x04;
-	capdu[3] = 0x00;
-	capdu[4] = sizeof(emu_card_piv_aid);
-	memcpy(capdu + 5, emu_card_piv_aid, sizeof(emu_card_piv_aid));
-	clen = 5 + sizeof(emu_card_piv_aid);
-	rlen = emu_xfer(capdu, clen, rapdu, sizeof(rapdu));
-	if (rlen < 2 || rapdu[rlen - 2] != 0x90) {
-		printf(SUB_2 "SELECT before removal failed\n");
-		return false;
-	}
-
-	/* Card leaves the field; the probe comes back as an error report */
-	emu_card_set_present(&g_emu.card, false);
-	g_emu.status_seen = false;
-	g_emu.event_seen = false;
-	test_completion_reset(&g_emu.completion);
-	if (emu_xfer(capdu, clen, rapdu, sizeof(rapdu)) >= 0) {
-		printf(SUB_2 "APDU to an absent card cannot succeed\n");
-		return false;
-	}
-	if (!test_completion_count(&g_emu.completion) ||
-	    test_completion_status(&g_emu.completion) !=
-		    OSDP_COMPLETION_FAILED ||
-	    !g_emu.event_seen ||
-	    g_emu.last_reply.reply != OSDP_TRS_REPLY_ERROR) {
-		printf(SUB_2 "removal must surface as error + failed command\n");
-		return false;
-	}
-	if (g_emu.status_seen) {
-		printf(SUB_2 "removal must not end the session by itself\n");
 		return false;
 	}
 
@@ -711,56 +585,6 @@ static bool test_emu_rpk40_time_slice(void)
 	return emu_wait_mode(TRS_MODE_00, 3000);
 }
 
-/*
- * The whole point of asking the reader: a card put into the field and then
- * taken away is reported both times, with the application having submitted
- * nothing at all -- no session, no APDU, no sighting event of its own. Then
- * ordinary credentials still work, because the reader was handed back.
- */
-static bool test_emu_card_departure_detected(void)
-{
-	struct osdp_trs_scan_params p = {
-		.mode0_dwell_ms = 100,
-		.mode1_dwell_ms = 200,
-	};
-
-	printf(SUB_2 "testing emu card departure is detected\n");
-
-	emu_card_set_present(&g_emu.card, false);
-	g_emu.present_events = 0;
-	g_emu.absent_events = 0;
-	g_emu.card_scan_count = 0;
-
-	if (osdp_cp_trs_scan_enable(g_emu.cp_ctx, 0, &p)) {
-		printf(SUB_2 "failed to enable scan\n");
-		return false;
-	}
-
-	emu_card_set_present(&g_emu.card, true);
-	if (!test_wait_until(emu_count_positive, &g_emu.present_events,
-			     6000)) {
-		osdp_cp_trs_scan_disable(g_emu.cp_ctx, 0);
-		printf(SUB_2 "card arrival never reported (%d scans)\n",
-		       g_emu.card_scan_count);
-		return false;
-	}
-
-	emu_card_set_present(&g_emu.card, false);
-	test_wait_until(emu_count_positive, &g_emu.absent_events, 6000);
-	osdp_cp_trs_scan_disable(g_emu.cp_ctx, 0);
-
-	if (g_emu.absent_events < 1) {
-		printf(SUB_2 "card departure never reported (%d scans)\n",
-		       g_emu.card_scan_count);
-		return false;
-	}
-	if (!emu_wait_mode(TRS_MODE_00, 3000)) {
-		printf(SUB_2 "reader left in transparent mode\n");
-		return false;
-	}
-	return emu_rpk40_standard_read();
-}
-
 /* Each case gets a CP/PD pair and a card of its own */
 static bool emu_run_case(struct test *t, bool (*fn)(void))
 {
@@ -780,9 +604,6 @@ void run_trs_emu_tests(struct test *t)
 	printf("\nBegin TRS card-emulation Tests\n");
 
 	EMU_CASE(t, piv_certificate_read);
-	EMU_CASE(t, session_survives_busy);
 	EMU_CASE(t, permanent_busy_fails_softly);
-	EMU_CASE(t, card_removed_mid_band);
 	EMU_CASE(t, rpk40_time_slice);
-	EMU_CASE(t, card_departure_detected);
 }

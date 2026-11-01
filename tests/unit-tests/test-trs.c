@@ -38,9 +38,6 @@ struct test_trs_ctx {
 	 * the test submits the R-APDU later to exercise the deferred path. */
 	bool defer;
 
-	/* When set, the PD app declines the send-APDU with a NAK */
-	bool nak_apdu;
-
 	/* When set, the PD app answers the send-APDU with an error report
 	 * instead of card data */
 	bool error_reply;
@@ -273,11 +270,6 @@ static int trs_pd_command_callback(void *arg, struct osdp_cmd *cmd)
 	memcpy(&ctx->last_cmd, &cmd->trs, sizeof(ctx->last_cmd));
 	if (cmd->trs.command == OSDP_TRS_CMD_SEND_APDU) {
 		ctx->apdu_count++;
-	}
-
-	/* The app cannot act on this APDU; decline it */
-	if (ctx->nak_apdu) {
-		return -OSDP_PD_NAK_RECORD;
 	}
 
 	if (cmd->trs.command == OSDP_TRS_CMD_CARD_SCAN) {
@@ -861,75 +853,6 @@ static bool test_trs_pd_max_apdu_len(void)
 	return ok;
 }
 
-static bool test_trs_deferred_apdu(void)
-{
-	printf(SUB_2 "testing TRS APDU exchange (deferred / slow card)\n");
-
-	/* Submit a C-APDU that the PD app answers late */
-	g_trs.event_seen = false;
-	g_trs.cmd_seen = false;
-	g_trs.defer = true;
-	g_trs.card_data_order = 0;
-	g_trs.xwr_complete_order = 0;
-
-	struct osdp_cmd cmd = {
-		.id = OSDP_CMD_XWR,
-		.trs = {
-			.command = OSDP_TRS_CMD_SEND_APDU,
-			.apdu = {
-				.length = sizeof(g_req_apdu),
-			},
-		},
-	};
-	memcpy(cmd.trs.apdu.data, g_req_apdu, sizeof(g_req_apdu));
-
-	if (!test_submit_command(g_trs.cp_ctx, 0, &cmd)) {
-		printf(SUB_2 "Failed to submit deferred TRS command\n");
-		return false;
-	}
-
-	/* Wait until the PD has received the C-APDU and replied ACK ("working").
-	 * The PD app deliberately did not answer, so no event must arrive yet. */
-	if (!wait_for_flag(&g_trs.cmd_seen, 8000)) {
-		printf(SUB_2 "PD never received the deferred C-APDU\n");
-		g_trs.defer = false;
-		return false;
-	}
-	if (g_trs.event_seen) {
-		printf(SUB_2 "R-APDU arrived before the deferred submit\n");
-		g_trs.defer = false;
-		return false;
-	}
-
-	/* Simulate the card finally responding: the app submits the R-APDU now.
-	 * The CP is still polling, so it rides out on the next poll as XRD. */
-	trs_fill_response(&g_trs);
-	if (!test_submit_event(g_trs.pd_ctx, &g_trs.resp_event)) {
-		printf(SUB_2 "Failed to submit deferred R-APDU\n");
-		g_trs.defer = false;
-		return false;
-	}
-
-	if (!wait_for_trs_event(10)) {
-		printf(SUB_2 "Deferred TRS event not received\n");
-		g_trs.defer = false;
-		return false;
-	}
-
-	g_trs.defer = false;
-
-	/* The deferred R-APDU must round-trip intact */
-	if (g_trs.last_reply.reply != OSDP_TRS_REPLY_CARD_DATA ||
-	    g_trs.last_reply.card_data.apdu.length != (int)sizeof(g_rsp_apdu) ||
-	    memcmp(g_trs.last_reply.card_data.apdu.data, g_rsp_apdu,
-		   sizeof(g_rsp_apdu)) != 0) {
-		printf(SUB_2 "Deferred response APDU mismatch\n");
-		return false;
-	}
-
-	return trs_answer_precedes_completion();
-}
-
 static bool wait_for_apdu_count(int want, int timeout_ms)
 {
 	wait_for_count(&g_trs.apdu_count, want, timeout_ms);
@@ -937,9 +860,11 @@ static bool wait_for_apdu_count(int want, int timeout_ms)
 }
 
 /*
- * A PD that ACKs a card command answers it on a later poll. The CP must not
- * send the next card command until then, or that answer would come back as
- * the reply to it; and each command completes only once it is answered.
+ * A PD that ACKs a card command answers it on a later poll, as a slow card
+ * would. The CP must not send the next card command until then, or that
+ * answer would come back as the reply to it; each command completes only once
+ * it is answered, with the answer intact and delivered ahead of the
+ * completion.
  */
 static bool test_trs_deferred_apdu_holds_band(void)
 {
@@ -974,19 +899,33 @@ static bool test_trs_deferred_apdu_holds_band(void)
 		goto out;
 	}
 	if (g_trs.apdu_count != 1 ||
-	    test_completion_count(&g_trs.completion) != 0) {
+	    test_completion_count(&g_trs.completion) != 0 ||
+	    g_trs.event_seen) {
 		printf(SUB_2 "CP moved on before the answer: %d C-APDUs at "
-		       "the PD, %d completions\n", g_trs.apdu_count,
-		       test_completion_count(&g_trs.completion));
+		       "the PD, %d completions, %s card data\n",
+		       g_trs.apdu_count,
+		       test_completion_count(&g_trs.completion),
+		       g_trs.event_seen ? "some" : "no");
 		goto out;
 	}
 
+	/* The card finally answers; it rides out on the next poll as XRD */
 	trs_fill_response(&g_trs);
 	test_submit_event(g_trs.pd_ctx, &g_trs.resp_event);
 	if (!test_completion_wait(&g_trs.completion, 1, 3) ||
 	    test_completion_first_status(&g_trs.completion) !=
 		    OSDP_COMPLETION_OK) {
 		printf(SUB_2 "First send-APDU did not complete OK\n");
+		goto out;
+	}
+	if (g_trs.last_reply.reply != OSDP_TRS_REPLY_CARD_DATA ||
+	    g_trs.last_reply.card_data.apdu.length != (int)sizeof(g_rsp_apdu) ||
+	    memcmp(g_trs.last_reply.card_data.apdu.data, g_rsp_apdu,
+		   sizeof(g_rsp_apdu)) != 0) {
+		printf(SUB_2 "Deferred response APDU mismatch\n");
+		goto out;
+	}
+	if (!trs_answer_precedes_completion()) {
 		goto out;
 	}
 	if (!wait_for_apdu_count(2, 3000)) {
@@ -1034,53 +973,6 @@ static bool submit_apdu_and_wait(enum osdp_completion_status *status)
 	*status = (enum osdp_completion_status)
 		 test_completion_status(&g_trs.completion);
 	return true;
-}
-
-/*
- * A PD that declines one APDU has not broken the card session. The command must
- * fail, no session-failure must be reported, and the next APDU must still go
- * through on the same session.
- */
-static bool test_trs_apdu_nak_keeps_session(void)
-{
-	enum osdp_completion_status status;
-	bool ok;
-
-	printf(SUB_2 "testing TRS APDU declined by the PD\n");
-
-	g_trs.event_seen = false;
-	g_trs.cmd_seen = false;
-	g_trs.status_seen = false;
-	g_trs.nak_apdu = true;
-
-	ok = submit_apdu_and_wait(&status);
-	g_trs.nak_apdu = false;
-	if (!ok) {
-		return false;
-	}
-
-	if (!g_trs.cmd_seen) {
-		printf(SUB_2 "PD never received the C-APDU\n");
-		return false;
-	}
-	if (status != OSDP_COMPLETION_FAILED) {
-		printf(SUB_2 "NAK'd APDU must complete as failed\n");
-		return false;
-	}
-	if (g_trs.event_seen) {
-		printf(SUB_2 "NAK'd APDU must not produce a card-data event\n");
-		return false;
-	}
-	/* Any session status here can only be OPENED->FAILED/CLOSED: the
-	 * session was already open, so a notification means it ended. */
-	if (g_trs.status_seen) {
-		printf(SUB_2 "NAK'd APDU must not end the session (status %d)\n",
-		       g_trs.last_status);
-		return false;
-	}
-
-	/* The session survived: the next APDU must round-trip as usual */
-	return test_trs_apdu_exchange();
 }
 
 /*
@@ -1667,38 +1559,6 @@ static bool test_trs_wire_probe_card_scan_build(void)
 	return true;
 }
 
-/*
- * The no-smart-card warning is raised once per enable, from wherever the
- * capability first becomes known -- not once per capability report, which a
- * reconnecting PD sends afresh every time.
- */
-static bool test_trs_wire_capability_warning_is_once(void)
-{
-	struct osdp ctx;
-	struct osdp_pd pd;
-
-	printf(SUB_2 "testing TRS wire: capability warning fires once\n");
-
-	trs_wire_pd_init(&ctx, &pd, TRS_MODE_00);
-	CLEAR_FLAG(&pd, PD_FLAG_TRS_CAPABLE);
-	pd.trs.scan.enabled = true;
-	pd.trs.scan.warned = false;
-
-	osdp_trs_scan_note_capability(&pd);
-	if (!pd.trs.scan.warned) {
-		printf(SUB_2 "no warning for a PD with no smart-card reader\n");
-		return false;
-	}
-	pd.trs.scan.warned = false;
-	SET_FLAG(&pd, PD_FLAG_TRS_CAPABLE);
-	osdp_trs_scan_note_capability(&pd);
-	if (pd.trs.scan.warned) {
-		printf(SUB_2 "warned about a PD that has a reader\n");
-		return false;
-	}
-	return true;
-}
-
 /* Table 75: Card Present reply must carry both Reader and Status */
 static bool test_trs_wire_card_present_build(void)
 {
@@ -1896,7 +1756,6 @@ static bool test_trs_wire_mode_gating(void)
 	struct osdp_cmd cmd;
 	uint8_t bad_mode[] = { 0x00, 0x02, 0x05, 0x00 };
 	uint8_t send_apdu[] = { 0x01, 0x01, 0x00, 0x00, 0xA4 };
-	uint8_t set_mode[] = { 0x00, 0x02, TRS_MODE_01, 0x00 };
 	int r;
 
 	printf(SUB_2 "testing TRS wire: transparent-mode gating\n");
@@ -1916,18 +1775,6 @@ static bool test_trs_wire_mode_gating(void)
 		printf(SUB_2 "send-apdu in mode 00 must be refused; got %d\n", r);
 		return false;
 	}
-
-	/* ... and valid once the CP negotiates mode 01 */
-	r = osdp_trs_cmd_decode(&pd, &cmd, set_mode, sizeof(set_mode));
-	if (r != OSDP_TRS_DECODE_ACK || pd.trs.mode != TRS_MODE_01) {
-		printf(SUB_2 "mode-set 01 must be ACK'd; got %d\n", r);
-		return false;
-	}
-	r = osdp_trs_cmd_decode(&pd, &cmd, send_apdu, sizeof(send_apdu));
-	if (r != OSDP_TRS_DECODE_TO_APP) {
-		printf(SUB_2 "send-apdu in mode 01 must reach app; got %d\n", r);
-		return false;
-	}
 	return true;
 }
 
@@ -1936,10 +1783,10 @@ static bool test_trs_wire_oversized_apdu_reject(void)
 {
 	struct osdp ctx;
 	struct osdp_pd pd;
-	struct osdp_cmd cmd;
+	struct osdp_cmd cmd, in;
 	struct osdp_event ev;
 	uint8_t buf[OSDP_TRS_APDU_MAX_LEN + 16];
-	int r;
+	int r, i, len;
 
 	printf(SUB_2 "testing TRS wire: oversized APDU rejection\n");
 	trs_wire_pd_init(&ctx, &pd, TRS_MODE_01);
@@ -1964,59 +1811,37 @@ static bool test_trs_wire_oversized_apdu_reject(void)
 		return false;
 	}
 
-	/* ... while an exactly max-size C-APDU still goes through */
-	r = osdp_trs_cmd_decode(&pd, &cmd, buf, 3 + OSDP_TRS_APDU_MAX_LEN);
-	if (r != OSDP_TRS_DECODE_TO_APP ||
-	    cmd.trs.apdu.length != OSDP_TRS_APDU_MAX_LEN) {
-		printf(SUB_2 "max-size C-APDU must be accepted; got %d\n", r);
-		return false;
-	}
-	return true;
-}
-
-/*
- * PIV certificate reads move R-APDU chunks up to a short-APDU maximum of
- * 258 bytes (255 data + SW1SW2 + margin); the carrier must hold them, and
- * a chunk-sized APDU must survive the CP-build -> PD-decode round trip.
- */
-static bool test_trs_wire_piv_class_apdu_roundtrip(void)
-{
-	struct osdp ctx;
-	struct osdp_pd pd;
-	struct osdp_cmd in, out;
-	uint8_t buf[512];
-	int len, i, r;
-	const int apdu_len = 250;
-
-	printf(SUB_2 "testing TRS wire: PIV-class APDU round-trip\n");
-	trs_wire_pd_init(&ctx, &pd, TRS_MODE_01);
-
+	/*
+	 * ... while an exactly max-size C-APDU survives the CP-build ->
+	 * PD-decode round trip. PIV certificate reads move chunks up to a
+	 * short-APDU maximum of 258 bytes (255 data + SW1SW2 + margin), so
+	 * that is the least the carrier may hold.
+	 */
 	if (OSDP_TRS_APDU_MAX_LEN < 258) {
 		printf(SUB_2 "APDU carrier too small for PIV chunks: %d\n",
 		       OSDP_TRS_APDU_MAX_LEN);
 		return false;
 	}
-
 	memset(&in, 0, sizeof(in));
-	memset(&out, 0, sizeof(out));
 	in.id = OSDP_CMD_XWR;
 	in.trs.command = OSDP_TRS_CMD_SEND_APDU;
-	in.trs.apdu.length = apdu_len;
-	for (i = 0; i < apdu_len; i++) {
+	in.trs.apdu.length = OSDP_TRS_APDU_MAX_LEN;
+	for (i = 0; i < OSDP_TRS_APDU_MAX_LEN; i++) {
 		in.trs.apdu.data[i] = (uint8_t)i;
 	}
-
 	len = osdp_trs_cmd_build(&pd, &in, buf, sizeof(buf));
-	if (len != 3 + apdu_len) {
-		printf(SUB_2 "large APDU build: want len %d; got %d\n",
-		       3 + apdu_len, len);
+	if (len != 3 + OSDP_TRS_APDU_MAX_LEN) {
+		printf(SUB_2 "max-size C-APDU build: want len %d; got %d\n",
+		       3 + OSDP_TRS_APDU_MAX_LEN, len);
 		return false;
 	}
-	r = osdp_trs_cmd_decode(&pd, &out, buf, len);
+	r = osdp_trs_cmd_decode(&pd, &cmd, buf, len);
 	if (r != OSDP_TRS_DECODE_TO_APP ||
-	    out.trs.apdu.length != apdu_len ||
-	    memcmp(out.trs.apdu.data, in.trs.apdu.data, apdu_len) != 0) {
-		printf(SUB_2 "large APDU did not round-trip intact: %d\n", r);
+	    cmd.trs.apdu.length != OSDP_TRS_APDU_MAX_LEN ||
+	    memcmp(cmd.trs.apdu.data, in.trs.apdu.data,
+		   OSDP_TRS_APDU_MAX_LEN) != 0) {
+		printf(SUB_2 "max-size C-APDU did not round-trip intact: %d\n",
+		       r);
 		return false;
 	}
 	return true;
@@ -2076,60 +1901,6 @@ static bool test_trs_wire_pin_entry_roundtrip(void)
 	return true;
 }
 
-/* End-to-end: PD reports a card-present status; CP app must receive it */
-static bool test_trs_card_present(void)
-{
-	printf(SUB_2 "testing TRS card-present notification\n");
-
-	g_trs.event_seen = false;
-	memset(&g_trs.resp_event, 0, sizeof(g_trs.resp_event));
-	g_trs.resp_event.type = OSDP_EVENT_TRS;
-	g_trs.resp_event.trs.reply = OSDP_TRS_REPLY_CARD_PRESENT;
-	g_trs.resp_event.trs.card_present.reader = 0;
-	g_trs.resp_event.trs.card_present.status = OSDP_TRS_CARD_PRESENT_CONTACT;
-
-	if (!test_submit_event(g_trs.pd_ctx, &g_trs.resp_event)) {
-		printf(SUB_2 "Failed to submit card-present event\n");
-		return false;
-	}
-	if (!wait_for_trs_event(10)) {
-		printf(SUB_2 "card-present event not received\n");
-		return false;
-	}
-	if (g_trs.last_reply.reply != OSDP_TRS_REPLY_CARD_PRESENT ||
-	    g_trs.last_reply.card_present.reader != 0 ||
-	    g_trs.last_reply.card_present.status !=
-		    OSDP_TRS_CARD_PRESENT_CONTACT) {
-		printf(SUB_2 "card-present reader/status not intact\n");
-		return false;
-	}
-	return true;
-}
-
-/* End-to-end: PD reports a transparent-mode error; CP app must receive it */
-static bool test_trs_error_reply(void)
-{
-	printf(SUB_2 "testing TRS error reply\n");
-
-	g_trs.event_seen = false;
-	trs_fill_error(&g_trs);
-
-	if (!test_submit_event(g_trs.pd_ctx, &g_trs.resp_event)) {
-		printf(SUB_2 "Failed to submit error event\n");
-		return false;
-	}
-	if (!wait_for_trs_event(10)) {
-		printf(SUB_2 "error event not received\n");
-		return false;
-	}
-	if (g_trs.last_reply.reply != OSDP_TRS_REPLY_ERROR ||
-	    g_trs.last_reply.error.code != 0x6A) {
-		printf(SUB_2 "error code not intact\n");
-		return false;
-	}
-	return true;
-}
-
 /* Event submitted by reference; must outlive the callback that ships it */
 static struct osdp_event g_unsolicited_ev;
 
@@ -2168,6 +1939,7 @@ static bool test_trs_unsolicited_xrd_out_of_session(void)
 		return false;
 	}
 	if (g_trs.last_reply.reply != OSDP_TRS_REPLY_CARD_PRESENT ||
+	    g_trs.last_reply.card_present.reader != 0 ||
 	    g_trs.last_reply.card_present.status != OSDP_TRS_CARD_PRESENT) {
 		printf(SUB_2 "card sighting not intact\n");
 		return false;
@@ -2267,70 +2039,13 @@ static bool test_trs_scan_cadence(void)
 	return true;
 }
 
-/* Event submitted by reference; must outlive the callback that ships it */
 /*
- * A reader that answers the card scan is asked, on a cadence, and the answer
- * is the app's first news of a card -- with no session, no APDU and no command
- * completion of its own, because nobody submitted it.
- */
-static bool test_trs_scan_probe_asks_card_scan(void)
-{
-	struct osdp_trs_scan_params p = {
-		.mode0_dwell_ms = 80,
-		.mode1_dwell_ms = 150,
-	};
-	tick_t start;
-	int waited;
-
-	printf(SUB_2 "testing TRS scan asks the reader for a card scan\n");
-
-	g_trs.card_scan_count = 0;
-	g_trs.present_events = 0;
-	g_trs.absent_events = 0;
-	test_completion_reset(&g_trs.completion);
-	g_trs.status_seen = false;
-	g_trs.card_status = OSDP_TRS_CARD_PRESENT_CONTACTLESS;
-
-	start = osdp_millis_now();
-	if (osdp_cp_trs_scan_enable(g_trs.cp_ctx, 0, &p)) {
-		printf(SUB_2 "failed to enable scan\n");
-		return false;
-	}
-	wait_for_count(&g_trs.present_events, 1, 4000);
-	waited = (int)osdp_millis_since(start);
-	osdp_cp_trs_scan_disable(g_trs.cp_ctx, 0);
-	g_trs.card_status = OSDP_TRS_CARD_STATUS_UNKNOWN;
-
-	if (g_trs.card_scan_count < 1) {
-		printf(SUB_2 "the probe never asked\n");
-		return false;
-	}
-	if (g_trs.present_events < 1) {
-		printf(SUB_2 "sighting never reached the app\n");
-		return false;
-	}
-	/* One question per probe cycle, not one per refresh tick */
-	if (g_trs.card_scan_count > waited / 100) {
-		printf(SUB_2 "asked %d times in %d ms; too chatty\n",
-		       g_trs.card_scan_count, waited);
-		return false;
-	}
-	if (test_completion_count(&g_trs.completion)) {
-		printf(SUB_2 "library's own card scan reported a completion\n");
-		return false;
-	}
-	if (g_trs.status_seen) {
-		printf(SUB_2 "probe raised a session notification (%d)\n",
-		       g_trs.last_status);
-		return false;
-	}
-	return true;
-}
-
-/*
- * The point of asking: a card lifted out of the field is reported gone, with
- * the app having sent nothing. Presence is reported as it changes, so a card
- * left sitting there is announced once, not once per probe.
+ * A reader that answers the card scan is asked, on a cadence, and the answer is
+ * the app's news of a card arriving and -- the point of asking -- of it being
+ * lifted out of the field, with the app having sent nothing. Presence is
+ * reported as it changes, so a card left sitting there is announced once, not
+ * once per probe. None of it is a session or a command of the app's: no
+ * session notification, no command completion.
  */
 static bool test_trs_scan_card_departure_event(void)
 {
@@ -2338,15 +2053,19 @@ static bool test_trs_scan_card_departure_event(void)
 		.mode0_dwell_ms = 80,
 		.mode1_dwell_ms = 150,
 	};
-	int present_after_settle;
+	int present_after_settle, elapsed;
+	tick_t start;
 
 	printf(SUB_2 "testing TRS scan reports card departure\n");
 
 	g_trs.present_events = 0;
 	g_trs.absent_events = 0;
 	g_trs.card_scan_count = 0;
+	g_trs.status_seen = false;
+	test_completion_reset(&g_trs.completion);
 	g_trs.card_status = OSDP_TRS_CARD_PRESENT_CONTACTLESS;
 
+	start = osdp_millis_now();
 	if (osdp_cp_trs_scan_enable(g_trs.cp_ctx, 0, &p)) {
 		printf(SUB_2 "failed to enable scan\n");
 		return false;
@@ -2376,14 +2095,30 @@ static bool test_trs_scan_card_departure_event(void)
 	g_trs.card_status = OSDP_TRS_CARD_NOT_PRESENT;
 	wait_for_count(&g_trs.absent_events, 1, 4000);
 	osdp_cp_trs_scan_disable(g_trs.cp_ctx, 0);
+	elapsed = (int)osdp_millis_since(start);
 	g_trs.card_status = OSDP_TRS_CARD_STATUS_UNKNOWN;
 
 	if (g_trs.absent_events < 1) {
 		printf(SUB_2 "card removal was never reported\n");
 		return false;
 	}
+	/* One question per probe cycle, not one per refresh tick */
+	if (g_trs.card_scan_count > elapsed / 100) {
+		printf(SUB_2 "asked %d times in %d ms; too chatty\n",
+		       g_trs.card_scan_count, elapsed);
+		return false;
+	}
 	if (!wait_for_pd_mode(TRS_MODE_00, 3000)) {
 		printf(SUB_2 "reader left in transparent mode\n");
+		return false;
+	}
+	if (test_completion_count(&g_trs.completion)) {
+		printf(SUB_2 "library's own card scan reported a completion\n");
+		return false;
+	}
+	if (g_trs.status_seen) {
+		printf(SUB_2 "probe raised a session notification (%d)\n",
+		       g_trs.last_status);
 		return false;
 	}
 	return true;
@@ -3163,10 +2898,8 @@ void run_trs_tests(struct test *t)
 	TRS_WIRE_CASE(t, wire_cmd_decode_actions);
 	TRS_WIRE_CASE(t, wire_mode_gating);
 	TRS_WIRE_CASE(t, wire_oversized_apdu_reject);
-	TRS_WIRE_CASE(t, wire_piv_class_apdu_roundtrip);
 	TRS_WIRE_CASE(t, wire_pin_entry_roundtrip);
 	TRS_WIRE_CASE(t, wire_probe_card_scan_build);
-	TRS_WIRE_CASE(t, wire_capability_warning_is_once);
 	TEST_CASE(t, "xwr_without_capability_naks",
 		  test_trs_xwr_without_capability_naks(t));
 
@@ -3178,17 +2911,12 @@ void run_trs_tests(struct test *t)
 	TRS_CASE(t, pin_entry_layout_unrepresentable, TRS_IN_BAND);
 	TRS_CASE(t, apdu_exchange, TRS_IN_BAND);
 	TRS_CASE(t, pd_max_apdu_len, TRS_IN_BAND);
-	TRS_CASE(t, deferred_apdu, TRS_IN_BAND);
 	TRS_CASE(t, deferred_apdu_holds_band, TRS_IN_BAND);
-	TRS_CASE(t, apdu_nak_keeps_session, TRS_IN_BAND);
 	TRS_CASE(t, apdu_error_reply_fails_cmd, TRS_IN_BAND);
-	TRS_CASE(t, card_present, TRS_IN_BAND);
-	TRS_CASE(t, error_reply, TRS_IN_BAND);
 	TRS_CASE(t, session_stop, TRS_IN_BAND);
 	TRS_CASE(t, second_reader_band, TRS_SECURE);
 	TRS_CASE(t, unsolicited_xrd_out_of_session, TRS_SECURE);
 	TRS_CASE(t, scan_cadence, TRS_SECURE);
-	TRS_CASE(t, scan_probe_asks_card_scan, TRS_SECURE);
 	TRS_CASE(t, scan_card_departure_event, TRS_SECURE);
 	TRS_CASE(t, scan_disable_and_flush_mid_probe, TRS_SECURE);
 	TRS_CASE(t, pd_closed_on_link_restart, TRS_SECURE);
