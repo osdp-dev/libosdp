@@ -283,23 +283,34 @@ static void reshape_from_flush_cb(void *arg, int pd, struct osdp_cmd *cmd,
 /*
  * A flush runs completions while it walks the PD; growing the PD array or
  * swapping the file ops from one of them would pull the PD out from under it.
- * Expects g_comp.cp online with its refresh runner stopped.
+ *
+ * Both calls are also refused once a context has been refreshed, so this CP
+ * is never refreshed: only the in-callback guard stands between the
+ * completion and the reshape. The PD is marked online by hand because
+ * submit refuses an offline PD.
  */
-static bool test_reshape_from_flush_completion_is_refused(void)
+static bool test_reshape_from_flush_completion_is_refused(struct test *t)
 {
 	struct osdp_cmd cmd = make_led_cmd();
+	osdp_t *cp, *pd;
 	bool result = false;
 
-	g_flush_reshape.ctx = g_comp.cp;
+	if (test_setup_devices(t, &cp, &pd)) {
+		printf(SUB_2 "reshape: device setup failed\n");
+		return false;
+	}
+	osdp_cp_set_command_completion_callback(cp, reshape_from_flush_cb,
+						&g_flush_reshape);
+	osdp_to_pd(cp, 0)->state = OSDP_CP_STATE_ONLINE;
+	g_flush_reshape.ctx = cp;
 	g_flush_reshape.add_pd_rc = 1;
 	g_flush_reshape.register_rc = 1;
-	use_cp_completion(reshape_from_flush_cb, &g_flush_reshape);
-	if (!test_submit_command(g_comp.cp, 0, &cmd) ||
-	    !test_submit_command(g_comp.cp, 0, &cmd)) {
+	if (!test_submit_command(cp, 0, &cmd) ||
+	    !test_submit_command(cp, 0, &cmd)) {
 		printf(SUB_2 "reshape: submit rejected\n");
 		goto out;
 	}
-	if (osdp_cp_flush_commands(g_comp.cp, 0) != 2) {
+	if (osdp_cp_flush_commands(cp, 0) != 2) {
 		printf(SUB_2 "reshape: flush miscounted\n");
 		goto out;
 	}
@@ -311,7 +322,8 @@ static bool test_reshape_from_flush_completion_is_refused(void)
 	}
 	result = true;
 out:
-	use_cp_completion(resubmit_completion_cb, &g_comp);
+	osdp_cp_teardown(cp);
+	osdp_pd_teardown(pd);
 	return result;
 }
 
@@ -326,10 +338,11 @@ static void pd_reshape_from_flush_cb(void *arg, struct osdp_event *ev,
 	test_event_free(ev);
 }
 
-/* Same for a PD: its flush runs completions too. */
-static bool test_pd_reshape_from_flush_completion_is_refused(void)
+/* Same for a PD: its flush runs completions too. Never refreshed, as above. */
+static bool test_pd_reshape_from_flush_completion_is_refused(struct test *t)
 {
 	struct osdp_event ev;
+	osdp_t *cp, *pd;
 	bool result = false;
 
 	memset(&ev, 0, sizeof(ev));
@@ -338,14 +351,22 @@ static bool test_pd_reshape_from_flush_completion_is_refused(void)
 	ev.cardread.format = OSDP_CARD_FMT_RAW_WIEGAND;
 	ev.cardread.length = 16;
 
-	g_flush_reshape.ctx = g_comp.pd;
+	if (test_setup_devices(t, &cp, &pd)) {
+		printf(SUB_2 "pd reshape: device setup failed\n");
+		return false;
+	}
+	osdp_pd_set_event_completion_callback(pd, pd_reshape_from_flush_cb,
+					      &g_flush_reshape);
+	g_flush_reshape.ctx = pd;
 	g_flush_reshape.register_rc = 1;
-	use_pd_completion(pd_reshape_from_flush_cb, &g_flush_reshape);
-	if (!test_submit_event(g_comp.pd, &ev)) {
+	if (!test_submit_event(pd, &ev)) {
 		printf(SUB_2 "pd reshape: submit rejected\n");
 		goto out;
 	}
-	osdp_pd_flush_events(g_comp.pd);
+	if (osdp_pd_flush_events(pd) != 1) {
+		printf(SUB_2 "pd reshape: flush miscounted\n");
+		goto out;
+	}
 	if (g_flush_reshape.register_rc != -1) {
 		printf(SUB_2 "pd reshape: register %d, want -1\n",
 		       g_flush_reshape.register_rc);
@@ -353,7 +374,8 @@ static bool test_pd_reshape_from_flush_completion_is_refused(void)
 	}
 	result = true;
 out:
-	use_pd_completion(pd_resubmit_completion_cb, &g_comp);
+	osdp_cp_teardown(cp);
+	osdp_pd_teardown(pd);
 	return result;
 }
 
@@ -469,22 +491,15 @@ struct nested_ctx {
 	osdp_t *cp;
 	int depth;
 	int max_depth;
-	int register_rc;
-	int add_pd_rc;
+	bool reentered;
 };
 
 static struct nested_ctx g_nested;
 
-static const struct osdp_file_ops g_nested_ops;
-
-/* Channel that, the first time the CP reads it, calls back into the CP. */
+/* Channel that, the first time the CP reads it, refreshes the CP again. */
 static int nested_recv(void *data, uint8_t *buf, int maxlen)
 {
 	struct nested_ctx *c = data;
-	osdp_pd_info_t extra = {
-		.baud_rate = 9600,
-		.address = 102,
-	};
 
 	ARG_UNUSED(buf);
 	ARG_UNUSED(maxlen);
@@ -492,11 +507,9 @@ static int nested_recv(void *data, uint8_t *buf, int maxlen)
 	if (c->depth > c->max_depth) {
 		c->max_depth = c->depth;
 	}
-	if (c->depth == 1 && c->register_rc == 1) {
+	if (c->depth == 1 && !c->reentered) {
+		c->reentered = true;
 		osdp_cp_refresh(c->cp);
-		c->register_rc =
-			osdp_file_register_ops(c->cp, 0, &g_nested_ops);
-		c->add_pd_rc = osdp_cp_add_pd(c->cp, 1, &extra);
 	}
 	c->depth--;
 	return 0;
@@ -509,11 +522,8 @@ static int nested_send(void *data, uint8_t *buf, int len)
 	return len;
 }
 
-/*
- * From inside a callback, a refresh must not recurse and the calls that would
- * reshape the context must fail.
- */
-static bool test_nested_calls_from_a_callback_are_refused(void)
+/* A refresh from inside a channel callback must not recurse. */
+static bool test_nested_refresh_from_a_callback_is_refused(void)
 {
 	struct osdp_channel channel = {
 		.data = &g_nested,
@@ -528,24 +538,22 @@ static bool test_nested_calls_from_a_callback_are_refused(void)
 	int i;
 
 	memset(&g_nested, 0, sizeof(g_nested));
-	g_nested.register_rc = 1;
 	g_nested.cp = osdp_cp_setup(&channel, 1, &info);
 	if (g_nested.cp == NULL) {
 		printf(SUB_2 "nested: setup failed\n");
 		return false;
 	}
-	for (i = 0; i < 1000 && g_nested.register_rc == 1; i++) {
+	for (i = 0; i < 1000 && !g_nested.reentered; i++) {
 		osdp_cp_refresh(g_nested.cp);
 		usleep(1000);
+	}
+	if (!g_nested.reentered) {
+		printf(SUB_2 "nested: channel was never read\n");
+		goto out;
 	}
 	if (g_nested.max_depth != 1) {
 		printf(SUB_2 "nested: refresh recursed to depth %d\n",
 		       g_nested.max_depth);
-		goto out;
-	}
-	if (g_nested.register_rc != -1 || g_nested.add_pd_rc != -1) {
-		printf(SUB_2 "nested: register %d, add_pd %d, want -1\n",
-		       g_nested.register_rc, g_nested.add_pd_rc);
 		goto out;
 	}
 	result = true;
@@ -666,9 +674,9 @@ void run_completion_tests(struct test *t)
 	async_runner_stop(g_comp.pd_runner);
 
 	TEST_CASE(t, "reshape_from_flush_completion_is_refused",
-		  test_reshape_from_flush_completion_is_refused());
+		  test_reshape_from_flush_completion_is_refused(t));
 	TEST_CASE(t, "pd_reshape_from_flush_completion_is_refused",
-		  test_pd_reshape_from_flush_completion_is_refused());
+		  test_pd_reshape_from_flush_completion_is_refused(t));
 
 	/*
 	 * The mock channel is a single shared pair of buffers, not one per
@@ -682,8 +690,8 @@ void run_completion_tests(struct test *t)
 	TEST_CASE(t, "callbacks_are_set_only_before_refresh",
 		  test_callbacks_are_set_only_before_refresh(t));
 #ifndef OPT_OSDP_RX_ZERO_COPY
-	TEST_CASE(t, "nested_calls_from_a_callback_are_refused",
-		  test_nested_calls_from_a_callback_are_refused());
+	TEST_CASE(t, "nested_refresh_from_a_callback_is_refused",
+		  test_nested_refresh_from_a_callback_is_refused());
 #endif
 	goto teardown;
 

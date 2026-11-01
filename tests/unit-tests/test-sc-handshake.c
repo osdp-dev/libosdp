@@ -137,6 +137,20 @@ static uint8_t cp_sc_mask(void)
 	return mask;
 }
 
+/*
+ * The CP has acted on a rewritten RMAC_I once it either brings the PD online
+ * (in plaintext, after a forged MAC) or starts another handshake (after a
+ * rejected status); either way an SC it wrongly accepted would be up by now.
+ */
+static bool handshake_outcome_known(void *arg)
+{
+	uint8_t mask = 0;
+
+	ARG_UNUSED(arg);
+	osdp_get_status_mask(g_hs.cp_ctx, &mask);
+	return (mask & 1) || atomic_load(&g_hs.rmac_i_rewrites) >= 2;
+}
+
 static bool sc_stays_down_for(struct test *t, enum rmac_i_rewrite mode,
 			      const char *what)
 {
@@ -148,7 +162,11 @@ static bool sc_stays_down_for(struct test *t, enum rmac_i_rewrite mode,
 		hs_teardown();
 		return false;
 	}
-	sleep(4);
+	if (!test_wait_until(handshake_outcome_known, NULL, 10 * 1000)) {
+		hs_teardown();
+		printf("handshake never concluded!\n");
+		return false;
+	}
 	/* With no RMAC_I rewritten, SC staying down proves nothing. */
 	rewrites = atomic_load(&g_hs.rmac_i_rewrites);
 	if (rewrites == 0)

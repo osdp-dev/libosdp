@@ -1085,7 +1085,7 @@ int test_phy_decode_packet_invalid_checksum(struct osdp *ctx)
 #ifndef OPT_OSDP_SKIP_MARK_BYTE
 		0xff,
 #endif
-		0x53, 0xe5, 0x08, 0x00, 0x04, 0x40, 0x00, 0x00
+		0x53, 0xe5, 0x07, 0x00, 0x01, 0x40, 0x00
 	};
 
 	printf(SUB_1 "Testing phy_decode_packet with invalid checksum -- ");
@@ -1195,9 +1195,10 @@ int test_phy_decode_packet_invalid_som(struct osdp *ctx)
 	printf(SUB_1 "Testing phy_decode_packet with invalid SOM -- ");
 	osdp_rb_push_buf(p->rx_rb, packet, sizeof(packet));
 	err = osdp_phy_check_packet(p);
-	/* Invalid SOM can trigger various errors: format, wait, or no_data */
-	if (err != OSDP_ERR_PKT_FMT && err != OSDP_ERR_PKT_WAIT && err != OSDP_ERR_PKT_NO_DATA) {
-		printf("failed! Expected format/wait/no_data error for invalid SOM, got %d\n", err);
+	/* With no SOM anywhere, every byte is line noise and gets dropped */
+	if (err != OSDP_ERR_PKT_NO_DATA || p->packet_buf_len != 0) {
+		printf("failed! got %d with %lu bytes buffered\n", err,
+		       (unsigned long)p->packet_buf_len);
 		return -1;
 	}
 	printf("success!\n");
@@ -1317,15 +1318,15 @@ int test_phy_packet_too_small(struct osdp *ctx)
 #ifndef OPT_OSDP_SKIP_MARK_BYTE
 		0xff,
 #endif
-		0x53, 0xe5, 0x06, 0x00, 0x04, 0x40, 0xe7, 0xa1
+		0x53, 0xe5, 0x05, 0x00, 0x04, 0x40, 0xe7, 0xa1
 	};
 
 	printf(SUB_1 "Testing phy_decode_packet with undersized length -- ");
 	osdp_rb_push_buf(p->rx_rb, packet, sizeof(packet));
 	err = osdp_phy_check_packet(p);
-	/* Undersized packets might trigger wait for re-scan or format error */
-	if (err != OSDP_ERR_PKT_WAIT && err != OSDP_ERR_PKT_FMT) {
-		printf("failed! Expected wait or format error for undersized packet, got %d\n", err);
+	/* A bad header after a SOM is re-scanned for a later SOM, not failed */
+	if (err != OSDP_ERR_PKT_WAIT) {
+		printf("failed! Expected wait for re-scan, got %d\n", err);
 		return -1;
 	}
 	printf("success!\n");

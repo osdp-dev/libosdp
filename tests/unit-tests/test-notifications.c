@@ -275,39 +275,6 @@ static bool test_pd_online_and_sc_notifications(void)
 	return true;
 }
 
-static bool test_pd_offline_on_cp_silence(void)
-{
-	int deadline_ms;
-
-	printf(SUB_2 "PD transitions offline when CP stops talking\n");
-
-	/* Reset PD_STATUS record so we only observe the offline edge. */
-	pthread_mutex_lock(&g_nx.lock);
-	memset(&g_nx.pd_pd_status, 0, sizeof(g_nx.pd_pd_status));
-	pthread_mutex_unlock(&g_nx.lock);
-
-	/* Silence the CP side. PD should trip the 1.5s timeout (the test
-	 * build overrides OSDP_PD_ONLINE_TOUT_MS) and post an offline
-	 * notification through its command callback. */
-	async_runner_stop(g_nx.cp_runner);
-	g_nx.cp_runner = -1;
-
-	/* 1500ms timeout + a 2500ms window for the PD refresh to run
-	 * and the workqueue to schedule. */
-	deadline_ms = 4000;
-	if (!wait_for_notif(&g_nx.pd_pd_status, deadline_ms)) {
-		printf(SUB_2 "no offline notification within %dms\n",
-		       deadline_ms);
-		return false;
-	}
-	if (g_nx.pd_pd_status.last_arg0 != 0) {
-		printf(SUB_2 "PD_STATUS arg0=%d, want 0 (offline)\n",
-		       g_nx.pd_pd_status.last_arg0);
-		return false;
-	}
-	return true;
-}
-
 static bool test_cp_file_tx_abort_on_disable(void)
 {
 	struct osdp_cmd cmd = {
@@ -395,7 +362,23 @@ err:
 	return false;
 }
 
-static bool test_pd_file_tx_abort_on_offline(void)
+static bool pd_saw_offline_and_mp_done(void *arg)
+{
+	bool hit;
+
+	ARG_UNUSED(arg);
+	pthread_mutex_lock(&g_nx.lock);
+	hit = g_nx.pd_pd_status.count > 0 && g_nx.pd_file_tx_done.count > 0;
+	pthread_mutex_unlock(&g_nx.lock);
+	return hit;
+}
+
+/*
+ * A CP that goes silent mid-transfer takes the PD offline once its online
+ * timeout (1.5s in the test build) trips; the PD must say so and abort the
+ * half-received file rather than leave it open.
+ */
+static bool test_pd_offline_aborts_file_tx(void)
 {
 	struct osdp_cmd cmd = {
 		.id = OSDP_CMD_FILE_TX,
@@ -411,10 +394,10 @@ static bool test_pd_file_tx_abort_on_offline(void)
 		.open = notif_fops_open, .read = notif_fops_read,
 		.write = notif_fops_write, .close = notif_fops_close,
 	};
-	int rc, elapsed;
+	int rc;
 	uint32_t size, offset;
 
-	printf(SUB_2 "PD aborts in-flight transfer when CP goes silent\n");
+	printf(SUB_2 "PD goes offline and aborts its transfer on CP silence\n");
 
 	g_nx.sender.is_cp = true;
 	g_nx.receiver.is_cp = false;
@@ -446,17 +429,28 @@ static bool test_pd_file_tx_abort_on_offline(void)
 		goto err;
 	}
 
+	pthread_mutex_lock(&g_nx.lock);
+	memset(&g_nx.pd_pd_status, 0, sizeof(g_nx.pd_pd_status));
+	memset(&g_nx.pd_file_tx_done, 0, sizeof(g_nx.pd_file_tx_done));
+	pthread_mutex_unlock(&g_nx.lock);
+
 	async_runner_stop(g_nx.cp_runner);
 	g_nx.cp_runner = -1;
 
-	/* Wait for the PD to trip its online timeout; it should then call
-	 * osdp_file_tx_abort() on its own transfer. */
-	elapsed = 0;
-	while (elapsed < 5000) {
-		if (osdp_get_file_tx_status(g_nx.pd_ctx, 0, &size, &offset) == -1)
-			break;
-		usleep(50 * 1000);
-		elapsed += 50;
+	if (!test_wait_until(pd_saw_offline_and_mp_done, NULL, 4000)) {
+		printf(SUB_2 "pd-file-tx: offline %d, MP_DONE %d\n",
+		       g_nx.pd_pd_status.count, g_nx.pd_file_tx_done.count);
+		goto err;
+	}
+	if (g_nx.pd_pd_status.last_arg0 != 0) {
+		printf(SUB_2 "pd-file-tx: PD_STATUS arg0=%d, want 0\n",
+		       g_nx.pd_pd_status.last_arg0);
+		goto err;
+	}
+	if (g_nx.pd_file_tx_done.last_arg1 != OSDP_MP_OUTCOME_ABORTED) {
+		printf(SUB_2 "pd-file-tx: outcome=%d, want ABORTED=%d\n",
+		       g_nx.pd_file_tx_done.last_arg1, OSDP_MP_OUTCOME_ABORTED);
+		goto err;
 	}
 	if (osdp_get_file_tx_status(g_nx.pd_ctx, 0, &size, &offset) != -1) {
 		printf(SUB_2 "pd-file-tx: PD still reports transfer active\n");
@@ -582,8 +576,6 @@ void run_notification_tests(struct test *t)
 	}
 	TEST_CASE(t, "pd_online_and_sc_notifications",
 		  test_pd_online_and_sc_notifications());
-	TEST_CASE(t, "pd_offline_on_cp_silence",
-		  test_pd_offline_on_cp_silence());
 	teardown_env();
 
 	/* Group B: file_tx notifications (separate envs so each test
@@ -592,6 +584,6 @@ void run_notification_tests(struct test *t)
 		  test_file_tx_notifies_both_roles());
 	TEST_CASE(t, "cp_file_tx_abort_on_disable",
 		  test_cp_file_tx_abort_on_disable());
-	TEST_CASE(t, "pd_file_tx_abort_on_offline",
-		  test_pd_file_tx_abort_on_offline());
+	TEST_CASE(t, "pd_offline_aborts_file_tx",
+		  test_pd_offline_aborts_file_tx());
 }

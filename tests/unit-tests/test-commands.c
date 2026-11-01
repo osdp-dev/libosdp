@@ -358,6 +358,25 @@ static bool wait_for_bio_event(int expected_event_type, int timeout_sec)
 	return false;
 }
 
+static bool wait_for_cmd_completion(int expected_cmd, int expected_status,
+				    int timeout_sec)
+{
+	int rc = 0; /* elapsed time in ms */
+	int timeout_ms = timeout_sec * 1000;
+	while (rc < timeout_ms) {
+		if (test_completion_count(&g_test_ctx.completion) &&
+		    test_completion_id(&g_test_ctx.completion) ==
+			    expected_cmd &&
+		    test_completion_status(&g_test_ctx.completion) ==
+			    expected_status) {
+			return true;
+		}
+		usleep(20 * 1000);
+		rc += 20;
+	}
+	return false;
+}
+
 /*
  * Wait for the PD to (re)establish the online + secure-channel state. Needed
  * after COMSET/KEYSET, which tear down the session; without this the next
@@ -480,14 +499,6 @@ static bool test_bio_commands(void)
 				   "BIOMATCH", true);
 
 	return result;
-}
-
-static bool cp_sees_pd_online(void)
-{
-	uint8_t status = 0;
-
-	osdp_get_status_mask(g_test_ctx.cp_ctx, &status);
-	return (status & 1U) != 0;
 }
 
 static bool test_buzzer_command()
@@ -952,6 +963,26 @@ static bool test_mfg_command_with_reply()
 	return true;
 }
 
+/*
+ * The CP completes a failed command before it decides whether the failure
+ * takes the PD offline, so the status mask read straight after a FAILED
+ * completion can predate that decision. A command sent after it completes
+ * only if the link survived.
+ */
+static bool pd_still_takes_commands(void)
+{
+	struct osdp_cmd cmd = {
+		.id = OSDP_CMD_BUZZER,
+		.buzzer = { .control_code = 1, .on_count = 1, .rep_count = 1 },
+	};
+
+	test_completion_reset(&g_test_ctx.completion);
+	if (!test_submit_command(g_test_ctx.cp_ctx, 0, &cmd)) {
+		return false;
+	}
+	return wait_for_cmd_completion(OSDP_CMD_BUZZER, OSDP_COMPLETION_OK, 5);
+}
+
 static bool test_mfg_command_nack_soft_fail()
 {
 	printf(SUB_2 "testing manufacturer command NAK soft-fail\n");
@@ -973,14 +1004,13 @@ static bool test_mfg_command_nack_soft_fail()
 		return false;
 	}
 
-	if (!wait_for_command(OSDP_CMD_MFG, 5)) {
-		printf(SUB_2 "MFG command not received by PD (NAK path)\n");
+	if (!wait_for_cmd_completion(OSDP_CMD_MFG, OSDP_COMPLETION_FAILED, 5)) {
+		printf(SUB_2 "MFG NAK not reported as FAILED\n");
 		return false;
 	}
 
 	/* NAK on CMD_MFG is a soft failure; PD remains online. */
-	usleep(200 * 1000);
-	if (!cp_sees_pd_online()) {
+	if (!pd_still_takes_commands()) {
 		printf(SUB_2 "PD went offline after MFG NAK\n");
 		return false;
 	}
@@ -1040,25 +1070,6 @@ static bool test_comset_command()
 
 	/* Address change re-establishes the session; wait for it to settle. */
 	return wait_for_pd_online(5);
-}
-
-static bool wait_for_cmd_completion(int expected_cmd, int expected_status,
-				    int timeout_sec)
-{
-	int rc = 0; /* elapsed time in ms */
-	int timeout_ms = timeout_sec * 1000;
-	while (rc < timeout_ms) {
-		if (test_completion_count(&g_test_ctx.completion) &&
-		    test_completion_id(&g_test_ctx.completion) ==
-			    expected_cmd &&
-		    test_completion_status(&g_test_ctx.completion) ==
-			    expected_status) {
-			return true;
-		}
-		usleep(20 * 1000);
-		rc += 20;
-	}
-	return false;
 }
 
 static bool test_keyset_command()
@@ -1213,8 +1224,7 @@ static bool test_mfg_command_inline_reply(int event_type, const char *name,
 			goto out;
 		}
 		/* An error reply is a soft failure; PD remains online. */
-		usleep(200 * 1000);
-		if (!cp_sees_pd_online()) {
+		if (!pd_still_takes_commands()) {
 			printf(SUB_2 "PD went offline after inline %s\n", name);
 			goto out;
 		}
