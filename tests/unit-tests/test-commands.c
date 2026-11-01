@@ -827,6 +827,65 @@ static bool test_status_reply_selection(struct test *t)
 	return result;
 }
 
+static bool g_tdset_seen;
+
+static int test_tdset_command_callback(void *arg, struct osdp_cmd *cmd)
+{
+	ARG_UNUSED(arg);
+	if (cmd->id == OSDP_CMD_TDSET) {
+		g_tdset_seen = true;
+	}
+	return 0;
+}
+
+/* A PD that does not declare TimeKeeping NAKs osdp_TDSET without asking the
+ * app, as it would any other command it has no capability for. */
+static bool test_tdset_needs_time_keeping(struct test *t)
+{
+	/* osdp_TDSET: 2026-07-17 12:30:45 */
+	uint8_t tdset_cmd[] = { CMD_TDSET, 0xea, 0x07, 7, 17, 12, 30, 45 };
+	osdp_t *cp = NULL, *pd_ctx = NULL;
+	struct osdp_pd *pd;
+	bool result = true;
+
+	printf(SUB_2 "testing osdp_TDSET against the TimeKeeping capability\n");
+
+	if (test_setup_devices(t, &cp, &pd_ctx)) {
+		printf(SUB_2 "Failed to setup devices for osdp_TDSET tests\n");
+		return false;
+	}
+	pd = osdp_to_pd(pd_ctx, 0);
+	osdp_pd_set_command_callback(pd_ctx, test_tdset_command_callback, NULL);
+
+	g_tdset_seen = false;
+	test_pd_decode_command(pd, tdset_cmd, sizeof(tdset_cmd));
+	result &= out_check_reply(pd, REPLY_ACK,
+				  "TimeKeeping declared: osdp_TDSET is ACK'd");
+	if (!g_tdset_seen) {
+		printf(SUB_2 "osdp_TDSET did not reach the app\n");
+		result = false;
+	}
+
+	pd->cap[OSDP_PD_CAP_TIME_KEEPING].compliance_level = 0;
+	g_tdset_seen = false;
+	test_pd_decode_command(pd, tdset_cmd, sizeof(tdset_cmd));
+	result &= out_check_reply(pd, REPLY_NAK,
+				  "no TimeKeeping: osdp_TDSET is NAK'd");
+	if (pd->nak_code != OSDP_PD_NAK_CMD_UNKNOWN) {
+		printf(SUB_2 "NAK code %d, want %d\n", pd->nak_code,
+		       OSDP_PD_NAK_CMD_UNKNOWN);
+		result = false;
+	}
+	if (g_tdset_seen) {
+		printf(SUB_2 "osdp_TDSET reached the app anyway\n");
+		result = false;
+	}
+
+	osdp_cp_teardown(cp);
+	osdp_pd_teardown(pd_ctx);
+	return result;
+}
+
 static bool test_text_command()
 {
 	printf(SUB_2 "testing text command\n");
@@ -1333,6 +1392,46 @@ static bool test_led_unsupported_capability_naks()
 }
 
 /*
+ * A control code is a byte off the wire, so a CP can send one the spec does
+ * not define. The PD NAKs it itself rather than hand the app a code it cannot
+ * name, and the link carries on.
+ */
+static bool test_out_of_spec_control_code_naks()
+{
+	struct osdp_cmd cmd = {
+		.id = OSDP_CMD_OUTPUT,
+		.output = {
+			.output_no = 0,
+			.control_code = 200,
+		},
+	};
+
+	printf(SUB_2 "testing undefined output control code NAKs\n");
+	reset_test_state();
+
+	if (!test_submit_command(g_test_ctx.cp_ctx, 0, &cmd)) {
+		printf(SUB_2 "Failed to send output command\n");
+		return false;
+	}
+	if (!wait_for_cmd_completion(OSDP_CMD_OUTPUT, OSDP_COMPLETION_FAILED,
+				     5)) {
+		printf(SUB_2 "NAK not reported (compl cmd=%d status=%d)\n",
+		       test_completion_id(&g_test_ctx.completion),
+		       test_completion_status(&g_test_ctx.completion));
+		return false;
+	}
+	if (atomic_load(&g_test_ctx.cmd_seen)) {
+		printf(SUB_2 "PD app saw an undefined control code\n");
+		return false;
+	}
+	if (!pd_still_takes_commands()) {
+		printf(SUB_2 "link did not survive the NAK\n");
+		return false;
+	}
+	return true;
+}
+
+/*
  * The completion callback is how command ownership returns to the app, so a
  * submission with none registered must be refused outright rather than
  * silently swallowing the command.
@@ -1402,6 +1501,8 @@ void run_command_tests(struct test *t)
 	 * the shared environment brings up the async runners. */
 	TEST_CASE(t, "output_reply_selection", test_output_reply_selection(t));
 	TEST_CASE(t, "status_reply_selection", test_status_reply_selection(t));
+	TEST_CASE(t, "tdset_needs_time_keeping",
+		  test_tdset_needs_time_keeping(t));
 
 	/* Setup test environment once */
 	if (setup_test_environment(t) != 0) {
@@ -1435,6 +1536,8 @@ void run_command_tests(struct test *t)
 		  test_submit_requires_completion_callback());
 	TEST_CASE(t, "led_unsupported_capability_naks",
 		  test_led_unsupported_capability_naks());
+	TEST_CASE(t, "out_of_spec_control_code_naks",
+		  test_out_of_spec_control_code_naks());
 
 	/* Teardown test environment */
 	teardown_test_environment();

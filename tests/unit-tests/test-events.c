@@ -442,6 +442,83 @@ static bool test_submit_requires_completion_callback()
 	return result;
 }
 
+#define KEYPRESS_ON_READER -1
+
+struct submit_check {
+	const char *what;
+	int status_type; /* or KEYPRESS_ON_READER */
+	int count;	 /* status entries, or the keypress reader */
+	bool accepted;
+};
+
+static void submit_check_event(const struct submit_check *c,
+			       struct osdp_event *ev)
+{
+	memset(ev, 0, sizeof(*ev));
+	if (c->status_type == KEYPRESS_ON_READER) {
+		ev->type = OSDP_EVENT_KEYPRESS;
+		ev->keypress.reader_no = c->count;
+		ev->keypress.length = 1;
+	} else {
+		ev->type = OSDP_EVENT_STATUS;
+		ev->status.type = c->status_type;
+		ev->status.nr_entries = c->count;
+	}
+}
+
+/*
+ * A status report must carry exactly one entry per entity the PD advertised,
+ * and an event may only name a reader the PD advertised; anything else is
+ * refused at submit rather than queued and dropped or mis-sent later.
+ *
+ * Runs on a pair of its own that is never refreshed, so the advertised reader
+ * count can be set without racing a refresh thread. Against the shared test
+ * capabilities: 8 inputs, 4 outputs, and here 2 readers.
+ */
+static bool test_submit_checks_status_and_reader(struct test *t)
+{
+	static const struct submit_check checks[] = {
+		{ "9 of 8 inputs", OSDP_STATUS_REPORT_INPUT, 9, false },
+		{ "3 of 8 inputs", OSDP_STATUS_REPORT_INPUT, 3, false },
+		{ "5 of 4 outputs", OSDP_STATUS_REPORT_OUTPUT, 5, false },
+		{ "3 local entries", OSDP_STATUS_REPORT_LOCAL, 3, false },
+		{ "2 local entries", OSDP_STATUS_REPORT_LOCAL, 2, true },
+		{ "3 of 2 readers", OSDP_STATUS_REPORT_READER, 3, false },
+		{ "2 of 2 readers", OSDP_STATUS_REPORT_READER, 2, true },
+		/* 0 is the PD's own reader, 1 the first attached one */
+		{ "keypress on reader 3", KEYPRESS_ON_READER, 3, false },
+		{ "keypress on reader 2", KEYPRESS_ON_READER, 2, true },
+	};
+	struct osdp_event event;
+	osdp_t *cp, *pd;
+	bool accepted, result = true;
+	size_t i;
+
+	printf(SUB_2 "testing submit-time status and reader checks\n");
+
+	if (test_setup_devices(t, &cp, &pd)) {
+		printf(SUB_2 "device setup failed\n");
+		return false;
+	}
+	osdp_to_pd(pd, 0)->cap[OSDP_PD_CAP_READERS].num_items = 2;
+
+	for (i = 0; i < ARRAY_SIZEOF(checks); i++) {
+		submit_check_event(&checks[i], &event);
+		accepted = test_submit_event(pd, &event) != NULL;
+		if (accepted != checks[i].accepted) {
+			printf(SUB_2 "%s: %s, want %s\n", checks[i].what,
+			       accepted ? "accepted" : "refused",
+			       checks[i].accepted ? "accepted" : "refused");
+			result = false;
+		}
+	}
+
+	osdp_pd_flush_events(pd);
+	osdp_cp_teardown(cp);
+	osdp_pd_teardown(pd);
+	return result;
+}
+
 /*
  * LibOSDP does not support osdp_FMT, so an ASCII card read must be refused
  * at submit -- never queued, never completed -- instead of being answered
@@ -660,6 +737,8 @@ void run_event_tests(struct test *t)
 	TEST_CASE(t, "cardread_formats", test_cardread_formats());
 	TEST_CASE(t, "submit_requires_completion_callback",
 		  test_submit_requires_completion_callback());
+	TEST_CASE(t, "submit_checks_status_and_reader",
+		  test_submit_checks_status_and_reader(t));
 	TEST_CASE(t, "reply_degraded_to_nak_completion",
 		  test_event_reply_degraded_to_nak_completes_failed());
 	TEST_CASE(t, "reply_build_failure_completion",
