@@ -1272,19 +1272,38 @@ int test_setup_devices(struct test *t, osdp_t **cp, osdp_t **pd)
 	return test_setup_devices_ext(t, cp, pd, 0, 0);
 }
 
+bool test_wait_until(bool (*cond)(void *arg), void *arg, int timeout_ms)
+{
+	double deadline = test_now_ms() + timeout_ms;
+
+	while (!cond(arg)) {
+		if (test_now_ms() >= deadline) {
+			return false;
+		}
+		usleep(10 * 1000);
+	}
+	return true;
+}
+
+struct online_query {
+	osdp_t *cp_ctx;
+	int pd_idx;
+};
+
+static bool pd_is_online(void *arg)
+{
+	struct online_query *q = arg;
+	uint8_t status = 0;
+
+	osdp_get_status_mask(q->cp_ctx, &status);
+	return status & (1 << q->pd_idx);
+}
+
 bool test_wait_for_online(osdp_t *cp_ctx, int pd_idx, int timeout_sec)
 {
-	uint8_t status = 0;
-	int rc = 0;
+	struct online_query q = { .cp_ctx = cp_ctx, .pd_idx = pd_idx };
 
-	while (rc++ < timeout_sec) {
-		osdp_get_status_mask(cp_ctx, &status);
-		if (status & (1 << pd_idx)) {
-			return true;
-		}
-		usleep(1000 * 1000);
-	}
-	return false;
+	return test_wait_until(pd_is_online, &q, timeout_sec * 1000);
 }
 
 void test_start(struct test *t, int log_level)

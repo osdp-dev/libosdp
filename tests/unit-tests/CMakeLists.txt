@@ -14,10 +14,13 @@ include_directories(${LIB_OSDP_PRIVATE_INCLUDE_DIRS})
 # link-loss tests do not block for the production 8s window, and the SC
 # retry wait so a failed handshake is retried within a test's budget
 # instead of after the production 600s, and the TRS idle timeout so an
-# abandoned session closes within one instead of after 30s.
+# abandoned session closes within one instead of after 30s. The command retry
+# wait is shortened so a case exhausting the retry budget costs well under a
+# second instead of eight times 800ms.
 set(LIB_OSDP_TEST osdptest)
 add_definitions(-DUNIT_TESTING -DOSDP_PD_ONLINE_TOUT_MS=1500
 		-DOSDP_PD_SC_RETRY_MS=3000 -DOSDP_TRS_IDLE_TOUT_MS=4000
+		-DOSDP_CMD_RETRY_WAIT_MS=100
 		${LIB_OSDP_DEFINITIONS})
 add_library(${LIB_OSDP_TEST} STATIC EXCLUDE_FROM_ALL
 	    ${LIB_OSDP_SOURCES} ${PROJECT_SOURCE_DIR}/src/osdp_file.c)

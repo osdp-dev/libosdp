@@ -283,6 +283,9 @@ int test_setup_devices_keys(struct test *t, osdp_t **cp, osdp_t **pd,
 			    const uint8_t *cp_scbk, const uint8_t *pd_scbk);
 bool test_wait_for_online(osdp_t *cp_ctx, int pd_idx, int timeout_sec);
 
+/* Poll @cond(@arg) every 10ms until it holds; false once @timeout_ms passes. */
+bool test_wait_until(bool (*cond)(void *arg), void *arg, int timeout_ms);
+
 /*
  * Channel interceptor: a registered hook sees every frame crossing the mock
  * channel and can pass, swallow, or substitute it. INJECT_REPLY additionally
