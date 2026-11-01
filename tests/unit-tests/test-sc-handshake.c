@@ -94,10 +94,12 @@ static int hs_pd_command_cb(void *arg, struct osdp_cmd *cmd)
 	return 0;
 }
 
-static int hs_setup(struct test *t, enum rmac_i_rewrite *mode)
+static int hs_setup(struct test *t, enum rmac_i_rewrite *mode,
+		    uint32_t cp_flags)
 {
 	if (test_setup_devices_ext(t, &g_hs.cp_ctx, &g_hs.pd_ctx,
-				   OSDP_FLAG_ENABLE_NOTIFICATION, 0)) {
+				   OSDP_FLAG_ENABLE_NOTIFICATION | cp_flags,
+				   0)) {
 		printf(SUB_1 "Failed to setup devices!\n");
 		return -1;
 	}
@@ -132,71 +134,136 @@ static uint8_t cp_sc_mask(void)
 	return mask;
 }
 
-/*
- * The CP has acted on a rewritten RMAC_I once it either brings the PD online
- * (in plaintext, after a forged MAC) or starts another handshake (after a
- * rejected status); either way an SC it wrongly accepted would be up by now.
- */
-static bool handshake_outcome_known(void *arg)
+static bool cp_pd_is_online(void *arg)
 {
 	uint8_t mask = 0;
 
 	ARG_UNUSED(arg);
 	osdp_get_status_mask(g_hs.cp_ctx, &mask);
-	return (mask & 1) || atomic_load(&g_hs.rmac_i_rewrites) >= 2;
+	return mask & 1;
 }
 
-static bool sc_stays_down_for(struct test *t, enum rmac_i_rewrite mode,
-			      const char *what)
+static bool rmac_i_was_rewritten(void *arg)
+{
+	ARG_UNUSED(arg);
+	return atomic_load(&g_hs.rmac_i_rewrites) > 0;
+}
+
+/*
+ * Long enough for a CP hammering the handshake to run dozens of them, and
+ * well inside the 3s OSDP_PD_SC_RETRY_MS of the test build, after which a
+ * CP that fell back to plaintext legitimately tries SC again.
+ */
+#define HS_QUIET_WINDOW_MS 1500
+
+/*
+ * Without ENFORCE_SECURE, a failed handshake leaves the PD online in
+ * plaintext, and the CP waits out the SC retry delay before the next one.
+ */
+static bool rmac_i_failure_falls_back(struct test *t, enum rmac_i_rewrite mode,
+				      const char *what)
 {
 	const char *why = NULL;
 	int rewrites;
 
 	printf(SUB_1 "%s -- ", what);
-	if (hs_setup(t, &mode)) {
+	if (hs_setup(t, &mode, 0)) {
 		hs_teardown();
 		return false;
 	}
-	if (!test_wait_until(handshake_outcome_known, NULL, 10 * 1000)) {
-		hs_teardown();
-		printf("handshake never concluded!\n");
-		return false;
+	if (!test_wait_until(cp_pd_is_online, NULL, 5 * 1000)) {
+		why = "PD never came online in plaintext!";
+		goto out;
 	}
-	/* With no RMAC_I rewritten, SC staying down proves nothing. */
+	usleep(HS_QUIET_WINDOW_MS * 1000);
 	rewrites = atomic_load(&g_hs.rmac_i_rewrites);
-	if (rewrites == 0)
-		why = "no RMAC_I was rewritten!";
+	if (rewrites != 1)
+		why = "CP did not run exactly one handshake!";
 	else if (atomic_load(&g_hs.sc_active_notifs) != 0 || (cp_sc_mask() & 1))
 		why = "SC was reported up!";
+	else if (!cp_pd_is_online(NULL))
+		why = "PD dropped offline!";
+out:
+	rewrites = atomic_load(&g_hs.rmac_i_rewrites);
 	hs_teardown();
 	if (why) {
-		printf("%s\n", why);
+		printf("%s (%d RMAC_I rewritten)\n", why, rewrites);
 		return false;
 	}
-	printf("success! (%d RMAC_I rewritten)\n", rewrites);
+	printf("success!\n");
 	return true;
 }
 
-/* Every RMAC_I has one payload byte flipped: SC must never be reported up. */
-static bool rmac_i_forged_keeps_sc_down(struct test *t)
+/*
+ * With ENFORCE_SECURE, a failed handshake takes the PD offline for the
+ * offline dwell: never online in plaintext, and no handshake until then.
+ */
+static bool rmac_i_failure_enforced(struct test *t, enum rmac_i_rewrite mode,
+				    const char *what)
 {
-	return sc_stays_down_for(t, REWRITE_FLIP_PAYLOAD_BYTE,
-				 "forged RMAC_I keeps SC down");
+	const char *why = NULL;
+	int rewrites;
+
+	printf(SUB_1 "%s -- ", what);
+	if (hs_setup(t, &mode, OSDP_FLAG_ENFORCE_SECURE)) {
+		hs_teardown();
+		return false;
+	}
+	if (!test_wait_until(rmac_i_was_rewritten, NULL, 5 * 1000)) {
+		why = "no RMAC_I was rewritten!";
+		goto out;
+	}
+	if (test_wait_until(cp_pd_is_online, NULL, HS_QUIET_WINDOW_MS))
+		why = "PD came online without SC under ENFORCE_SECURE!";
+	else if (atomic_load(&g_hs.rmac_i_rewrites) != 1)
+		why = "CP did not run exactly one handshake!";
+	else if (atomic_load(&g_hs.sc_active_notifs) != 0 || (cp_sc_mask() & 1))
+		why = "SC was reported up!";
+out:
+	rewrites = atomic_load(&g_hs.rmac_i_rewrites);
+	hs_teardown();
+	if (why) {
+		printf("%s (%d RMAC_I rewritten)\n", why, rewrites);
+		return false;
+	}
+	printf("success!\n");
+	return true;
+}
+
+/* Every RMAC_I has one payload byte flipped. */
+static bool rmac_i_forged_falls_back(struct test *t)
+{
+	return rmac_i_failure_falls_back(t, REWRITE_FLIP_PAYLOAD_BYTE,
+					 "forged RMAC_I, plain");
 }
 
 /* RMAC_I value intact but SCS_14 status byte rewritten to 0xFF. */
-static bool rmac_i_rejected_status_keeps_sc_down(struct test *t)
+static bool rmac_i_rejected_status_falls_back(struct test *t)
 {
-	return sc_stays_down_for(t, REWRITE_STATUS_BYTE,
-				 "rejected SCS_14 status keeps SC down");
+	return rmac_i_failure_falls_back(t, REWRITE_STATUS_BYTE,
+					 "rejected SCS_14, plain");
+}
+
+static bool rmac_i_forged_enforced(struct test *t)
+{
+	return rmac_i_failure_enforced(t, REWRITE_FLIP_PAYLOAD_BYTE,
+				       "forged RMAC_I, enforced");
+}
+
+static bool rmac_i_rejected_status_enforced(struct test *t)
+{
+	return rmac_i_failure_enforced(t, REWRITE_STATUS_BYTE,
+				       "rejected SCS_14, enforced");
 }
 
 void run_sc_handshake_tests(struct test *t)
 {
 	printf("\nStarting SC handshake tests\n");
 
-	TEST_CASE(t, "rmac_i_forged_keeps_sc_down",
-		  rmac_i_forged_keeps_sc_down(t));
-	TEST_CASE(t, "rmac_i_rejected_status_keeps_sc_down",
-		  rmac_i_rejected_status_keeps_sc_down(t));
+	TEST_CASE(t, "rmac_i_forged_falls_back", rmac_i_forged_falls_back(t));
+	TEST_CASE(t, "rmac_i_rejected_status_falls_back",
+		  rmac_i_rejected_status_falls_back(t));
+	TEST_CASE(t, "rmac_i_forged_enforced", rmac_i_forged_enforced(t));
+	TEST_CASE(t, "rmac_i_rejected_status_enforced",
+		  rmac_i_rejected_status_enforced(t));
 }
