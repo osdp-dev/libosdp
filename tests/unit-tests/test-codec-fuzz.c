@@ -26,12 +26,10 @@
  *    replies decode instead of failing their length-vs-caps check.
  *
  * Each payload lives in its own exact-size heap allocation, so a read at or past
- * buf[len] trips AddressSanitizer at once. rand() is seeded from the clock and
- * the seed is printed up front; re-run with OSDP_CODEC_FUZZ_SEED=<seed> to
- * replay a failing run byte-for-byte.
+ * buf[len] trips AddressSanitizer at once. The bytes come from rand(), which
+ * the harness seeds per case; re-run with the printed OSDP_TEST_SEED to replay
+ * a failing run byte-for-byte.
  */
-
-#include <time.h>
 
 #include "test.h"
 
@@ -134,16 +132,8 @@ static int test_codec_fuzz_cp_decode_response(struct osdp *cp_ctx)
 void run_codec_fuzz_tests(struct test *t)
 {
 	osdp_t *cp = NULL, *pd = NULL;
-	const char *seed_env = getenv("OSDP_CODEC_FUZZ_SEED");
-	unsigned int seed;
 
 	printf("\nStarting codec_fuzz tests\n");
-
-	seed = seed_env ? (unsigned int)strtoul(seed_env, NULL, 0)
-			: (unsigned int)time(NULL);
-	srand(seed);
-	printf(SUB_1 "codec_fuzz seed: %u (set OSDP_CODEC_FUZZ_SEED to replay)\n",
-	       seed);
 
 	if (test_setup_devices(t, &cp, &pd)) {
 		printf(SUB_1 "device setup failed!\n");

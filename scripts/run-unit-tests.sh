@@ -11,6 +11,7 @@
 # high-level pass/fail summary. Ctrl-C stops every suite and cleans up.
 #
 # Overridable via env: BIN (test binary), LOGDIR (log dir), JOBS (concurrency).
+# OSDP_TEST_SEED passes through to every suite to replay a run.
 
 set -u
 
@@ -138,7 +139,9 @@ if [ "$fails" -gt 0 ]; then
 	echo "$fails suite(s) FAILED in $((end - start))s. Failing logs:"
 	for s in $ALL_SUITES; do
 		st=$(cat "$LOGDIR/$s.status" 2>/dev/null || echo "?")
-		[ "$st" = "0" ] || echo "  $LOGDIR/$s.log"
+		[ "$st" = "0" ] && continue
+		seed=$(grep -m1 -oE 'OSDP_TEST_SEED=[0-9]+' "$LOGDIR/$s.log")
+		echo "  $LOGDIR/$s.log${seed:+ ($seed)}"
 	done
 	exit 1
 fi

@@ -137,6 +137,13 @@ void test_suite_end(struct test *t);
  */
 bool test_should_run_case(const char *name);
 int test_interrupted(void);
+
+/*
+ * The run's seed: OSDP_TEST_SEED when set, else drawn from the clock. The
+ * harness reseeds rand() from it at every suite and case start, so tests
+ * draw randomness from plain rand() and stay replayable.
+ */
+unsigned int test_seed(void);
 void test_write_junit(struct test *t, const char *path);
 
 /*
@@ -396,18 +403,14 @@ int async_cp_runner_start(osdp_t *cp_ctx);
 int async_pd_runner_start(osdp_t *pd_ctx);
 int async_cp_runner_stop(int work_id);
 int async_pd_runner_stop(int work_id);
-void enable_line_noise();
-void disable_line_noise();
-void print_line_noise_stats();
 
 void run_cp_fsm_tests(struct test *t);
 void run_busy_tests(struct test *t);
 void run_sc_handshake_tests(struct test *t);
 void run_scbk_staging_tests(struct test *t);
-void run_cp_phy_fsm_tests(struct test *t);
 void run_cp_phy_tests(struct test *t);
 void run_pd_phy_tests(struct test *t);
-void run_file_tx_tests(struct test *t, bool line_noise);
+void run_file_tx_tests(struct test *t);
 void run_file_tx_intermittent_tests(struct test *t);
 void run_file_tx_cancel_tests(struct test *t);
 void run_file_tx_pd_write_fail_tests(struct test *t);
