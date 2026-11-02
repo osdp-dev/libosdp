@@ -582,21 +582,6 @@ static int async_runner_start_generic(osdp_t *ctx, void (*fn)(osdp_t *), enum ru
 	return i;
 }
 
-/* Start CP runner independently */
-int async_cp_runner_start(osdp_t *cp_ctx)
-{
-	printf("Starting CP async runner\n");
-	return async_runner_start_generic(cp_ctx, osdp_cp_refresh, RUNNER_TYPE_CP);
-}
-
-/* Start PD runner independently */
-int async_pd_runner_start(osdp_t *pd_ctx)
-{
-	printf("Starting PD async runner\n");
-	return async_runner_start_generic(pd_ctx, osdp_pd_refresh, RUNNER_TYPE_PD);
-}
-
-/* Legacy function for backward compatibility */
 int async_runner_start(osdp_t *ctx, void (*fn)(osdp_t *))
 {
 	enum runner_type type = (fn == osdp_cp_refresh) ? RUNNER_TYPE_CP : RUNNER_TYPE_PD;
@@ -625,18 +610,6 @@ int async_runner_stop(int work_id)
 	g_test_works[work_id] = NULL;
 
 	return 0;
-}
-
-/* Stop CP runner specifically */
-int async_cp_runner_stop(int work_id)
-{
-	return async_runner_stop(work_id);
-}
-
-/* Stop PD runner specifically */
-int async_pd_runner_stop(int work_id)
-{
-	return async_runner_stop(work_id);
 }
 
 static test_channel_hook_fn g_channel_hook;
@@ -1140,6 +1113,38 @@ static const uint8_t test_harness_scbk[16] = {
 	0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f
 };
 
+osdp_t *test_setup_cp(uint32_t flags, const uint8_t *scbk)
+{
+	osdp_t *cp;
+	struct osdp_channel cp_channel = {
+		.data = NULL,
+		.send = test_mock_cp_send,
+#ifndef OPT_OSDP_RX_ZERO_COPY
+		.recv = test_mock_cp_receive,
+#else
+		.recv_pkt = test_mock_cp_recv_pkt,
+		.release_pkt = test_mock_cp_release_pkt,
+#endif
+		.flush = test_mock_cp_flush,
+	};
+	osdp_pd_info_t info_cp = {
+		.address = 101,
+		.baud_rate = 9600,
+		.flags = flags,
+		.scbk = scbk,
+	};
+
+	cp = osdp_cp_setup(&cp_channel, 1, &info_cp);
+	if (cp == NULL) {
+		printf(SUB_1 "cp init failed!\n");
+		return NULL;
+	}
+	osdp_cp_set_command_completion_callback(cp,
+						test_default_cmd_completion_cb,
+						NULL);
+	return cp;
+}
+
 int test_setup_devices_keys(struct test *t, osdp_t **cp, osdp_t **pd,
 			    uint32_t cp_flags, uint32_t pd_flags,
 			    const uint8_t *cp_scbk, const uint8_t *pd_scbk)
@@ -1162,28 +1167,8 @@ int test_setup_devices_keys(struct test *t, osdp_t **cp, osdp_t **pd,
 	pktq_flush(&pd_to_cp_q);
 #endif
 
-	/* mock application data */
-	struct osdp_channel cp_channel = {
-		.data = NULL,
-		.send = test_mock_cp_send,
-#ifndef OPT_OSDP_RX_ZERO_COPY
-		.recv = test_mock_cp_receive,
-#else
-		.recv_pkt = test_mock_cp_recv_pkt,
-		.release_pkt = test_mock_cp_release_pkt,
-#endif
-		.flush = test_mock_cp_flush,
-	};
-	osdp_pd_info_t info_cp = {
-		.address = 101,
-		.baud_rate = 9600,
-		.flags = cp_flags,
-		.scbk = cp_scbk,
-	};
-
-	*cp = osdp_cp_setup(&cp_channel, 1, &info_cp);
+	*cp = test_setup_cp(cp_flags, cp_scbk);
 	if (*cp == NULL) {
-		printf(SUB_1 "cp init failed!\n");
 		return -1;
 	}
 
@@ -1232,9 +1217,6 @@ int test_setup_devices_keys(struct test *t, osdp_t **cp, osdp_t **pd,
 		return -1;
 	}
 
-	osdp_cp_set_command_completion_callback(*cp,
-						test_default_cmd_completion_cb,
-						NULL);
 	osdp_pd_set_event_completion_callback(*pd,
 					      test_default_event_completion_cb,
 					      NULL);
