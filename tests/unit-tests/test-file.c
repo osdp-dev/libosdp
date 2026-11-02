@@ -270,8 +270,7 @@ static void restart_completion_cb(void *arg, int pd, struct osdp_cmd *cmd,
 
 struct file_tx_opts {
 	const char *label;
-	bool line_noise;
-	int read_busy_mod;        /* 0 = no busy injection */
+	int read_busy_mod;       /* 0 = no busy injection */
 	bool read_always_busy;
 	int expected_outcome;     /* OSDP_MP_OUTCOME_* */
 	int wait_deciseconds;     /* transfer wait budget, 100ms units */
@@ -422,8 +421,6 @@ static bool run_one_file_tx_case(struct test *t, const struct file_tx_opts *opts
 	}
 
 	printf(SUB_1 "waiting for file tx done notification\n");
-	if (opts->line_noise)
-		enable_line_noise();
 
 	if (!opts->no_notifications) {
 		rc = 0;
@@ -437,8 +434,6 @@ static bool run_one_file_tx_case(struct test *t, const struct file_tx_opts *opts
 				printf(SUB_1 "file tx notification not "
 				       "received! empty_reads=%d\n",
 				       sender_data.empty_read_count);
-				if (opts->line_noise)
-					print_line_noise_stats();
 				goto error;
 			}
 		}
@@ -587,7 +582,6 @@ static bool run_one_file_tx_case(struct test *t, const struct file_tx_opts *opts
 	}
 
 error:
-	disable_line_noise();
 	async_runner_stop(cp_runner);
 	async_runner_stop(pd_runner);
 
@@ -597,11 +591,10 @@ error:
 	return result;
 }
 
-void run_file_tx_tests(struct test *t, bool line_noise)
+void run_file_tx_tests(struct test *t)
 {
 	struct file_tx_opts opts = {
 		.label = "baseline (no host busy)",
-		.line_noise = line_noise,
 		.expected_outcome = OSDP_MP_OUTCOME_OK,
 		.wait_deciseconds = 600, /* 60s */
 		.verify_content = true,
@@ -612,7 +605,6 @@ void run_file_tx_tests(struct test *t, bool line_noise)
 	/* Same transfer, but the app tries to start the next one from inside
 	 * the completion -- which the engine must refuse with -1. */
 	opts.label = "restart from completion";
-	opts.line_noise = false;
 	opts.restart_from_completion = true;
 	TEST_CASE(t, "file_tx_restart_from_completion",
 		  run_one_file_tx_case(t, &opts));

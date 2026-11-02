@@ -33,12 +33,12 @@ CIRCBUF_DEF(uint8_t, pd_to_cp_buf, MOCK_BUF_LEN);
  * The production zero-copy channel (e.g. osprio's osdp_frame.c) delimits frames
  * by an inter-byte idle gap and hands libosdp one complete packet per recv_pkt;
  * here each send() enqueues exactly one packet and recv_pkt() dequeues one. That
- * preserves frame boundaries even when line-noise corrupts bytes within a frame,
+ * preserves frame boundaries even when a hook substitutes bytes within a frame,
  * which is precisely how the timing-delimited hardware framer behaves.
  *
  * Single-producer/single-consumer per direction (send writes head; recv/release
  * write tail), matching the lock-free discipline the byte CIRCBUF already relied
- * on for the threaded async-fuzz runners.
+ * on for the threaded async runners.
  */
 #define TEST_PKTQ_DEPTH 8
 #define TEST_PKT_MAXLEN OSDP_PACKET_BUF_SIZE
@@ -107,9 +107,39 @@ static struct test *g_active_test;
 static bool g_color_enabled;
 
 /* Run selection + interruption state, consulted at the per-case DO_TEST gate. */
-static const char *g_case_glob;      /* NULL = run every case in the suite */
+static const char *g_case_glob;      /* running suite's; NULL = every case */
 static const char *g_junit_path;     /* NULL = no JUnit XML emitted */
 static volatile sig_atomic_t g_interrupted;
+static unsigned int g_seed;
+
+unsigned int test_seed(void)
+{
+	return g_seed;
+}
+
+/*
+ * Each case draws from rand() seeded by the run seed and its own name, so a
+ * failing case replays alone, under a case glob, without the cases before it
+ * having to consume the same numbers first.
+ */
+static void test_reseed(const char *name)
+{
+	unsigned int h = 2166136261u;
+
+	while (name && *name)
+		h = (h ^ (unsigned char)*name++) * 16777619u;
+	srand(g_seed ^ h);
+}
+
+static void test_init_seed(void)
+{
+	const char *env = getenv("OSDP_TEST_SEED");
+
+	if (env && *env)
+		g_seed = (unsigned int)strtoul(env, NULL, 0);
+	else
+		g_seed = (unsigned int)time(NULL) ^ ((unsigned int)getpid() << 16);
+}
 
 static void test_on_signal(int signum)
 {
@@ -308,6 +338,7 @@ void test_case_begin(struct test *t, const char *name)
 	snprintf(rec->suite, sizeof(rec->suite), "%s",
 		 t->current_suite ? t->current_suite : "default");
 	snprintf(rec->name, sizeof(rec->name), "%s", name ? name : "unnamed");
+	test_reseed(rec->name);
 
 	t->case_start_ms = test_now_ms();
 	if (g_color_enabled) {
@@ -340,7 +371,8 @@ void test_case_end(struct test *t, int rc)
 		snprintf(rec->message, sizeof(rec->message), "skipped");
 	} else {
 		status = TEST_STATUS_FAIL;
-		snprintf(rec->message, sizeof(rec->message), "rc=%d", rc);
+		snprintf(rec->message, sizeof(rec->message), "rc=%d seed=%u",
+			 rc, g_seed);
 	}
 
 	test_mark_result(t, rec, status);
@@ -385,7 +417,8 @@ void test_report(struct test *t, const char *func, int line, bool status)
 
 	st = status ? TEST_STATUS_PASS : TEST_STATUS_FAIL;
 	if (!status) {
-		snprintf(rec->message, sizeof(rec->message), "assertion failed");
+		snprintf(rec->message, sizeof(rec->message),
+			 "assertion failed seed=%u", g_seed);
 	}
 	test_mark_result(t, rec, st);
 
@@ -416,6 +449,9 @@ void test_suite_begin(struct test *t, const char *name)
 	t->current_suite = suite->name;
 	t->suite_start_ms = test_now_ms();
 	t->report_last_ms = t->suite_start_ms;
+	test_reseed(suite->name);
+	fprintf(stdout, "[ SEED   ] %s: %u (OSDP_TEST_SEED=%u to replay)\n",
+		suite->name, g_seed, g_seed);
 }
 
 void test_suite_end(struct test *t)
@@ -603,47 +639,6 @@ int async_pd_runner_stop(int work_id)
 	return async_runner_stop(work_id);
 }
 
-volatile bool g_introduce_line_noise;
-unsigned long g_total_packets;
-unsigned long g_corrupted_packets;
-
-void enable_line_noise()
-{
-	g_introduce_line_noise = true;
-}
-
-void disable_line_noise()
-{
-	g_introduce_line_noise = false;
-}
-
-void print_line_noise_stats()
-{
-	printf(SUB_1 "LN-Stats: Total:%lu Corrupted:%lu",
-	       g_total_packets, g_corrupted_packets);
-}
-
-void corrupt_buffer(uint8_t *buf, int len)
-{
-	int p, n = 3;
-
-	while (n--) {
-		p = randint(len);
-		buf[p] = randint(255);
-	}
-}
-
-void maybe_corrupt_buffer(uint8_t *buf, int len)
-{
-	if (!g_introduce_line_noise)
-		return;
-	g_total_packets++;
-	if (randint(10*1000) < (5*1000))
-		return;
-	corrupt_buffer(buf, len);
-	g_corrupted_packets++;
-}
-
 static test_channel_hook_fn g_channel_hook;
 static void *g_channel_hook_arg;
 
@@ -709,7 +704,6 @@ int test_mock_cp_send(void *data, uint8_t *buf, int len)
 	ARG_UNUSED(data);
 	assert(len < MOCK_BUF_LEN);
 
-	maybe_corrupt_buffer(buf, len);
 	switch (channel_hook_filter(true, buf, len, out, &out_len, sizeof(out))) {
 	case TEST_HOOK_DROP:
 		return len;
@@ -750,7 +744,6 @@ int test_mock_pd_send(void *data, uint8_t *buf, int len)
 	int out_len;
 	ARG_UNUSED(data);
 
-	maybe_corrupt_buffer(buf, len);
 	switch (channel_hook_filter(false, buf, len, out, &out_len, sizeof(out))) {
 	case TEST_HOOK_DROP:
 		return len;
@@ -793,7 +786,6 @@ int test_mock_cp_send(void *data, uint8_t *buf, int len)
 	if (buf == NULL || len <= 0) {
 		return -1;
 	}
-	maybe_corrupt_buffer(buf, len);
 	switch (channel_hook_filter(true, buf, len, out, &out_len, sizeof(out))) {
 	case TEST_HOOK_DROP:
 		return len;
@@ -836,7 +828,6 @@ int test_mock_pd_send(void *data, uint8_t *buf, int len)
 	if (buf == NULL || len <= 0) {
 		return -1;
 	}
-	maybe_corrupt_buffer(buf, len);
 	switch (channel_hook_filter(false, buf, len, out, &out_len, sizeof(out))) {
 	case TEST_HOOK_DROP:
 		return len;
@@ -1398,6 +1389,7 @@ static void print_failed_tests(const struct test *t)
 			rec->message[0] ? rec->message : "failure");
 	}
 	fprintf(stdout, "+-----+----------------------+------------------------------+-------------------------------+\n");
+	fprintf(stdout, "Replay with OSDP_TEST_SEED=%u\n", g_seed);
 }
 
 static void print_slowest_tests(const struct test *t, int n)
@@ -1531,7 +1523,7 @@ int test_end(struct test *t)
 
 static void run_file_tx_suite(struct test *t)
 {
-	run_file_tx_tests(t, false);
+	run_file_tx_tests(t);
 	run_file_tx_intermittent_tests(t);
 	run_file_tx_no_notification_tests(t);
 	run_file_tx_cancel_tests(t);
@@ -1562,6 +1554,9 @@ static void test_usage(const char *prog, const struct test_suite_entry *suites,
 		"  --list           list suite names, one per line\n"
 		"  --junit <path>   write JUnit XML results to <path>\n"
 		"  -h, --help       show this help\n"
+		"\n"
+		"Every random draw derives from one seed, printed per suite. Set\n"
+		"OSDP_TEST_SEED=<seed> to replay a run.\n"
 		"\nSuites:\n", prog);
 	for (i = 0; i < n_suites; i++)
 		fprintf(stdout, "  %s\n", suites[i].name);
@@ -1583,16 +1578,19 @@ int main(int argc, char *argv[])
 	};
 	const int n_suites = (int)(sizeof(suites) / sizeof(suites[0]));
 	bool run_it[TEST_MAX_SUITES];
+	const char *case_glob[TEST_MAX_SUITES];
 	bool any_selected = false;
 	int i, rc;
 	struct test t;
 
-	for (i = 0; i < n_suites; i++)
+	for (i = 0; i < n_suites; i++) {
 		run_it[i] = false;
+		case_glob[i] = NULL;
+	}
 
 	for (i = 1; i < argc; i++) {
 		char *a = argv[i];
-		char *colon;
+		char *colon, *glob = NULL;
 		int j, found = -1;
 
 		if (!strcmp(a, "--list")) {
@@ -1621,7 +1619,7 @@ int main(int argc, char *argv[])
 		colon = strchr(a, ':');
 		if (colon) {
 			*colon = '\0';
-			g_case_glob = colon + 1;
+			glob = colon + 1;
 		}
 		for (j = 0; j < n_suites; j++) {
 			if (!strcmp(a, suites[j].name)) {
@@ -1634,6 +1632,7 @@ int main(int argc, char *argv[])
 			return 2;
 		}
 		run_it[found] = true;
+		case_glob[found] = glob;
 		any_selected = true;
 	}
 
@@ -1645,7 +1644,7 @@ int main(int argc, char *argv[])
 	signal(SIGINT, test_on_signal);
 	signal(SIGTERM, test_on_signal);
 
-	srand(time(NULL));
+	test_init_seed();
 
 	workqueue_create(&test_wq, MAX_TEST_WORK);
 
@@ -1654,6 +1653,7 @@ int main(int argc, char *argv[])
 	for (i = 0; i < n_suites && !g_interrupted; i++) {
 		if (!run_it[i])
 			continue;
+		g_case_glob = case_glob[i];
 		test_suite_begin(&t, suites[i].name);
 		if (suites[i].run) {
 			suites[i].run(&t);
