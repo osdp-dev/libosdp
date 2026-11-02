@@ -288,6 +288,12 @@ int test_setup_devices_plain(struct test *t, osdp_t **cp, osdp_t **pd,
 int test_setup_devices_keys(struct test *t, osdp_t **cp, osdp_t **pd,
 			    uint32_t cp_flags, uint32_t pd_flags,
 			    const uint8_t *cp_scbk, const uint8_t *pd_scbk);
+/*
+ * A CP alone on the mock channel, the way test_setup_devices_keys() builds
+ * its CP: for a test that replaces the CP while the PD keeps running. The
+ * channel is left as it is, stale bytes included.
+ */
+osdp_t *test_setup_cp(uint32_t flags, const uint8_t *scbk);
 bool test_wait_for_online(osdp_t *cp_ctx, int pd_idx, int timeout_sec);
 
 /* Poll @cond(@arg) every 10ms until it holds; false once @timeout_ms passes. */
@@ -399,10 +405,6 @@ int test_api_cp_trs_get_max_apdu_len(const osdp_t *ctx, int pd);
 
 int async_runner_start(osdp_t *ctx, void (*fn)(osdp_t *));
 int async_runner_stop(int runner);
-int async_cp_runner_start(osdp_t *cp_ctx);
-int async_pd_runner_start(osdp_t *pd_ctx);
-int async_cp_runner_stop(int work_id);
-int async_pd_runner_stop(int work_id);
 
 void run_cp_fsm_tests(struct test *t);
 void run_busy_tests(struct test *t);
@@ -433,7 +435,7 @@ void run_notification_tests(struct test *t);
 void run_completion_tests(struct test *t);
 void run_metrics_tests(struct test *t);
 void run_abi_tests(struct test *t);
-void run_async_fuzz_tests(struct test *t);
+void run_link_tests(struct test *t);
 void run_codec_fuzz_tests(struct test *t);
 void run_sc_tests(struct test *t);
 void run_vector_tests(struct test *t);
