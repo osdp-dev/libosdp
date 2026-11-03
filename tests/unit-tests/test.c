@@ -17,11 +17,10 @@
 #include "osdp_common.h"
 #include "test.h"
 
-#include <utils/workqueue.h>
 #include <utils/circbuf.h>
 #include <utils/slab.h>
 
-#define MAX_TEST_WORK 20  /* Increased for async fuzz testing */
+#define TEST_MAX_RUNNERS 4
 #define MOCK_BUF_LEN 512
 
 #ifndef OPT_OSDP_RX_ZERO_COPY
@@ -454,10 +453,43 @@ void test_suite_begin(struct test *t, const char *name)
 		suite->name, g_seed, g_seed);
 }
 
+/* A failure that belongs to the suite as a whole, not to any one case. */
+static void test_suite_fail(struct test *t, const char *what,
+			    const char *message)
+{
+	struct test_case_record *rec;
+
+	if (t->tests >= TEST_MAX_CASES) {
+		return;
+	}
+	rec = &t->cases[t->tests];
+	memset(rec, 0, sizeof(*rec));
+	snprintf(rec->suite, sizeof(rec->suite), "%s", t->current_suite);
+	snprintf(rec->name, sizeof(rec->name), "%s", what);
+	snprintf(rec->message, sizeof(rec->message), "%s", message);
+	test_mark_result(t, rec, TEST_STATUS_FAIL);
+	fprintf(stdout, "%s[ FAIL   ]%s %s.%s: %s\n",
+		g_color_enabled ? C_RED : "", g_color_enabled ? C_RST : "",
+		rec->suite, rec->name, message);
+}
+
+static int test_suite_case_count(const struct test *t, const char *suite)
+{
+	int i, n = 0;
+
+	for (i = 0; i < t->tests; i++) {
+		if (strcmp(t->cases[i].suite, suite) == 0) {
+			n++;
+		}
+	}
+	return n;
+}
+
 void test_suite_end(struct test *t)
 {
 	struct test_suite_record *suite;
-	int i, leaked;
+	char msg[TEST_MAX_MSG_LEN];
+	int i, leaked, cases = test_suite_case_count(t, t->current_suite);
 
 	/* Teardown completes everything still queued, so a suite that submits
 	 * through the helpers ends owing nothing. Anything left is a
@@ -466,9 +498,18 @@ void test_suite_end(struct test *t)
 	 * whatever runs next. */
 	leaked = test_alloc_outstanding();
 	if (leaked) {
-		test_log_warn("%d pooled command/event object(s) never "
-			      "returned", leaked);
+		snprintf(msg, sizeof(msg),
+			 "%d pooled command/event object(s) never returned",
+			 leaked);
+		test_suite_fail(t, "pool_leak", msg);
 		test_alloc_reset();
+	}
+
+	/* A suite whose setup bails before its first case would otherwise
+	 * report nothing and pass. Under a case glob, matching nothing is a
+	 * legitimate outcome. */
+	if (!g_case_glob && !g_interrupted && cases == 0) {
+		test_suite_fail(t, "no_cases", "suite recorded no cases");
 	}
 
 	if (t->suite_count >= TEST_MAX_SUITES) {
@@ -501,114 +542,75 @@ void test_suite_end(struct test *t)
 	t->suite_count++;
 }
 
-/* Runner types for independent CP and PD management */
-enum runner_type {
-	RUNNER_TYPE_CP,
-	RUNNER_TYPE_PD
-};
-
-struct test_async_data {
+/*
+ * A runner is one thread refreshing one context every 10ms under the API
+ * lock. The slot table is touched only by the test thread, which starts and
+ * stops runners; the runner thread reads nothing of its slot but ctx, fn and
+ * the atomic stop flag, and the slot is reused only after the join.
+ */
+struct test_runner {
+	bool in_use;
+	pthread_t thread;
 	osdp_t *ctx;
 	void (*refresh)(osdp_t *ctx);
-	enum runner_type type;
-	bool is_running;
-	struct async_runner_s *runner;
+	atomic_bool stop;
 };
 
-workqueue_t test_wq;
+static struct test_runner g_runners[TEST_MAX_RUNNERS];
 
-int async_runner(void *data)
+static void *test_runner_main(void *arg)
 {
-	struct test_async_data *td = data;
+	struct test_runner *r = arg;
 
-	if (!td->is_running) {
-		return WORK_DONE; /* Stop if marked as not running */
+	while (!atomic_load(&r->stop)) {
+		test_api_lock();
+		r->refresh(r->ctx);
+		test_api_unlock();
+		usleep(10 * 1000);
 	}
-
-	test_api_lock();
-	td->refresh(td->ctx);
-	test_api_unlock();
-	usleep(10 * 1000);
-
-	return WORK_YIELD; /* Continue running */
-}
-
-void async_runner_free(void *data)
-{
-	work_t *work = data;
-
-	free(work->arg);
-	free(work);
-}
-
-work_t *g_test_works[MAX_TEST_WORK];
-
-/* Generic async runner start function */
-static int async_runner_start_generic(osdp_t *ctx, void (*fn)(osdp_t *), enum runner_type type)
-{
-	int i, rc;
-
-	struct test_async_data *data = malloc(sizeof(struct test_async_data));
-	data->ctx = ctx;
-	data->refresh = fn;
-	data->type = type;
-	data->is_running = true;
-
-	for (i = 0; i < MAX_TEST_WORK; i++) {
-		if (g_test_works[i] == NULL)
-			break;
-	}
-
-	if (i == MAX_TEST_WORK) {
-		printf("async_runner_start: test works exhausted\n");
-		free(data);
-		return -1;
-	}
-
-	g_test_works[i] = malloc(sizeof(work_t));
-	g_test_works[i]->arg = data;
-	g_test_works[i]->work_fn = async_runner;
-	g_test_works[i]->complete_fn = NULL;
-
-	rc = workqueue_add_work(&test_wq, g_test_works[i]);
-	if (rc != 0) {
-		printf("async_runner_start: test wq add work failed!\n");
-		free(g_test_works[i]->arg);
-		free(g_test_works[i]);
-		g_test_works[i] = NULL;
-		return -1;
-	}
-
-	return i;
+	return NULL;
 }
 
 int async_runner_start(osdp_t *ctx, void (*fn)(osdp_t *))
 {
-	enum runner_type type = (fn == osdp_cp_refresh) ? RUNNER_TYPE_CP : RUNNER_TYPE_PD;
-	return async_runner_start_generic(ctx, fn, type);
-}
+	struct test_runner *r;
+	int i;
 
-int async_runner_stop(int work_id)
-{
-	if (work_id < 0 || work_id >= MAX_TEST_WORK || g_test_works[work_id] == NULL) {
-		printf("async_runner_stop: invalid work id!\n");
+	for (i = 0; i < TEST_MAX_RUNNERS; i++) {
+		if (!g_runners[i].in_use)
+			break;
+	}
+	if (i == TEST_MAX_RUNNERS) {
+		printf("async_runner_start: all runners in use\n");
 		return -1;
 	}
 
-	/* Mark as not running to allow graceful shutdown */
-	struct test_async_data *data = (struct test_async_data *)g_test_works[work_id]->arg;
-	if (data) {
-		data->is_running = false;
-		printf(SUB_1 "Stopping %s async runner\n",
-		       (data->type == RUNNER_TYPE_CP) ? "CP" : "PD");
+	r = &g_runners[i];
+	r->ctx = ctx;
+	r->refresh = fn;
+	atomic_store(&r->stop, false);
+	if (pthread_create(&r->thread, NULL, test_runner_main, r) != 0) {
+		printf("async_runner_start: pthread_create failed\n");
+		return -1;
+	}
+	r->in_use = true;
+	return i;
+}
+
+int async_runner_stop(int runner)
+{
+	struct test_runner *r;
+
+	if (runner < 0 || runner >= TEST_MAX_RUNNERS ||
+	    !g_runners[runner].in_use) {
+		printf("async_runner_stop: invalid runner id!\n");
+		return -1;
 	}
 
-	workqueue_cancel_work(&test_wq, g_test_works[work_id]);
-	while (workqueue_work_is_complete(&test_wq, g_test_works[work_id]) == false)
-		usleep(50 * 1000);
-	async_runner_free(g_test_works[work_id]);
-	g_test_works[work_id] = NULL;
-
+	r = &g_runners[runner];
+	atomic_store(&r->stop, true);
+	pthread_join(r->thread, NULL);
+	r->in_use = false;
 	return 0;
 }
 
@@ -1628,8 +1630,6 @@ int main(int argc, char *argv[])
 
 	test_init_seed();
 
-	workqueue_create(&test_wq, MAX_TEST_WORK);
-
 	test_start(&t, OSDP_LOG_INFO);
 
 	for (i = 0; i < n_suites && !g_interrupted; i++) {
@@ -1644,8 +1644,6 @@ int main(int argc, char *argv[])
 	}
 
 	rc = test_end(&t);
-
-	workqueue_destroy(&test_wq);
 
 	if (g_interrupted)
 		return 130;

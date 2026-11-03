@@ -324,7 +324,7 @@ void test_set_channel_hook(test_channel_hook_fn fn, void *arg);
  * Serialization of API calls with the refresh runners.
  *
  * LibOSDP requires every call on a context to be serialized by the caller
- * (see osdp_cp_refresh()). The async runners refresh on workqueue threads
+ * (see osdp_cp_refresh()). The async runners refresh on their own threads
  * while a test submits, flushes and reshapes from its own thread, so each
  * such call takes one harness-wide lock that the runners also hold across
  * refresh. It is recursive because callbacks run inside refresh, submit
