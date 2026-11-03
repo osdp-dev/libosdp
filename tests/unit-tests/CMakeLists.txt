@@ -87,7 +87,7 @@ include_directories(
 # CTest integration: one CTest test per suite so `ctest -R ut_piv` runs a
 # single group and `ctest -jN` fans suites out as isolated processes. Process
 # isolation is what makes the parallelism safe -- the harness keeps global mock
-# state (one circbuf/pktq pair, one workqueue) that is fine per-process but must
+# state (one circbuf/pktq pair, one runner table) that is fine per-process but must
 # never be shared across suites in threads.
 #
 # The suite name list is derived from test-suites.def -- the single source of
