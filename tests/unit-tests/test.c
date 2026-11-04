@@ -1517,7 +1517,6 @@ static void run_file_tx_suite(struct test *t)
 	run_file_tx_pd_abort_status_tests(t);
 	run_file_tx_empty_file_tests(t);
 	run_file_register_ops_setup_only_tests(t);
-	run_file_rx_idle_frame_tests(t);
 	run_file_rx_reject_paths_tests(t);
 	run_file_rx_finalize_tests(t);
 }

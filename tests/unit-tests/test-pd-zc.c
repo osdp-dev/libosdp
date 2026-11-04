@@ -147,51 +147,13 @@ static int build_lstat_cmd_nomark(uint8_t *out)
 	return len;
 }
 
-static int test_pd_zc_unmarked_exact_fit(void *mock_data)
+/* The captured reply is the LSTATR pd_command_cb answers LSTAT with. */
+static int check_lstatr_reply(void)
 {
-	struct osdp *ctx = mock_data;
-
-	printf(SUB_1 "Testing unmarked exact-fit frame is accepted -- ");
-
-	g_tx_len = 0;
-	g_cmd_len = build_lstat_cmd_nomark(g_cmd);
-	g_cmd_pending = true;
-
-	osdp_pd_refresh((osdp_t *)ctx);
-	osdp_pd_refresh((osdp_t *)ctx);
-
-	if (g_tx_len <= 0) {
-		printf("PD did not reply: unmarked frame was rejected "
-		       "(pkt_len == max_len == %d)\n",
-		       g_cmd_len);
-		return -1;
-	}
-	printf("success!\n");
-	return 0;
-}
-
-/* Feed one LSTAT command and assert the LSTATR reply reaches the wire. With
- * the release-packet bug the send channel is handed a NULL buffer and captures
- * nothing; with the fix the full LSTATR frame is captured. */
-static int test_pd_zc_status_reply_reaches_wire(void *mock_data)
-{
-	osdp_t *ctx = mock_data;
 	int som;
 
-	printf(SUB_1 "Testing zero-copy status reply reaches the wire -- ");
-
-	g_cmd_len = build_lstat_cmd(g_cmd);
-	g_cmd_pending = true;
-	g_tx_len = 0;
-
-	/* One refresh dispatches + replies; the rest are no-ops (recv_pkt
-	 * reports no data) and must not clobber the captured reply. */
-	for (int i = 0; i < 4; i++) {
-		osdp_pd_refresh(ctx);
-	}
-
 	if (g_tx_len == 0) {
-		printf("no reply on the wire (status reply lost)\n");
+		printf("no reply on the wire\n");
 		return -1;
 	}
 	som = find_som(g_tx, g_tx_len);
@@ -213,6 +175,45 @@ static int test_pd_zc_status_reply_reaches_wire(void *mock_data)
 	}
 	printf("success! (%d bytes)\n", g_tx_len);
 	return 0;
+}
+
+/* Feed one LSTAT command and assert the LSTATR reply reaches the wire. With
+ * the release-packet bug the send channel is handed a NULL buffer and captures
+ * nothing; with the fix the full LSTATR frame is captured. */
+static int test_pd_zc_status_reply_reaches_wire(void *mock_data)
+{
+	osdp_t *ctx = mock_data;
+
+	printf(SUB_1 "Testing zero-copy status reply reaches the wire -- ");
+
+	g_cmd_len = build_lstat_cmd(g_cmd);
+	g_cmd_pending = true;
+	g_tx_len = 0;
+
+	/* One refresh dispatches + replies; the rest are no-ops (recv_pkt
+	 * reports no data) and must not clobber the captured reply. */
+	for (int i = 0; i < 4; i++) {
+		osdp_pd_refresh(ctx);
+	}
+	return check_lstatr_reply();
+}
+
+/* A NAK would reach the wire too; only the LSTATR proves the unmarked frame
+ * (pkt_len == max_len) was accepted. */
+static int test_pd_zc_unmarked_exact_fit(void *mock_data)
+{
+	struct osdp *ctx = mock_data;
+
+	printf(SUB_1 "Testing unmarked exact-fit frame is accepted -- ");
+
+	g_tx_len = 0;
+	g_cmd_len = build_lstat_cmd_nomark(g_cmd);
+	g_cmd_pending = true;
+
+	osdp_pd_refresh((osdp_t *)ctx);
+	osdp_pd_refresh((osdp_t *)ctx);
+
+	return check_lstatr_reply();
 }
 
 static int test_pd_zc_setup(struct test *t)

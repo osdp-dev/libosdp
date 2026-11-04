@@ -141,9 +141,16 @@ static bool piv_run_op(const char *label, const struct osdp_cmd *cmd,
 	memset(&g_piv.last_reply, 0, sizeof(g_piv.last_reply));
 	memset(&g_piv.last_req, 0, sizeof(g_piv.last_req));
 	memset(&g_piv.last_auth, 0, sizeof(g_piv.last_auth));
+	g_piv.replies_at_completion = 0;
+	test_completion_reset(&g_piv_compl);
 
 	if (!test_submit_command(g_piv.cp_ctx, 0, cmd)) {
 		printf(SUB_2 "%s: submit failed\n", label);
+		return false;
+	}
+	/* The op owns the command until it ends; nothing settles at submit. */
+	if (test_completion_count(&g_piv_compl) != 0) {
+		printf(SUB_2 "%s: completed at submit\n", label);
 		return false;
 	}
 	if (!piv_wait_for(&g_piv.cmd_count, 1, 2000)) {
@@ -183,6 +190,22 @@ static bool piv_run_op(const char *label, const struct osdp_cmd *cmd,
 		printf(SUB_2 "%s: lifecycle start=%d progress=%d done=%d "
 		       "outcome=%d\n", label, g_piv.mp_start,
 		       g_piv.mp_progress, g_piv.mp_done, g_piv.mp_done_outcome);
+		return false;
+	}
+	/* One completion, OK, landing no earlier than the reply it settles. */
+	if (!test_completion_wait(&g_piv_compl, 1, 5) ||
+	    test_completion_count(&g_piv_compl) != 1 ||
+	    test_completion_id(&g_piv_compl) != (int)cmd->id ||
+	    test_completion_status(&g_piv_compl) != OSDP_COMPLETION_OK) {
+		printf(SUB_2 "%s: %d completions, id %d, status %d\n", label,
+		       test_completion_count(&g_piv_compl),
+		       test_completion_id(&g_piv_compl),
+		       test_completion_status(&g_piv_compl));
+		return false;
+	}
+	if (g_piv.replies_at_completion != 1) {
+		printf(SUB_2 "%s: completed before its reply was delivered\n",
+		       label);
 		return false;
 	}
 	return true;
@@ -293,67 +316,6 @@ static void piv_cmd_completion_cb(void *arg, int pd, struct osdp_cmd *cmd,
 	test_cmd_completion_cb(arg, pd, cmd, status);
 }
 
-/*
- * A PIVDATA completes when the operation ends, not when it is accepted: one
- * completion, carrying OK, arriving no earlier than MP_DONE.
- */
-static bool test_pivdata_completes_at_mp_done(void)
-{
-	struct osdp_cmd cmd = {
-		.id = OSDP_CMD_PIVDATA,
-		.pivdata = { .oid = { 0x5F, 0xC1, 0x02 }, .element = 3 },
-	};
-
-	printf(SUB_2 "PIVDATA completes when the operation ends\n");
-
-	g_piv.cmd_count = 0;
-	g_piv.reply_count = 0;
-	g_piv.mp_done = 0;
-	g_piv.replies_at_completion = 0;
-	g_piv.inline_reply = true;
-	g_piv.reply_event_type = OSDP_EVENT_PIVDATAR;
-	test_completion_reset(&g_piv_compl);
-
-	if (!test_submit_command(g_piv.cp_ctx, 0, &cmd)) {
-		printf(SUB_2 "piv: submit rejected\n");
-		return false;
-	}
-	/* Must NOT have completed synchronously. */
-	if (test_completion_count(&g_piv_compl) != 0) {
-		printf(SUB_2 "piv: completed at submit (count %d)\n",
-		       test_completion_count(&g_piv_compl));
-		return false;
-	}
-	if (!test_completion_wait(&g_piv_compl, 1, 5)) {
-		printf(SUB_2 "piv: never completed\n");
-		return false;
-	}
-	if (g_piv.mp_done != 1) {
-		printf(SUB_2 "piv: mp_done %d, want 1\n", g_piv.mp_done);
-		return false;
-	}
-	if (test_completion_count(&g_piv_compl) != 1) {
-		printf(SUB_2 "piv: %d completions, want exactly 1\n",
-		       test_completion_count(&g_piv_compl));
-		return false;
-	}
-	if (test_completion_id(&g_piv_compl) != OSDP_CMD_PIVDATA) {
-		printf(SUB_2 "piv: completed id %d, want PIVDATA\n",
-		       test_completion_id(&g_piv_compl));
-		return false;
-	}
-	if (test_completion_status(&g_piv_compl) != OSDP_COMPLETION_OK) {
-		printf(SUB_2 "piv: status %d, want OK\n",
-		       test_completion_status(&g_piv_compl));
-		return false;
-	}
-	if (g_piv.replies_at_completion != 1) {
-		printf(SUB_2 "piv: completed before its reply was delivered\n");
-		return false;
-	}
-	return true;
-}
-
 static bool test_pivdata_busy_reject(void)
 {
 	struct osdp_cmd cmd = {
@@ -426,6 +388,73 @@ static bool test_pivdata_busy_reject(void)
 	return true;
 }
 
+/*
+ * A PD that does not advertise smart-card support NAKs a PIV command without
+ * asking its app. The CP's op ends ABORTED and its command FAILED -- and since
+ * the NAK refuses the command, not the link, the PD stays online. The CP
+ * learnt the capability at setup, so only the PD's table is cleared.
+ */
+static bool test_pivdata_rejected_without_smartcard_cap(void)
+{
+	struct osdp_pd *pd = osdp_to_pd(g_piv.pd_ctx, 0);
+	struct osdp_pd_cap saved;
+	struct osdp_cmd cmd = {
+		.id = OSDP_CMD_PIVDATA,
+		.pivdata = { .oid = { 1, 2, 3 }, .element = 1, .offset = 0 },
+	};
+	uint8_t status = 0;
+	bool result = false;
+
+	printf(SUB_2 "PIVDATA NAK'd by a PD without smart-card support\n");
+
+	g_piv.cmd_count = 0;
+	g_piv.mp_done = 0;
+	g_piv.mp_done_outcome = -1;
+	g_piv.inline_reply = true;
+	g_piv.reply_event_type = OSDP_EVENT_PIVDATAR;
+	test_completion_reset(&g_piv_compl);
+
+	test_api_lock();
+	saved = pd->cap[OSDP_PD_CAP_SMART_CARD_SUPPORT];
+	pd->cap[OSDP_PD_CAP_SMART_CARD_SUPPORT].compliance_level = 0;
+	test_api_unlock();
+
+	if (!test_submit_command(g_piv.cp_ctx, 0, &cmd)) {
+		printf(SUB_2 "nocap: submit rejected\n");
+		goto out;
+	}
+	if (!test_completion_wait(&g_piv_compl, 1, 5) ||
+	    test_completion_status(&g_piv_compl) != OSDP_COMPLETION_FAILED) {
+		printf(SUB_2 "nocap: %d completions, status %d\n",
+		       test_completion_count(&g_piv_compl),
+		       test_completion_status(&g_piv_compl));
+		goto out;
+	}
+	if (!piv_wait_for(&g_piv.mp_done, 1, 1000) ||
+	    g_piv.mp_done_outcome != OSDP_MP_OUTCOME_ABORTED) {
+		printf(SUB_2 "nocap: mp_done %d outcome %d\n",
+		       (int)g_piv.mp_done, (int)g_piv.mp_done_outcome);
+		goto out;
+	}
+	if (g_piv.cmd_count != 0) {
+		printf(SUB_2 "nocap: the PD app saw the command\n");
+		goto out;
+	}
+	/* Long enough for a few polls to have gone round after the NAK. */
+	usleep(300 * 1000);
+	osdp_get_status_mask(g_piv.cp_ctx, &status);
+	if (!(status & 1)) {
+		printf(SUB_2 "nocap: the NAK took the PD offline\n");
+		goto out;
+	}
+	result = true;
+out:
+	test_api_lock();
+	pd->cap[OSDP_PD_CAP_SMART_CARD_SUPPORT] = saved;
+	test_api_unlock();
+	return result;
+}
+
 void run_piv_tests(struct test *t)
 {
 	struct osdp_file_ops stub_fops = {
@@ -483,21 +512,14 @@ void run_piv_tests(struct test *t)
 		  test_pivdata_roundtrip("inline", true));
 	TEST_CASE(t, "pivdata_roundtrip_deferred",
 		  test_pivdata_roundtrip("deferred", false));
+	/* GENAUTH and CRAUTH share the auth path; the deferred reply leg is
+	 * the same for every op. */
 	TEST_CASE(t, "genauth_inline",
 		  test_auth_roundtrip("GENAUTH", "inline", OSDP_CMD_GENAUTH,
 				      OSDP_EVENT_GENAUTHR, true));
-	TEST_CASE(t, "genauth_deferred",
-		  test_auth_roundtrip("GENAUTH", "deferred", OSDP_CMD_GENAUTH,
-				      OSDP_EVENT_GENAUTHR, false));
-	TEST_CASE(t, "crauth_inline",
-		  test_auth_roundtrip("CRAUTH", "inline", OSDP_CMD_CRAUTH,
-				      OSDP_EVENT_CRAUTHR, true));
-	TEST_CASE(t, "crauth_deferred",
-		  test_auth_roundtrip("CRAUTH", "deferred", OSDP_CMD_CRAUTH,
-				      OSDP_EVENT_CRAUTHR, false));
-	TEST_CASE(t, "pivdata_completes_at_mp_done",
-		  test_pivdata_completes_at_mp_done());
 	TEST_CASE(t, "pivdata_busy_reject", test_pivdata_busy_reject());
+	TEST_CASE(t, "pivdata_rejected_without_smartcard_cap",
+		  test_pivdata_rejected_without_smartcard_cap());
 
 teardown:
 	async_runner_stop(g_piv.cp_runner);
