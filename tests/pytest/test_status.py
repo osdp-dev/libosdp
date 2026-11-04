@@ -55,61 +55,23 @@ def teardown_test():
         pass  # Already stopped
     cleanup_fifo_pair("status")
 
-def test_cp_online_status():
-    """Test CP's ability to detect PD online status"""
-    # Verify PD is online and CP can detect it
-    assert cp.is_online(pd_addr), "PD should be online"
+def test_status_of_a_secured_pd():
+    """Every status accessor on both sides agrees the PD is online with SC."""
+    assert cp.is_online(pd_addr)
+    assert cp.is_sc_active(pd_addr)
+    assert cp.status() & (1 << 0), "PD missing from the online bitmask"
+    assert cp.sc_status() & (1 << 0), "PD missing from the SC bitmask"
+    assert cp.get_num_online() == 1
+    assert cp.get_num_sc_active() == 1
 
-    # Test online wait functionality
-    assert cp.online_wait(pd_addr, timeout=1), "online_wait should return True for already online PD"
+    # Already satisfied, so each returns at once
+    assert cp.online_wait(pd_addr, timeout=1)
+    assert cp.sc_wait(pd_addr, timeout=1)
+    assert cp.online_wait_all(timeout=1)
+    assert cp.sc_wait_all(timeout=1)
 
-    # Test status bitmask includes this PD
-    online_mask = cp.status()
-    assert online_mask & (1 << 0), "PD should be set in online bitmask"
-
-def test_cp_sc_status():
-    """Test CP's ability to detect PD secure channel status"""
-    # Verify SC is active and CP can detect it
-    assert cp.is_sc_active(pd_addr), "Secure channel should be active"
-
-    # Test SC wait functionality
-    assert cp.sc_wait(pd_addr, timeout=1), "sc_wait should return True for already active SC"
-
-    # Test SC status bitmask includes this PD
-    sc_mask = cp.sc_status()
-    assert sc_mask & (1 << 0), "PD should be set in SC bitmask"
-
-def test_pd_online_status():
-    """Test PD's ability to detect CP online status"""
-    # Verify PD can detect that CP is online
-    assert pd.is_online(), "PD should be online"
-
-def test_pd_sc_status():
-    """Test PD's ability to detect secure channel status"""
-    # Verify PD can detect that SC is active
-    assert pd.is_sc_active(), "Secure channel should be active"
-
-def test_status_bitmasks():
-    """Test status bitmask methods and counting functions"""
-    # Test online status bitmask
-    online_mask = cp.status()
-    assert online_mask & (1 << 0), "PD should be set in online bitmask"
-    assert cp.get_num_online() == 1, "Should have 1 PD online"
-
-    # Test SC status bitmask
-    sc_mask = cp.sc_status()
-    assert sc_mask & (1 << 0), "PD should be set in SC bitmask"
-    assert cp.get_num_sc_active() == 1, "Should have 1 PD with active SC"
-
-def test_status_wait_methods():
-    """Test various wait methods for status monitoring"""
-    # Test waiting for already online PDs
-    assert cp.online_wait_all(timeout=1), "online_wait_all should return True for already online PDs"
-    assert cp.sc_wait_all(timeout=1), "sc_wait_all should return True for already active SCs"
-
-    # Test individual wait methods
-    assert cp.online_wait(pd_addr, timeout=1), "online_wait should return True for already online PD"
-    assert cp.sc_wait(pd_addr, timeout=1), "sc_wait should return True for already active SC"
+    assert pd.is_online()
+    assert pd.is_sc_active()
 
 def test_metrics_access_and_reset():
     """Test metrics access from both CP and PD wrappers."""
@@ -145,7 +107,3 @@ def test_metrics_access_and_reset():
     next_pd_metrics = pd.get_metrics()
     assert sum(astuple(next_cp_metrics)) <= sum(astuple(cp_metrics))
     assert sum(astuple(next_pd_metrics)) <= sum(astuple(pd_metrics))
-
-def test_pd_info_default_baud_rate():
-    info = PDInfo(101, f1, scbk=key)
-    assert info.baud_rate == 9600

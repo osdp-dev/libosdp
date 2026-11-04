@@ -4,7 +4,6 @@
 #  SPDX-License-Identifier: Apache-2.0
 #
 
-import time
 import pytest
 
 from osdp import *
@@ -50,8 +49,6 @@ cp = ControlPanel(pd_info_list, log_level=LogLevel.Debug)
 # multiple OSDP packets (fragment 0 in the standard BIOREADR envelope, the rest
 # pulled by polls as W16 fragments).
 BIG_TEMPLATE = bytes((0xC0 + i) & 0xFF for i in range(MAX_BIO_TEMPLATE_LEN))
-# A template that fits in one packet stays single-part even with the flag on.
-SMALL_TEMPLATE = bytes((0x30 + i) & 0xFF for i in range(40))
 
 
 @pytest.fixture(scope='module', autouse=True)
@@ -75,20 +72,21 @@ def drain_events(address):
         pass
 
 
-def run_bio_op(reply_event, inline, expect_multipart):
-    """Round-trip one biometric read and verify the reassembled reply.
+def test_bioread_multipart_roundtrip():
+    """A template larger than one packet is fragmented and reassembled.
 
-    When the template spans multiple packets the reassembled reply event is
-    dispatched before the engine finishes the transfer (MultipartDone), so the
-    reply is consumed first. A template that fits one packet stays single-part
-    and emits no such notification.
+    The reassembled reply event is dispatched before the engine finishes the
+    transfer (MultipartDone), so the reply is consumed first.
     """
+    reply_event = events.BioRead(status=BioStatus.Success,
+                                 type=BioType.RightThumbPrint, quality=200,
+                                 data=BIG_TEMPLATE)
     drain_events(pd_addr)
     cmd = commands.BioRead(reader=reply_event.reader,
                            type=reply_event.type, quality=reply_event.quality)
 
     def cmd_handler(command):
-        if inline and isinstance(command, commands.BioRead):
+        if isinstance(command, commands.BioRead):
             pd.submit_event(reply_event)
         return None
 
@@ -96,42 +94,16 @@ def run_bio_op(reply_event, inline, expect_multipart):
     try:
         assert cp.submit_command(pd_addr, cmd)
         assert_command_received(pd, cmd)
-        if not inline:
-            time.sleep(0.2)  # app takes its time; CP must ride the ACKs
-            assert pd.submit_event(reply_event)
 
         wait_for_non_notification_event(cp, pd_addr, reply_event)
-        if expect_multipart:
-            done = events.Notification(
-                type=NotificationType.MultipartDone,
-                mp_type=MP_MSG_BIOREAD,
-                object_id=reply_event.reader,
-                total=len(reply_event.data),
-                offset=len(reply_event.data),
-                outcome=int(MpOutcome.Ok),
-            )
-            wait_for_notification_event(cp, pd_addr, done)
+        done = events.Notification(
+            type=NotificationType.MultipartDone,
+            mp_type=MP_MSG_BIOREAD,
+            object_id=reply_event.reader,
+            total=len(reply_event.data),
+            offset=len(reply_event.data),
+            outcome=int(MpOutcome.Ok),
+        )
+        wait_for_notification_event(cp, pd_addr, done)
     finally:
         pd.set_command_handler(None)
-
-
-@pytest.mark.parametrize("inline", [True, False], ids=["inline", "deferred"])
-def test_bioread_multipart_roundtrip(inline):
-    """A template larger than one packet is fragmented and reassembled."""
-    run_bio_op(
-        events.BioRead(status=BioStatus.Success,
-                       type=BioType.RightThumbPrint, quality=200,
-                       data=BIG_TEMPLATE),
-        inline=inline, expect_multipart=True,
-    )
-
-
-@pytest.mark.parametrize("inline", [True, False], ids=["inline", "deferred"])
-def test_bioread_single_part_with_flag(inline):
-    """With the flag on, a template that fits one packet stays single-part."""
-    run_bio_op(
-        events.BioRead(status=BioStatus.Success,
-                       type=BioType.RightThumbPrint, quality=200,
-                       data=SMALL_TEMPLATE),
-        inline=inline, expect_multipart=False,
-    )

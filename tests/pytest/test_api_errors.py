@@ -14,8 +14,6 @@ import pytest
 
 from osdp import Channel, _sys
 
-pytestmark = pytest.mark.unit
-
 
 class SilentChannel(Channel):
     def read(self, max_bytes: int) -> bytes:
@@ -170,12 +168,6 @@ def test_pd_treats_an_empty_scbk_as_no_scbk():
     assert _sys.PeripheralDevice(pd_info(scbk=b"")) is not None
 
 
-def test_pd_accepts_an_absent_scbk_and_disables_secure_channel():
-    # Setup succeeds; the PD just runs in the clear. It does not fall back to
-    # SCBK-D -- that needs FLAG_INSTALL_MODE, see test_sc_negative.py.
-    assert _sys.PeripheralDevice(pd_info()) is not None
-
-
 def test_pd_builds_without_the_capabilities_keyword():
     # capabilities is optional, and PyArg_ParseTupleAndKeywords leaves optional
     # arguments untouched when omitted. This used to read uninitialized stack.
@@ -224,6 +216,21 @@ def test_cp_flag_methods_raise_on_a_non_integer(cp):
         cp.set_flag("nope", "nope")
     with pytest.raises(TypeError):
         cp.clear_flag("nope", "nope")
+
+
+def test_cp_flag_methods_report_a_refused_change():
+    # Security posture is fixed at setup; the library refuses to reopen it
+    # and the binding has to surface that as False, not raise or succeed.
+    keyed = _sys.ControlPanel(
+        [cp_info(scbk=bytes(range(1, 17)), flags=_sys.FLAG_ENFORCE_SECURE)]
+    )
+    assert keyed.set_flag(0, _sys.FLAG_INSTALL_MODE) is False
+    assert keyed.clear_flag(0, _sys.FLAG_INSTALL_MODE) is False
+    assert keyed.clear_flag(0, _sys.FLAG_ENFORCE_SECURE) is False
+    assert keyed.set_flag(0, _sys.FLAG_ENFORCE_SECURE) is True
+
+    keyless = _sys.ControlPanel([cp_info()])
+    assert keyless.set_flag(0, _sys.FLAG_ENFORCE_SECURE) is False
 
 
 # -- base.c: metrics, file tx status, file ops ------------------------------

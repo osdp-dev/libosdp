@@ -16,8 +16,6 @@ import pytest
 from osdp import Capability, KeyStore, PDCapabilities, PDInfo, commands, events
 from conftest import MultidropBus, assert_command_received
 
-pytestmark = [pytest.mark.integration, pytest.mark.multidrop]
-
 ADDRESSES = [101, 102, 103]
 
 
@@ -67,20 +65,6 @@ def test_every_pd_on_the_bus_comes_up(bus_of_three):
     assert cp.get_num_sc_active() == len(ADDRESSES)
 
 
-def test_a_command_reaches_only_the_pd_it_is_addressed_to(bus_of_three):
-    cp, pds = bus_of_three
-
-    # Every PD sees this command go by on the wire; only 102 may act on it.
-    command = commands.Buzzer(on_count=3, off_count=4, rep_count=5)
-    assert cp.submit_command(102, command)
-    assert_command_received(pds[102], command)
-
-    for address in (101, 103):
-        assert pds[address].get_command(timeout=1) is None, (
-            f"PD-{address} acted on a command addressed to PD-102"
-        )
-
-
 def test_each_pd_is_addressed_independently(bus_of_three):
     cp, pds = bus_of_three
 
@@ -95,6 +79,12 @@ def test_each_pd_is_addressed_independently(bus_of_three):
 
     for address, command in sent.items():
         assert_command_received(pds[address], command, timeout=5)
+
+    # Every PD saw all three go by on the wire; each may act on its own only.
+    for address in ADDRESSES:
+        assert pds[address].get_command(timeout=0.1) is None, (
+            f"PD-{address} acted on a command addressed to another PD"
+        )
 
 
 def test_an_event_arrives_tagged_with_the_pd_that_sent_it(bus_of_three):

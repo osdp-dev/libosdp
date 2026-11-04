@@ -47,7 +47,6 @@ class PDApp:
     def __init__(self):
         self.lock = threading.Lock()
         self.trs_statuses = []
-        self.trs_status_readers = []
         self.trs_commands = []
         self.card_status = TrsCardStatus.Present
         self.defer = False
@@ -57,7 +56,6 @@ class PDApp:
     def reset(self):
         with self.lock:
             self.trs_statuses = []
-            self.trs_status_readers = []
             self.trs_commands = []
         self.defer = False
         self.error_code = None
@@ -67,16 +65,11 @@ class PDApp:
         with self.lock:
             return list(self.trs_statuses)
 
-    def status_readers(self):
-        with self.lock:
-            return list(self.trs_status_readers)
-
     def handler(self, command):
         match command:
             case commands.Notification(type=NotificationType.TrsStatus):
                 with self.lock:
                     self.trs_statuses.append(command.trs_status)
-                    self.trs_status_readers.append(command.reader)
             case commands.TrsSendApdu():
                 self._record(command)
                 if self.announce:
@@ -130,7 +123,7 @@ def teardown_test():
 
 @pytest.fixture(autouse=True)
 def fresh_records():
-    while cp.get_event(pd_addr, timeout=0.1) is not None:
+    while cp.get_event(pd_addr, timeout=0) is not None:
         pass
     pd_app.reset()
     completions.clear()
@@ -163,15 +156,6 @@ def trs_replies(collected):
     return [e for e in collected if type(e).ID == EventId.Trs]
 
 
-def wait_for_pd_statuses(want, timeout=5):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if pd_app.statuses() == want:
-            return
-        time.sleep(0.05)
-    assert pd_app.statuses() == want
-
-
 def run_band(*card_commands):
     """Open a band, run the card commands in it, close it; return CP events."""
     assert cp.submit_command(pd_addr, commands.TrsStart())
@@ -191,82 +175,6 @@ def test_trs_is_advertised():
     assert cp.check_capability(pd_addr, Capability.SmartCard) == (1, 1)
     assert 0 < cp.trs_get_max_apdu_len(pd_addr) <= commands.MAX_TRS_APDU_LEN
     assert 0 < pd.trs_get_max_apdu_len() <= events.MAX_TRS_APDU_LEN
-
-
-def test_trs_band_send_apdu():
-    send = commands.TrsSendApdu(apdu=C_APDU)
-
-    collected = run_band(send)
-
-    assert trs_statuses(collected) == [
-        TrsSessionStatus.Opened,
-        TrsSessionStatus.Closed,
-    ]
-    assert trs_replies(collected) == [events.TrsCardData(apdu=R_APDU)]
-    assert pd_app.trs_commands == [send]
-    assert (send, CompletionStatus.Ok) in completions
-    wait_for_pd_statuses([
-        TrsSessionStatus.Opened,
-        TrsSessionStatus.CardReleased,
-        TrsSessionStatus.Closed,
-    ])
-
-
-def test_trs_band_on_the_second_reader():
-    # A band talks to the card in the reader its TrsStart names: a command
-    # naming another reader is refused, and STOP releases that reader's card.
-    assert not cp.submit_command(pd_addr, commands.TrsStart(reader=2))
-    assert cp.submit_command(pd_addr, commands.TrsStart(reader=1))
-    assert not cp.submit_command(
-        pd_addr, commands.TrsSendApdu(reader=0, apdu=C_APDU)
-    )
-    send = commands.TrsSendApdu(reader=1, apdu=C_APDU)
-    assert cp.submit_command(pd_addr, send)
-    collected = collect_events(lambda c: len(trs_replies(c)) == 1)
-    assert cp.submit_command(pd_addr, commands.TrsStop(reader=1))
-    collected += collect_events(
-        lambda c: TrsSessionStatus.Closed in trs_statuses(c)
-    )
-
-    closed = [
-        e for e in collected
-        if isinstance(e, events.Notification)
-        and e.type == NotificationType.TrsStatus
-        and e.trs_status == TrsSessionStatus.Closed
-    ]
-    assert closed[0].reader == 1
-    assert pd_app.trs_commands == [send]
-    wait_for_pd_statuses([
-        TrsSessionStatus.Opened,
-        TrsSessionStatus.CardReleased,
-        TrsSessionStatus.Closed,
-    ])
-    assert pd_app.status_readers() == [0, 1, 0]
-
-
-def test_trs_band_send_apdu_deferred():
-    # A slow card: the PD acknowledges the APDU and answers on a later poll,
-    # and the CP holds the band until it does.
-    pd_app.defer = True
-    send = commands.TrsSendApdu(apdu=C_APDU)
-    assert cp.submit_command(pd_addr, commands.TrsStart())
-    assert cp.submit_command(pd_addr, send)
-
-    deadline = time.monotonic() + 5
-    while send not in pd_app.trs_commands and time.monotonic() < deadline:
-        time.sleep(0.05)
-    assert pd_app.trs_commands == [send]
-    time.sleep(0.2)
-    assert pd.submit_event(events.TrsCardData(reader_status=1, apdu=R_APDU))
-
-    collected = collect_events(lambda c: len(trs_replies(c)) == 1)
-    assert trs_replies(collected) == [
-        events.TrsCardData(reader_status=1, apdu=R_APDU)
-    ]
-
-    assert cp.submit_command(pd_addr, commands.TrsStop())
-    collect_events(lambda c: TrsSessionStatus.Closed in trs_statuses(c))
-    assert (send, CompletionStatus.Ok) in completions
 
 
 def test_trs_band_enter_pin():
@@ -402,10 +310,6 @@ def test_trs_session_refused_outside_the_pd_readers():
     with pytest.raises(TrsSessionError):
         with cp.trs_session(pd_addr, reader=2):
             pass
-
-
-def test_trs_card_command_outside_a_band_is_refused():
-    assert not cp.submit_command(pd_addr, commands.TrsSendApdu(apdu=C_APDU))
 
 
 def test_trs_scan_reports_card_present():

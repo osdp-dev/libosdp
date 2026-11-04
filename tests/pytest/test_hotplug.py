@@ -5,135 +5,66 @@
 #
 
 import time
-import pytest
 
 from osdp import *
 from osdp import commands
-from conftest import (
-    MultidropBus,
-    assert_command_received,
-    wait_for_notification_event,
-    wait_for_non_notification_event,
+from conftest import assert_command_received
+
+pd_addr = 101
+
+BUZZ = commands.Buzzer(
+    control_code=BuzzerControlCode.Off,
+    on_count=1,
+    off_count=1,
+    rep_count=1,
 )
 
-secure_pd_addr = 101
-insecure_pd_addr = 102
 
-bus = MultidropBus(2)
-chn = bus.multidrop_channel()
+def wait_until(predicate, timeout=5):
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.02)
+    return True
 
-key = KeyStore.gen_key()
 
-pd_cap = PDCapabilities([
-    (Capability.OutputControl, 1, 1),
-    (Capability.LEDControl, 1, 1),
-    (Capability.AudibleControl, 1, 1),
-    (Capability.TextOutput, 1, 1),
-])
-
-pd_info_list = [
-    PDInfo(secure_pd_addr, chn, scbk=key, flags=[ LibFlag.EnforceSecure, LibFlag.EnableNotification ]),
-    PDInfo(insecure_pd_addr, chn, flags=[ LibFlag.EnableNotification ])
-]
-
-secure_pd = PeripheralDevice(
-    PDInfo(secure_pd_addr, bus.pd_channel(0), scbk=key, flags=[ LibFlag.EnforceSecure ]),
-    pd_cap,
-    log_level=LogLevel.Debug
-)
-
-insecure_pd = PeripheralDevice(
-    PDInfo(insecure_pd_addr, bus.pd_channel(1)),
-    pd_cap,
-    log_level=LogLevel.Debug
-)
-
-pd_list = [
-    secure_pd,
-    insecure_pd,
-]
-
-cp = ControlPanel(pd_info_list, log_level=LogLevel.Debug)
-
-@pytest.fixture(scope='module', autouse=True)
-def setup_test():
-    for pd in pd_list:
-        pd.start()
-    cp.start()
-    if not cp.online_wait_all(timeout=10):
-        teardown_test()
-        pytest.fail("Failed to bring all PDs online within timeout")
-    yield
-    teardown_test()
-
-def teardown_test():
-    cp.teardown()
-    for pd in pd_list:
-        pd.teardown()
-
-def test_hotplug_enable_already_enabled():
-    assert cp.is_online(secure_pd_addr)
-    assert cp.is_pd_enabled(secure_pd_addr) == True
-
-    result = cp.enable_pd(secure_pd_addr)
-    assert result == False, "enable_pd should return False when PD is already enabled"
-
-def test_hotplug_disable_functionality():
-    assert cp.is_online(secure_pd_addr)
-    assert cp.is_pd_enabled(secure_pd_addr) == True
-
-    result = cp.disable_pd(secure_pd_addr)
-    assert result == True, "disable_pd should return True on success"
-
-    # Allow time for state change processing
-    time.sleep(0.5)
-
-    assert cp.is_pd_enabled(secure_pd_addr) == False, "PD should be disabled after disable_pd"
-
-def test_hotplug_enable_after_disable():
-    cp.disable_pd(secure_pd_addr)
-    time.sleep(0.5)
-    assert cp.is_pd_enabled(secure_pd_addr) == False
-
-    result = cp.enable_pd(secure_pd_addr)
-    assert result == True, "enable_pd should return True on success"
-
-    # Allow time for state change processing and re-initialization
-    time.sleep(1)
-
-    assert cp.is_pd_enabled(secure_pd_addr) == True, "PD should be enabled after enable_pd"
-
-def test_hotplug_set_scbk_only_while_disabled():
-    assert cp.is_pd_enabled(secure_pd_addr)
-    assert not cp.set_scbk(secure_pd_addr, key), \
-        "set_scbk must refuse a PD that is being polled"
-
-    cp.disable_pd(secure_pd_addr)
-    time.sleep(0.5)
-    assert cp.set_scbk(secure_pd_addr, key)
-    assert cp.enable_pd(secure_pd_addr)
-    assert cp.sc_wait(secure_pd_addr, timeout=10), \
-        "PD did not come back on the key set while it was disabled"
-
-def test_hotplug_command_blocking():
-    assert cp.is_pd_enabled(secure_pd_addr) == True
-
-    cmd = commands.Buzzer(
-        control_code=BuzzerControlCode.Off,
-        on_count=1,
-        off_count=1,
-        rep_count=1
+def test_hotplug_disable_rekey_enable(fifo_pair):
+    key = KeyStore.gen_key()
+    cp_chan, pd_chan = fifo_pair()
+    pd = PeripheralDevice(
+        PDInfo(pd_addr, pd_chan, scbk=key, flags=[LibFlag.EnforceSecure]),
+        PDCapabilities([(Capability.AudibleControl, 1, 1)]),
+        log_level=LogLevel.Debug,
     )
+    cp = ControlPanel(
+        [PDInfo(pd_addr, cp_chan, scbk=key, flags=[LibFlag.EnforceSecure])],
+        log_level=LogLevel.Debug,
+    )
+    pd.start()
+    cp.start()
+    try:
+        assert cp.sc_wait(pd_addr, timeout=10)
+        assert cp.is_pd_enabled(pd_addr)
+        assert not cp.enable_pd(pd_addr), "enabling an enabled PD succeeded"
+        assert not cp.set_scbk(pd_addr, key), \
+            "set_scbk must refuse a PD that is being polled"
+        assert cp.submit_command(pd_addr, BUZZ)
+        assert_command_received(pd, BUZZ)
 
-    initial_result = cp.submit_command(secure_pd_addr, cmd)
-    assert initial_result == True, "Commands should be accepted for enabled PDs"
+        # Both calls only post a request; the FSM acts on it later.
+        assert cp.disable_pd(pd_addr)
+        assert wait_until(lambda: not cp.is_pd_enabled(pd_addr)), \
+            "PD never reached the disabled state"
+        assert not cp.submit_command(pd_addr, BUZZ), \
+            "a disabled PD accepted a command"
 
-    cp.disable_pd(secure_pd_addr)
-
-    # Allow time for state change processing
-    time.sleep(0.5)
-
-    assert cp.is_pd_enabled(secure_pd_addr) == False
-
-    disabled_result = cp.submit_command(secure_pd_addr, cmd)
-    assert disabled_result == False, "Commands should be blocked for disabled PDs"
+        assert cp.set_scbk(pd_addr, key)
+        assert cp.enable_pd(pd_addr)
+        assert wait_until(lambda: cp.is_pd_enabled(pd_addr)), \
+            "PD never left the disabled state"
+        assert cp.sc_wait(pd_addr, timeout=10), \
+            "PD did not come back on the key set while it was disabled"
+    finally:
+        cp.teardown()
+        pd.teardown()

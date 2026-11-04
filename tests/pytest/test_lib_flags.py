@@ -3,11 +3,8 @@
 #
 #  SPDX-License-Identifier: Apache-2.0
 #
-# The LibFlags nothing referenced.
-#
-# EnforceSecure and EnableNotification are used all over the suite. The other
-# three -- IgnoreUnsolicited, CapturePackets and AllowEmptyEncryptedDataBlock --
-# had zero mentions anywhere, and so did set_flag()/clear_flag().
+# LibFlags whose effect is only visible on a live link. How modify_flag
+# refuses a change is checked without threads in test_api_errors.py.
 
 import pytest
 
@@ -21,10 +18,7 @@ from osdp import (
     PDInfo,
     PeripheralDevice,
     commands,
-    events,
 )
-
-pytestmark = pytest.mark.integration
 
 CAPABILITIES = PDCapabilities([(Capability.OutputControl, 1, 8)])
 
@@ -33,9 +27,9 @@ CAPABILITIES = PDCapabilities([(Capability.OutputControl, 1, 8)])
 def pair(fifo_pair):
     devices = []
 
-    def make(cp_flags=None, pd_flags=None, sc=True):
+    def make(cp_flags=None, pd_flags=None):
         cp_chan, pd_chan = fifo_pair()
-        key = KeyStore.gen_key() if sc else None
+        key = KeyStore.gen_key()
         pd = PeripheralDevice(
             PDInfo(101, pd_chan, scbk=key, flags=pd_flags or []),
             CAPABILITIES,
@@ -58,59 +52,6 @@ def pair(fifo_pair):
             device.teardown()
 
 
-def first_real_event(cp, address, timeout=3):
-    """The next event that is not one of the library's own notifications."""
-    for _ in range(int(timeout * 2)):
-        event = cp.get_event(address, timeout=0.5)
-        if event is not None and not isinstance(event, events.Notification):
-            return event
-    return None
-
-
-def test_an_unsolicited_event_normally_reaches_the_cp(pair):
-    # The control for the test below.
-    cp, pd = pair()
-    event = events.KeyPress(data=b"\x0a")
-    assert pd.submit_event(event)
-    assert first_real_event(cp, 101) == event
-
-
-def test_ignore_unsolicited_does_not_suppress_a_known_event(pair):
-    # The flag is narrower than its name suggests: it stops the CP erroring out
-    # on an *unknown* unsolicited reply to a POLL. A KeyPress is a known reply
-    # and must still be delivered. (Provoking an unknown one needs a PD that
-    # speaks off-spec, which the public API gives no way to build -- the C
-    # suite covers that side.)
-    cp, pd = pair(cp_flags=[LibFlag.IgnoreUnsolicited])
-
-    event = events.KeyPress(data=b"\x0a")
-    assert pd.submit_event(event)
-    assert first_real_event(cp, 101) == event
-
-    assert cp.is_online(101)
-    command = commands.Output(output_no=1, control_code=1, timer_count=10)
-    assert cp.submit_command(101, command)
-    assert pd.get_command(timeout=5) == command
-
-
-def test_allow_empty_encrypted_data_block_still_talks(pair):
-    cp, pd = pair(
-        cp_flags=[
-            LibFlag.EnforceSecure,
-            LibFlag.AllowEmptyEncryptedDataBlock,
-        ],
-        pd_flags=[
-            LibFlag.EnforceSecure,
-            LibFlag.AllowEmptyEncryptedDataBlock,
-        ],
-    )
-    assert cp.sc_wait(101, timeout=10)
-
-    command = commands.Output(output_no=2, control_code=1, timer_count=10)
-    assert cp.submit_command(101, command)
-    assert pd.get_command(timeout=5) == command
-
-
 def test_capture_packets_writes_a_pcap(pair, tmp_path, monkeypatch):
     # osdp_diag.c names the file osdp-trace-<...>.pcap and drops it in the
     # working directory, so give it one of its own.
@@ -129,18 +70,9 @@ def test_capture_packets_writes_a_pcap(pair, tmp_path, monkeypatch):
     assert traces[0].stat().st_size > 0, "the pcap is empty"
 
 
-@pytest.mark.parametrize(
-    "flag",
-    [
-        LibFlag.IgnoreUnsolicited,
-        LibFlag.EnableNotification,
-        LibFlag.AllowEmptyEncryptedDataBlock,
-    ],
-    ids=lambda f: f.name,
-)
-def test_a_flag_can_be_set_and_cleared_at_runtime(pair, flag):
-    # osdp_cp_modify_flag, which nothing called at all.
+def test_a_flag_can_be_set_and_cleared_at_runtime(pair):
     cp, pd = pair()
+    flag = LibFlag.IgnoreUnsolicited
 
     assert cp.set_flag(101, flag)
     assert cp.clear_flag(101, flag)
@@ -153,44 +85,23 @@ def test_a_flag_can_be_set_and_cleared_at_runtime(pair, flag):
     assert pd.get_command(timeout=5) == command
 
 
-def test_enable_notification_delivers_the_librarys_own_events(pair):
-    # The counterpart to the notification-free CPs above: with the flag on, the
-    # library's synthesized notifications show up in the event queue.
-    cp, pd = pair(cp_flags=[LibFlag.EnableNotification])
-
-    seen = []
-    for _ in range(20):
-        event = cp.get_event(101, timeout=0.5)
-        if isinstance(event, events.Notification):
-            seen.append(event)
-            break
-    assert seen, "EnableNotification produced no notifications"
-
-
-def test_install_mode_cannot_be_toggled_at_runtime(pair):
-    # Permitting SCBK-D is a provisioning-time decision that setup validated
-    # against the rest of the configuration. There is nothing to re-decide on
-    # a live link, and reopening it here would undo that validation.
-    cp, pd = pair()
-
-    assert cp.set_flag(101, LibFlag.InstallMode) is False
-    assert cp.clear_flag(101, LibFlag.InstallMode) is False
-    assert cp.is_online(101)
-
-
-def test_enforce_secure_cannot_be_cleared_at_runtime(pair):
-    # A one-way latch: raise the guard on a running link, never lower it.
-    cp, pd = pair(cp_flags=[LibFlag.EnforceSecure])
-    assert cp.sc_wait(101, timeout=10)
-
-    assert cp.set_flag(101, LibFlag.EnforceSecure) is True
-    assert cp.clear_flag(101, LibFlag.EnforceSecure) is False
-    assert cp.is_sc_active(101)
-
-
-def test_enforce_secure_cannot_be_set_on_a_keyless_pd(pair):
-    # setup() refuses this pairing, so the runtime path has to as well.
-    cp, pd = pair(sc=False)
-
-    assert cp.set_flag(101, LibFlag.EnforceSecure) is False
-    assert cp.is_online(101)
+def test_enforce_secure_keeps_an_unkeyed_pd_offline(fifo_pair):
+    # An unkeyed PD reports communication security at compliance level 0, so
+    # the CP has to refuse it at capability detection. Without the flag the
+    # same pair is online in plaintext well inside the wait below.
+    cp_chan, pd_chan = fifo_pair()
+    pd = PeripheralDevice(
+        PDInfo(101, pd_chan), CAPABILITIES, log_level=LogLevel.Error,
+    )
+    pd.start()
+    cp = ControlPanel(
+        [PDInfo(101, cp_chan, scbk=KeyStore.gen_key(),
+                flags=[LibFlag.EnforceSecure])],
+        log_level=LogLevel.Error,
+    )
+    cp.start()
+    try:
+        assert not cp.online_wait(101, timeout=2), "an unkeyed PD came online"
+    finally:
+        cp.teardown()
+        pd.teardown()

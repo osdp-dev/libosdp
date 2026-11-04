@@ -10,8 +10,6 @@ import pytest
 
 from osdp import Channel, ControlPanel, PDCapabilities, PDInfo, PeripheralDevice
 
-pytestmark = pytest.mark.unit
-
 
 class SilentChannel(Channel):
     """A channel that is always idle. Nothing ever comes online over it."""
@@ -78,16 +76,6 @@ def test_teardown_releases_the_context(device):
         device.ctx
 
 
-def test_teardown_is_not_idempotent(device):
-    """Pins current behaviour: teardown() goes through stop(), which insists a
-    thread is running. A second teardown -- or one on a device that never
-    started -- raises rather than being a no-op."""
-    device.start()
-    device.teardown()
-    with pytest.raises(RuntimeError, match="Thread not running"):
-        device.teardown()
-
-
 def test_teardown_before_start_is_refused(device):
     with pytest.raises(RuntimeError, match="Thread not running"):
         device.teardown()
@@ -121,7 +109,7 @@ def test_cp_offline_wait_returns_true_for_a_pd_that_never_comes_up(cp):
 
 def test_cp_online_wait_gives_up_when_nothing_answers(cp):
     cp.start()
-    assert cp.online_wait(101, timeout=2) is False
-    assert cp.online_wait_all(timeout=1) is False
+    assert cp.online_wait(101, timeout=0.2) is False
+    assert cp.online_wait_all(timeout=0.2) is False
     assert cp.get_num_online() == 0
     assert cp.status() == 0

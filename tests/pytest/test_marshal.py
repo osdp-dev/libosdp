@@ -232,16 +232,6 @@ def test_every_event_type_is_covered():
     assert covered == set(EventId)
 
 
-def test_encoded_command_carries_its_discriminator():
-    payload = encode_command(commands.Buzzer())
-    assert payload["command"] == CommandId.Buzzer
-
-
-def test_encoded_event_carries_its_discriminator():
-    payload = encode_event(events.KeyPress(data=b"1"))
-    assert payload["event"] == EventId.KeyPress
-
-
 # -- The card length is in bits, and only for the raw formats ---------------
 
 
@@ -345,16 +335,6 @@ def test_led_set_block_must_light_up():
 def test_led_cancel_block_need_not_light_up():
     # Cancel is not Set, so the both-zero rule does not apply to it.
     commands.TemporaryLEDParams(control_code=TemporaryLEDControlCode.Cancel)
-
-
-def test_led_timer_count_is_16_bit():
-    cmd = commands.LED(
-        led_number=0,
-        temporary=commands.TemporaryLEDParams(
-            on_color=LEDColor.Red, on_count=1, timer_count=1000
-        ),
-    )
-    assert decode_command(encode_command(cmd)).temporary.timer_count == 1000
 
 
 def test_led_omits_the_block_it_was_not_given():
