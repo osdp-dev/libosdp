@@ -5,7 +5,9 @@
 #
 
 import os
+import shutil
 import socket
+import tempfile
 import pytest
 from osdp import *
 from osdp import commands, events
@@ -307,25 +309,24 @@ class TestUtils:
 _FIFO_REGISTRY = {}
 
 def make_fifo_pair(name):
-    one = f'/tmp/fifo-{name}.one'
-    two = f'/tmp/fifo-{name}.two'
+    """A FIFO channel pair for a module-scoped device that outlives any one
+    test's tmp_path. Each call gets a fresh directory, so concurrent runs
+    cannot collide on the paths."""
+    fifo_dir = tempfile.mkdtemp(prefix=f'osdp-fifo-{name}-')
+    one = os.path.join(fifo_dir, 'one')
+    two = os.path.join(fifo_dir, 'two')
     pair = (FIFOChannel(one, two), FIFOChannel(two, one))
-    _FIFO_REGISTRY[name] = pair
+    _FIFO_REGISTRY[name] = (pair, fifo_dir)
     return pair
 
 def cleanup_fifo_pair(name):
-    pair = _FIFO_REGISTRY.pop(name, None)
-    if pair:
-        for chan in pair:
-            close_fn = getattr(chan, "close", None)
-            if callable(close_fn):
-                close_fn()
-    one = f'/tmp/fifo-{name}.one'
-    two = f'/tmp/fifo-{name}.two'
-    if os.path.exists(one):
-        os.remove(one)
-    if os.path.exists(two):
-        os.remove(two)
+    entry = _FIFO_REGISTRY.pop(name, None)
+    if entry is None:
+        return
+    pair, fifo_dir = entry
+    for chan in pair:
+        chan.close()
+    shutil.rmtree(fifo_dir, ignore_errors=True)
 
 @pytest.fixture(scope='session')
 def utils():

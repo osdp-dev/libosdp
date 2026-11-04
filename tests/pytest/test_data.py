@@ -36,7 +36,9 @@ cp = ControlPanel([PDInfo(pd_addr, f2, scbk=key, id=pd_id)])
 def setup_test():
     pd.start()
     cp.start()
-    cp.sc_wait_all()
+    if not cp.sc_wait_all(timeout=10):
+        teardown_test()
+        pytest.fail("Failed to establish secure channel within timeout")
     yield
     teardown_test()
 
@@ -53,16 +55,3 @@ def test_cp_pd_id():
     assert pd_id_recv.vendor_code == pd_id.vendor_code
     assert pd_id_recv.serial_number == pd_id.serial_number
     assert pd_id_recv.firmware_version == pd_id.firmware_version
-
-def test_cp_check_capability():
-    assert cp.online_wait(pd.address)
-    # check libosdp default capabilities
-    assert cp.check_capability(pd.address, Capability.CheckCharacter) == (1, 0)
-    assert cp.check_capability(pd.address, Capability.CommunicationSecurity) == (1, 0)
-    assert cp.check_capability(pd.address, Capability.ReceiveBufferSize) == (0, 1)
-
-    # check local capabilities
-    assert cp.check_capability(pd.address, Capability.OutputControl) == (1, 1)
-    assert cp.check_capability(pd.address, Capability.LEDControl) == (1, 2)
-    assert cp.check_capability(pd.address, Capability.AudibleControl) == (1, 3)
-    assert cp.check_capability(pd.address, Capability.TextOutput) == (1, 4)

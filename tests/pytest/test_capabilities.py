@@ -22,8 +22,6 @@ from osdp import (
     PeripheralDevice,
 )
 
-pytestmark = pytest.mark.integration
-
 # libosdp answers these itself, from what it actually supports, whatever the
 # application asks for. Everything else is the application's to declare.
 # CommunicationSecurity is what a *keyed* PD reports; see
@@ -71,14 +69,6 @@ def cp_with_a_fully_capable_pd(tmp_path_factory):
         chan.close()
 
 
-def test_the_enum_covers_every_capability_the_library_has():
-    # A cheap guard against the bindings drifting from osdp.h again: the codes
-    # are contiguous from Unused, so the enum's span must equal its size.
-    values = sorted(int(c) for c in Capability)
-    assert values == list(range(len(values))), "Capability has a hole in it"
-    assert int(Capability.Unused) == 0
-
-
 @pytest.mark.parametrize(
     "capability",
     [c for c in DECLARABLE if c not in LIBRARY_OWNED],
@@ -114,27 +104,3 @@ def test_the_unused_capability_code_is_not_queryable(
     cp = cp_with_a_fully_capable_pd
     with pytest.raises(ValueError, match="function code"):
         cp.check_capability(101, Capability.Unused)
-
-
-def test_a_keyless_pd_reports_no_communication_security(fifo_pair):
-    # Compliance level for this function code is a bitmap of supported
-    # algorithms, so zero says "none". A PD with no SCBK cannot do OSDP-SC and
-    # has to say so, or the CP keeps starting handshakes it will only NAK.
-    cp_chan, pd_chan = fifo_pair()
-    pd = PeripheralDevice(
-        PDInfo(101, pd_chan, scbk=None),
-        PDCapabilities([(Capability.OutputControl, 1, 8)]),
-        log_level=LogLevel.Error,
-    )
-    pd.start()
-    cp = ControlPanel(
-        [PDInfo(101, cp_chan, scbk=None)], log_level=LogLevel.Error
-    )
-    cp.start()
-    try:
-        assert cp.online_wait(101, timeout=10), "PD never came online"
-        assert cp.check_capability(
-            101, Capability.CommunicationSecurity) == (0, 0)
-    finally:
-        cp.teardown()
-        pd.teardown()

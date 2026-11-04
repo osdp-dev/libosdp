@@ -144,7 +144,9 @@ def setup_test():
     assert pd.register_file_ops(receiver_fops)
     pd.start()
     cp.start()
-    cp.sc_wait_all()
+    if not cp.sc_wait_all(timeout=10):
+        teardown_test()
+        pytest.fail("Failed to establish secure channel within timeout")
     yield
     teardown_test()
 
@@ -180,8 +182,15 @@ def test_file_tx_abort(utils):
     assert cp.submit_command(101, file_tx_cmd)
     assert pd.get_command() == file_tx_cmd
 
-    # Allow some number of transfers to go through
-    time.sleep(0.5)
+    # Cancel as soon as the first fragment lands, well before the last one
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        status = cp.get_file_tx_status(101)
+        if status is not None and status.offset > 0:
+            break
+        time.sleep(0.01)
+    assert status is not None and 0 < status.offset < FILE_SIZE, \
+        f"transfer not in flight: {status}"
 
     # Nothing else is running, so a mistargeted cancel must be refused.
     assert not cp.cancel(101, MpMsgType.BioRead)

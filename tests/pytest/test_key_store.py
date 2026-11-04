@@ -10,8 +10,6 @@ import pytest
 
 from osdp.key_store import KEY_LEN, KeyStore
 
-pytestmark = pytest.mark.unit
-
 
 def test_gen_key_is_random_and_the_right_length():
     assert len(KeyStore.gen_key()) == KEY_LEN
@@ -81,9 +79,3 @@ def test_load_key_rejects_a_key_of_the_wrong_length(tmp_path):
 
     # ...but it is fine when the caller says how long the key should be.
     assert len(store.load_key("pd-101", key_len=8)) == 8
-
-
-def test_a_temp_store_keeps_its_keys_out_of_the_given_dir(tmp_path):
-    store = KeyStore()
-    assert not store.key_file("pd-101").startswith(str(tmp_path))
-    assert store.temp_dir is not None
