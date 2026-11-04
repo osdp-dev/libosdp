@@ -67,7 +67,8 @@ static int bio_make_bioread(uint8_t *buf, uint8_t type)
 /*
  * The app selects the NAK code by returning its negated value; only the codes
  * an app can know are honoured. Everything else -- including the idiomatic -1
- * -- must fall back to OSDP_PD_NAK_RECORD.
+ * -- must fall back to OSDP_PD_NAK_RECORD. An app that accepts and submits no
+ * reply event gets an ACK. Every row first checks the decoded fields.
  */
 static bool test_bio_nak_code_mapping(struct osdp_pd *pd)
 {
@@ -76,6 +77,7 @@ static bool test_bio_nak_code_mapping(struct osdp_pd *pd)
 		int expected_nak;
 		const char *desc;
 	} cases[] = {
+		{ 0, 0, "accepted and deferred is ACK'd" },
 		{ -OSDP_PD_NAK_BIO_TYPE, OSDP_PD_NAK_BIO_TYPE,
 		  "-NAK_BIO_TYPE selects BIO_TYPE" },
 		{ -OSDP_PD_NAK_BIO_FMT, OSDP_PD_NAK_BIO_FMT,
@@ -97,12 +99,31 @@ static bool test_bio_nak_code_mapping(struct osdp_pd *pd)
 		g_bio_ctx.nak_ret = cases[i].ret;
 		g_bio_ctx.cmd_seen = false;
 
-		len = bio_make_bioread(buf, OSDP_BIO_TYPE_RIGHT_INDEX_FINGER_PRINT);
+		len = bio_make_bioread(buf, OSDP_BIO_TYPE_LEFT_IRIS_SCAN);
 		test_pd_decode_command(pd, buf, len);
 
-		if (!g_bio_ctx.cmd_seen) {
+		if (!g_bio_ctx.cmd_seen ||
+		    g_bio_ctx.last_cmd.id != OSDP_CMD_BIOREAD) {
 			printf(SUB_2 "%s: callback not invoked\n", cases[i].desc);
 			result = false;
+			continue;
+		}
+		if (g_bio_ctx.last_cmd.bioread.type !=
+			    OSDP_BIO_TYPE_LEFT_IRIS_SCAN ||
+		    g_bio_ctx.last_cmd.bioread.format !=
+			    OSDP_BIO_FMT_ANSI_INCITS_378 ||
+		    g_bio_ctx.last_cmd.bioread.quality != 0x80) {
+			printf(SUB_2 "%s: fields decoded incorrectly\n",
+			       cases[i].desc);
+			result = false;
+			continue;
+		}
+		if (cases[i].ret == 0) {
+			if (pd->reply_id != REPLY_ACK) {
+				printf(SUB_2 "%s: expected ACK, got reply %02x\n",
+				       cases[i].desc, pd->reply_id);
+				result = false;
+			}
 			continue;
 		}
 		if (pd->reply_id != REPLY_NAK) {
@@ -124,38 +145,6 @@ static bool test_bio_nak_code_mapping(struct osdp_pd *pd)
 	return result;
 }
 
-/* A BIOREAD that the app accepts is ACK'd when no reply event is submitted */
-static bool test_bio_decode_ok(struct osdp_pd *pd)
-{
-	uint8_t buf[16];
-	int len;
-
-	printf(SUB_2 "testing BIOREAD decode\n");
-
-	g_bio_ctx.nak_ret = 0;
-	g_bio_ctx.cmd_seen = false;
-
-	len = bio_make_bioread(buf, OSDP_BIO_TYPE_LEFT_IRIS_SCAN);
-	test_pd_decode_command(pd, buf, len);
-
-	if (!g_bio_ctx.cmd_seen ||
-	    g_bio_ctx.last_cmd.id != OSDP_CMD_BIOREAD) {
-		printf(SUB_2 "BIOREAD did not reach the app\n");
-		return false;
-	}
-	if (g_bio_ctx.last_cmd.bioread.type != OSDP_BIO_TYPE_LEFT_IRIS_SCAN ||
-	    g_bio_ctx.last_cmd.bioread.format != OSDP_BIO_FMT_ANSI_INCITS_378 ||
-	    g_bio_ctx.last_cmd.bioread.quality != 0x80) {
-		printf(SUB_2 "BIOREAD fields decoded incorrectly\n");
-		return false;
-	}
-	if (pd->reply_id != REPLY_ACK) {
-		printf(SUB_2 "expected ACK when app defers, got %02x\n",
-		       pd->reply_id);
-		return false;
-	}
-	return true;
-}
 
 /* A PD that reports no biometric capability must NAK without asking the app */
 static bool test_bio_capability_gate(struct osdp_pd *pd)
@@ -195,17 +184,18 @@ static bool test_bio_capability_gate(struct osdp_pd *pd)
  * Drive the opt-in multi-part BIOREADR reply path directly: build fragments on
  * a PD-role context and reassemble them on a CP-role context. `total_len` is
  * the template size and `max_len` bounds each fragment; a small max_len forces
- * several fragments, a large one keeps the reply single-part.
+ * several fragments, a large one keeps the reply single-part. `single` says
+ * which: a single-part reply must engage neither side's multipart engine.
  */
 static bool test_bio_multipart_transfer(struct osdp_pd *pd_tx,
 					struct osdp_pd *pd_rx,
 					int total_len, int max_len,
-					const char *label)
+					bool single, const char *label)
 {
 	struct osdp_event ev, out;
 	uint8_t frag[OSDP_EVENT_BIOREADR_MAX_TEMPLATE_LEN + 32];
 	const struct osdp_event *seed = &ev;
-	int i, n, rc = 0, guard;
+	int i, n, rc = 0, guard, frags = 0;
 
 	printf(SUB_2 "%s\n", label);
 
@@ -220,6 +210,12 @@ static bool test_bio_multipart_transfer(struct osdp_pd *pd_tx,
 		ev.bioreadr.data[i] = (uint8_t)(0xC0 + i);
 	}
 	memset(&out, 0, sizeof(out));
+
+	/* A template the sender opens a transfer for, even one that then fits
+	 * fragment 0, announces it with MP_DONE: listen for one. */
+	g_bio_ctx.mp_done_seen = false;
+	if (single)
+		SET_FLAG(pd_tx, PD_FLAG_ENABLE_NOTIF);
 
 	for (guard = 0; guard < 512; guard++) {
 		bool first = (seed != NULL);
@@ -253,6 +249,7 @@ static bool test_bio_multipart_transfer(struct osdp_pd *pd_tx,
 		}
 		rc = osdp_bio_cp_reply_consume(pd_rx, frag, n, &out);
 		seed = NULL;
+		frags++;
 		if (rc != 0) {
 			break;
 		}
@@ -260,6 +257,15 @@ static bool test_bio_multipart_transfer(struct osdp_pd *pd_tx,
 	if (rc != 1) {
 		printf(SUB_2 "%s: reassembly did not complete (rc=%d)\n",
 		       label, rc);
+		return false;
+	}
+	CLEAR_FLAG(pd_tx, PD_FLAG_ENABLE_NOTIF);
+	if (single ? (frags != 1 || g_bio_ctx.mp_done_seen ||
+		      osdp_bio_is_active(pd_rx)) :
+		     frags < 2) {
+		printf(SUB_2 "%s: %d fragments, sender MP_DONE %d, receiver "
+		       "active %d\n", label, frags, g_bio_ctx.mp_done_seen,
+		       osdp_bio_is_active(pd_rx));
 		return false;
 	}
 	osdp_bio_cp_reply_finish(pd_rx);
@@ -417,7 +423,7 @@ static bool test_bio_done_does_not_steal_file_cmd(osdp_t *cp_ctx,
 	}
 
 	/* Now run a whole multi-fragment BIOREADR to DONE on the same PD. */
-	if (!test_bio_multipart_transfer(pd, cp_pd, 200, 64,
+	if (!test_bio_multipart_transfer(pd, cp_pd, 200, 64, false,
 					 "bio reply alongside a file tx")) {
 		goto out;
 	}
@@ -703,18 +709,13 @@ void run_bio_tests(struct test *t)
 	osdp_pd_set_command_callback(pd_ctx, test_bio_command_callback,
 				     &g_bio_ctx);
 
-	TEST_CASE(t, "bio_decode_ok", test_bio_decode_ok(pd));
 	TEST_CASE(t, "bio_nak_code_mapping", test_bio_nak_code_mapping(pd));
 	TEST_CASE(t, "bio_capability_gate", test_bio_capability_gate(pd));
-	/* A template that spans several fragments round-trips, and one that
-	 * fits a single packet stays single-part. */
-	TEST_CASE(t, "bio_multipart_multi_fragment",
-		  test_bio_multipart_transfer(
-			  pd, cp_pd, 200, 64,
-			  "multi-fragment BIOREADR reassembles"));
+	/* bio_done_does_not_steal_file_cmd runs the multi-fragment
+	 * round-trip; this is its single-packet counterpart. */
 	TEST_CASE(t, "bio_multipart_single_packet",
 		  test_bio_multipart_transfer(
-			  pd, cp_pd, 30, 200,
+			  pd, cp_pd, 30, 200, true,
 			  "single-packet BIOREADR stays single-part"));
 	TEST_CASE(t, "bio_done_does_not_steal_file_cmd",
 		  test_bio_done_does_not_steal_file_cmd(cp, pd, cp_pd));

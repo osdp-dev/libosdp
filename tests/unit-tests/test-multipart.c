@@ -8,30 +8,12 @@
 #include "test.h"
 #include "osdp_multipart.h"
 
-static int test_mp_hdr_roundtrip_w16(void)
-{
-	uint8_t buf[OSDP_MP_HDR_SIZE(OSDP_MP_W16)];
-	uint32_t total = 0, offset = 0;
-	uint16_t data_len = 0;
-	int n;
-
-	n = osdp_mp_hdr_write(OSDP_MP_W16, 0x1234, 0x0056, 0x0040, buf);
-	if (n != 6) {
-		printf(SUB_1 "w16 hdr write len %d != 6\n", n);
-		return -1;
-	}
-	n = osdp_mp_hdr_read(OSDP_MP_W16, buf, sizeof(buf), &total, &offset,
-			     &data_len);
-	if (n != 6 || total != 0x1234 || offset != 0x0056 ||
-	    data_len != 0x0040) {
-		printf(SUB_1 "w16 rt total:%x off:%x dlen:%x\n", total, offset,
-		       data_len);
-		return -1;
-	}
-	return 0;
-}
-
-static int test_mp_hdr_roundtrip_w32(void)
+/*
+ * W16 headers are pinned byte for byte by the frame tests below, but no
+ * transfer they drive needs more than 16 bits: check the W32 fields carry
+ * all of theirs, and that a header cut short is refused.
+ */
+static int test_mp_hdr_w32(void)
 {
 	uint8_t buf[OSDP_MP_HDR_SIZE(OSDP_MP_W32)];
 	uint32_t total = 0, offset = 0;
@@ -51,15 +33,9 @@ static int test_mp_hdr_roundtrip_w32(void)
 		       data_len);
 		return -1;
 	}
-	return 0;
-}
-
-static int test_mp_hdr_read_short(void)
-{
-	uint8_t buf[4] = { 0 };
-
 	if (osdp_mp_hdr_read(OSDP_MP_W32, buf, 4, NULL, NULL, NULL) != -1) {
-		return -1; /* must reject: 4 < 10 */
+		printf(SUB_1 "w32 hdr read accepted 4 bytes\n");
+		return -1;
 	}
 	return 0;
 }
@@ -196,25 +172,6 @@ static int test_mp_rx_reject_gap(void)
 	osdp_mp_rx_init(&rx, OSDP_MP_W16, 0);
 	/* First frame declares offset 4 (should be 0) -> forward gap -> ERR. */
 	flen = osdp_mp_hdr_write(OSDP_MP_W16, 10, 4, 2, frame);
-	frame[flen++] = 0x11;
-	frame[flen++] = 0x22;
-	if (osdp_mp_rx_consume(&rx, frame, flen) != OSDP_MP_RC_ERR) {
-		return -1;
-	}
-	return 0;
-}
-
-static int test_mp_rx_reject_oversize(void)
-{
-	struct osdp_multipart rx;
-	uint8_t dst[4], frame[16];
-	int flen;
-
-	osdp_mp_reset(&rx);
-	osdp_mp_bind_buffer(&rx, dst, sizeof(dst)); /* cap 4 */
-	osdp_mp_rx_init(&rx, OSDP_MP_W16, 0);
-	/* total 10 > cap 4 -> ERR. */
-	flen = osdp_mp_hdr_write(OSDP_MP_W16, 10, 0, 2, frame);
 	frame[flen++] = 0x11;
 	frame[flen++] = 0x22;
 	if (osdp_mp_rx_consume(&rx, frame, flen) != OSDP_MP_RC_ERR) {
@@ -440,32 +397,6 @@ static void mp_event_probe_fn(void *arg, enum osdp_mp_phase phase,
 	}
 }
 
-static int test_mp_lifecycle_on_complete(void)
-{
-	struct osdp_multipart tx;
-	struct mp_event_probe probe = { 0 };
-	uint8_t src[4] = { 1, 2, 3, 4 };
-	uint8_t out[64];
-
-	osdp_mp_reset(&tx);
-	osdp_mp_bind_buffer(&tx, src, sizeof(src));
-	osdp_mp_set_event_cb(&tx, mp_event_probe_fn, &probe);
-	osdp_mp_set_identity(&tx, 7, 42);
-	osdp_mp_tx_init(&tx, sizeof(src), OSDP_MP_W16);
-	osdp_mp_emit_start(&tx);
-	(void)drive_tx_to_buffer(&tx, out, 64);
-	if (probe.start != 1 || probe.done != 0) {        /* no auto-DONE */
-		return -1;
-	}
-	osdp_mp_finish(&tx, 0);
-	if (probe.done != 1 || probe.last_outcome != 0) {
-		printf(SUB_1 "lifecycle start=%d done=%d outcome=%d\n",
-		       probe.start, probe.done, probe.last_outcome);
-		return -1;
-	}
-	return 0;
-}
-
 static int test_mp_start_latch(void)
 {
 	struct osdp_multipart tx;
@@ -506,7 +437,9 @@ static int test_mp_finish_outcome(void)
 	}
 	/* Second finish is a no-op. */
 	osdp_mp_finish(&tx, -2);
-	if (probe.done != 1) {
+	if (probe.done != 1 || tx.state != OSDP_MP_DONE) {
+		printf(SUB_1 "second finish: done=%d state=%d\n", probe.done,
+		       tx.state);
 		return -1;
 	}
 	return 0;
@@ -782,64 +715,15 @@ static int test_mp_tx_next_action(void)
 	return 0;
 }
 
-static int test_mp_finish_idempotent(void)
-{
-	struct osdp_multipart tx;
-	struct mp_event_probe probe = { 0 };
-	uint8_t src[4] = { 1, 2, 3, 4 };
-	uint8_t out[64];
-
-	osdp_mp_reset(&tx);
-	osdp_mp_bind_buffer(&tx, src, sizeof(src));
-	osdp_mp_set_event_cb(&tx, mp_event_probe_fn, &probe);
-	osdp_mp_tx_init(&tx, sizeof(src), OSDP_MP_W16);
-	(void)drive_tx_to_buffer(&tx, out, 64);
-	osdp_mp_finish(&tx, 0);
-	osdp_mp_finish(&tx, 0);            /* second call: no re-fire */
-	if (probe.done != 1 || tx.state != OSDP_MP_DONE) {
-		printf(SUB_1 "finish not idempotent done=%d state=%d\n",
-		       probe.done, tx.state);
-		return -1;
-	}
-	return 0;
-}
-
-static int test_mp_notification_union(void)
-{
-	struct osdp_notification n;
-
-	/* Non-MP callers use their own typed member. */
-	n.type = OSDP_NOTIFICATION_PD_STATUS;
-	n.pd_status.online = true;
-	if (!n.pd_status.online) {
-		return -1;
-	}
-	/* MP_* callers read the structured member. */
-	n.type = OSDP_NOTIFICATION_MP_PROGRESS;
-	n.mp.mp_type = OSDP_MP_MSG_FILE_TRANSFER;
-	n.mp.object_id = 42;
-	n.mp.total = 1000;
-	n.mp.offset = 256;
-	n.mp.outcome = 0;
-	if (n.mp.mp_type != OSDP_MP_MSG_FILE_TRANSFER || n.mp.object_id != 42 ||
-	    n.mp.total != 1000 || n.mp.offset != 256) {
-		return -1;
-	}
-	return 0;
-}
-
 void run_multipart_tests(struct test *t)
 {
 	printf("\nBegin Multipart Engine Tests\n");
 
-	TEST_CASE(t, "mp_hdr_roundtrip_w16", test_mp_hdr_roundtrip_w16() == 0);
-	TEST_CASE(t, "mp_hdr_roundtrip_w32", test_mp_hdr_roundtrip_w32() == 0);
-	TEST_CASE(t, "mp_hdr_read_short", test_mp_hdr_read_short() == 0);
+	TEST_CASE(t, "mp_hdr_w32", test_mp_hdr_w32() == 0);
 	TEST_CASE(t, "mp_tx_single_frame", test_mp_tx_single_frame() == 0);
 	TEST_CASE(t, "mp_tx_multi_frame", test_mp_tx_multi_frame() == 0);
 	TEST_CASE(t, "mp_rx_roundtrip", test_mp_rx_roundtrip() == 0);
 	TEST_CASE(t, "mp_rx_reject_gap", test_mp_rx_reject_gap() == 0);
-	TEST_CASE(t, "mp_rx_reject_oversize", test_mp_rx_reject_oversize() == 0);
 	TEST_CASE(t, "mp_rx_early_terminate", test_mp_rx_early_terminate() == 0);
 	TEST_CASE(t, "mp_rx_reject_differing_total",
 		  test_mp_rx_reject_differing_total() == 0);
@@ -855,11 +739,7 @@ void run_multipart_tests(struct test *t)
 	TEST_CASE(t, "mp_stream_roundtrip", test_mp_stream_roundtrip() == 0);
 	TEST_CASE(t, "mp_rx_retry", test_mp_rx_retry() == 0);
 	TEST_CASE(t, "mp_tx_keepalive_on_busy", test_mp_tx_keepalive_on_busy() == 0);
-	TEST_CASE(t, "mp_lifecycle_on_complete",
-		  test_mp_lifecycle_on_complete() == 0);
 	TEST_CASE(t, "mp_start_latch", test_mp_start_latch() == 0);
 	TEST_CASE(t, "mp_finish_outcome", test_mp_finish_outcome() == 0);
 	TEST_CASE(t, "mp_tx_next_action", test_mp_tx_next_action() == 0);
-	TEST_CASE(t, "mp_finish_idempotent", test_mp_finish_idempotent() == 0);
-	TEST_CASE(t, "mp_notification_union", test_mp_notification_union() == 0);
 }

@@ -27,7 +27,7 @@ struct test_data {
 	int empty_read_count;  /* observed 0-length reads */
 	/*
 	 * Tolerate an open() that arrives with the previous transfer's
-	 * descriptor still around. Only the restart-from-completion case needs
+	 * descriptor still around. Only the restart-from-completion probe needs
 	 * it: the engine closes the file after the completion callback, so a
 	 * transfer started from inside that callback would otherwise be
 	 * refused by the fops rather than by the engine under test.
@@ -593,21 +593,17 @@ error:
 
 void run_file_tx_tests(struct test *t)
 {
+	/* The app also tries to start the next transfer from inside the
+	 * completion, which the engine must refuse with -1. */
 	struct file_tx_opts opts = {
 		.label = "baseline (no host busy)",
 		.expected_outcome = OSDP_MP_OUTCOME_OK,
 		.wait_deciseconds = 600, /* 60s */
 		.verify_content = true,
+		.restart_from_completion = true,
 	};
 
 	TEST_CASE(t, "file_tx_baseline", run_one_file_tx_case(t, &opts));
-
-	/* Same transfer, but the app tries to start the next one from inside
-	 * the completion -- which the engine must refuse with -1. */
-	opts.label = "restart from completion";
-	opts.restart_from_completion = true;
-	TEST_CASE(t, "file_tx_restart_from_completion",
-		  run_one_file_tx_case(t, &opts));
 }
 
 void run_file_tx_no_notification_tests(struct test *t)
@@ -712,7 +708,7 @@ static void ka_make_stat(uint8_t *b, int status)
  * libosdp's PD never emits KEEP_ALIVE on the wire, so the loopback harness
  * cannot reach this path — it is pinned here by driving the codec directly.
  */
-void run_file_tx_pd_keep_alive_tests(struct test *t)
+static bool file_tx_pd_keep_alive(struct test *t)
 {
 	bool result = false;
 	osdp_t *cp_ctx = NULL, *pd_ctx = NULL;
@@ -837,7 +833,12 @@ teardown:
 	osdp_cp_teardown(cp_ctx);
 	osdp_pd_teardown(pd_ctx);
 done:
-	TEST_CASE(t, "file_tx_pd_keep_alive", result);
+	return result;
+}
+
+void run_file_tx_pd_keep_alive_tests(struct test *t)
+{
+	TEST_CASE(t, "file_tx_pd_keep_alive", file_tx_pd_keep_alive(t));
 }
 
 /*
@@ -846,7 +847,7 @@ done:
  * take it, end the transfer as aborted, and report success to the CP state
  * machine so it keeps the PD online.
  */
-void run_file_tx_pd_abort_status_tests(struct test *t)
+static bool file_tx_pd_abort_status(struct test *t)
 {
 	bool result = false;
 	osdp_t *cp_ctx = NULL, *pd_ctx = NULL;
@@ -911,7 +912,12 @@ teardown:
 	osdp_cp_teardown(cp_ctx);
 	osdp_pd_teardown(pd_ctx);
 done:
-	TEST_CASE(t, "file_tx_pd_abort_status", result);
+	return result;
+}
+
+void run_file_tx_pd_abort_status_tests(struct test *t)
+{
+	TEST_CASE(t, "file_tx_pd_abort_status", file_tx_pd_abort_status(t));
 }
 
 static int g_empty_open_calls;
@@ -934,7 +940,7 @@ static int empty_fops_close(void *arg)
 }
 
 /* A file that opens but is empty is refused, and must be closed again. */
-void run_file_tx_empty_file_tests(struct test *t)
+static bool file_tx_empty_file(struct test *t)
 {
 	bool result = false;
 	osdp_t *cp_ctx = NULL, *pd_ctx = NULL;
@@ -972,14 +978,19 @@ teardown:
 	osdp_cp_teardown(cp_ctx);
 	osdp_pd_teardown(pd_ctx);
 done:
-	TEST_CASE(t, "file_tx_empty_file", result);
+	return result;
+}
+
+void run_file_tx_empty_file_tests(struct test *t)
+{
+	TEST_CASE(t, "file_tx_empty_file", file_tx_empty_file(t));
 }
 
 /*
  * File ops are part of setup: a transfer can only be under way once the
  * context has been refreshed, so after that the ops are fixed.
  */
-void run_file_register_ops_setup_only_tests(struct test *t)
+static bool file_register_ops_setup_only(struct test *t)
 {
 	bool result = false;
 	osdp_t *cp_ctx = NULL, *pd_ctx = NULL;
@@ -1014,116 +1025,18 @@ teardown:
 	osdp_cp_teardown(cp_ctx);
 	osdp_pd_teardown(pd_ctx);
 done:
-	TEST_CASE(t, "file_register_ops_setup_only", result);
+	return result;
+}
+
+void run_file_register_ops_setup_only_tests(struct test *t)
+{
+	TEST_CASE(t, "file_register_ops_setup_only",
+		  file_register_ops_setup_only(t));
 }
 
 static int16_t stat_reply_status(const uint8_t *stat)
 {
 	return (int16_t)(stat[3] | ((uint16_t)stat[4] << 8));
-}
-
-/*
- * Exercises the receiver-side idle-frame path directly: a header-only frame
- * with offset >= total is the keep-alive a CP sends after FTSTAT status 3
- * ("finishing", OSDP 2.2 §7.25). The PD must ACK it without advancing the
- * offset and without tearing the transfer down — in the FILETRANSFER family
- * this encoding is NOT the §5.10.2 early termination.
- */
-void run_file_rx_idle_frame_tests(struct test *t)
-{
-	bool result = false;
-	osdp_t *cp_ctx = NULL, *pd_ctx = NULL;
-	struct osdp_pd *pd;
-	struct osdp_file *f;
-	uint8_t frame[64], stat[16], data[16];
-	const uint32_t total = 32;
-	const int hdr = OSDP_MP_HDR_SIZE(OSDP_MP_W32);
-	int n;
-
-	printf("\nBegin file transfer test: receiver idle frame\n");
-
-	memset(&receiver_data, 0, sizeof(receiver_data));
-	receiver_data.is_cp = false;
-
-	struct osdp_file_ops recv_ops = {
-		.arg = (void *)&receiver_data,
-		.open = test_fops_open,
-		.read = test_fops_read,
-		.write = test_fops_write,
-		.close = test_fops_close
-	};
-
-	if (test_setup_devices(t, &cp_ctx, &pd_ctx)) {
-		printf(SUB_1 "Failed to setup devices!\n");
-		goto done;
-	}
-	unlink(REC_FILE);
-	osdp_file_register_ops(pd_ctx, 0, &recv_ops);
-	pd = osdp_to_pd((struct osdp *)pd_ctx, 0);
-	f = TO_FILE(pd);
-	memset(data, 0xA5, sizeof(data));
-
-	/* First data frame opens the transfer: total=32, off=0, dlen=16. */
-	frame[0] = 1;
-	osdp_mp_hdr_write(OSDP_MP_W32, total, 0, 16, frame + 1);
-	memcpy(frame + 1 + hdr, data, 16);
-	if (osdp_file_cmd_tx_decode(pd, frame, 1 + hdr + 16) < 0) {
-		printf(SUB_1 "idle: first frame rejected\n");
-		goto teardown;
-	}
-	n = osdp_file_cmd_stat_build(pd, stat, sizeof(stat));
-	if (n < 0 || stat_reply_status(stat) != KA_STATUS_ACK ||
-	    f->mp.offset != 16) {
-		printf(SUB_1 "idle: first ack n=%d status=%d off=%u\n", n,
-		       stat_reply_status(stat), f->mp.offset);
-		goto teardown;
-	}
-
-	/* Idle frame: off == total, zero length. Must be ACKed with no
-	 * offset movement and no teardown. */
-	frame[0] = 1;
-	osdp_mp_hdr_write(OSDP_MP_W32, total, total, 0, frame + 1);
-	if (osdp_file_cmd_tx_decode(pd, frame, 1 + hdr) < 0) {
-		printf(SUB_1 "idle: idle frame rejected\n");
-		goto teardown;
-	}
-	if (!osdp_file_tx_is_active(pd) || f->mp.offset != 16) {
-		printf(SUB_1 "idle: idle frame ended/advanced transfer\n");
-		goto teardown;
-	}
-	n = osdp_file_cmd_stat_build(pd, stat, sizeof(stat));
-	if (n < 0 || stat_reply_status(stat) != KA_STATUS_ACK ||
-	    f->mp.offset != 16 || !osdp_file_tx_is_active(pd)) {
-		printf(SUB_1 "idle: ping ack n=%d status=%d off=%u\n", n,
-		       stat_reply_status(stat), f->mp.offset);
-		goto teardown;
-	}
-
-	/* Final data frame completes the transfer normally. */
-	frame[0] = 1;
-	osdp_mp_hdr_write(OSDP_MP_W32, total, 16, 16, frame + 1);
-	memcpy(frame + 1 + hdr, data, 16);
-	if (osdp_file_cmd_tx_decode(pd, frame, 1 + hdr + 16) < 0) {
-		printf(SUB_1 "idle: final frame rejected\n");
-		goto teardown;
-	}
-	n = osdp_file_cmd_stat_build(pd, stat, sizeof(stat));
-	if (n < 0 ||
-	    stat_reply_status(stat) != KA_STATUS_CONTENTS_PROCESSED ||
-	    osdp_file_tx_is_active(pd)) {
-		printf(SUB_1 "idle: completion n=%d status=%d active=%d\n", n,
-		       stat_reply_status(stat), osdp_file_tx_is_active(pd));
-		goto teardown;
-	}
-	result = true;
-	printf(SUB_1 "receiver idle frame: succeeded\n");
-
-teardown:
-	unlink(REC_FILE);
-	osdp_cp_teardown(cp_ctx);
-	osdp_pd_teardown(pd_ctx);
-done:
-	TEST_CASE(t, "file_rx_idle_frame", result);
 }
 
 /* Wire statuses this suite asserts but osdp_file.c did not previously emit. */
@@ -1205,7 +1118,9 @@ static int fin_drive_to_eof(struct osdp_pd *pd, uint8_t *stat, size_t stat_len)
 }
 
 /* Send one CP idle keep-alive (header-only at offset == total) and return the
- * wire status of the PD's reply, or -100 on a harness failure. */
+ * wire status of the PD's reply, or -100 on a harness failure. For a file
+ * transfer that header is a keep-alive, not a multi-part early termination,
+ * so the PD must hold the transfer open. */
 static int fin_ping(struct osdp_pd *pd, uint8_t *stat, size_t stat_len)
 {
 	const uint32_t total = 32;
@@ -1243,7 +1158,7 @@ static void fin_reset_app_state(int busy_calls, enum osdp_mp_outcome outcome)
  * meant wire status 1 and immediate teardown; a PD could neither hold the
  * transfer open while it worked on the file nor report why it refused one.
  */
-void run_file_rx_finalize_tests(struct test *t)
+static bool file_rx_finalize(struct test *t)
 {
 	bool result = false;
 	osdp_t *cp_ctx = NULL, *pd_ctx = NULL;
@@ -1389,7 +1304,12 @@ teardown:
 	osdp_cp_teardown(cp_ctx);
 	osdp_pd_teardown(pd_ctx);
 done:
-	TEST_CASE(t, "file_rx_finalize", result);
+	return result;
+}
+
+void run_file_rx_finalize_tests(struct test *t)
+{
+	TEST_CASE(t, "file_rx_finalize", file_rx_finalize(t));
 }
 
 /*
@@ -1400,7 +1320,7 @@ done:
  *  - a malformed MID-TRANSFER frame must leave the transfer open so the CP
  *    can retry, and the transfer must still complete afterwards.
  */
-void run_file_rx_reject_paths_tests(struct test *t)
+static bool file_rx_reject_paths(struct test *t)
 {
 	bool result = false;
 	osdp_t *cp_ctx = NULL, *pd_ctx = NULL;
@@ -1505,7 +1425,12 @@ teardown:
 	osdp_cp_teardown(cp_ctx);
 	osdp_pd_teardown(pd_ctx);
 done:
-	TEST_CASE(t, "file_rx_reject_paths", result);
+	return result;
+}
+
+void run_file_rx_reject_paths_tests(struct test *t)
+{
+	TEST_CASE(t, "file_rx_reject_paths", file_rx_reject_paths(t));
 }
 
 void run_file_tx_permanent_busy_tests(struct test *t)

@@ -17,17 +17,7 @@
  * and secure-channel (SCBK-D/session key/cryptogram/R-MAC-I) vectors.
  */
 
-static uint8_t ref_checksum(const uint8_t *msg, int length)
-{
-	uint8_t checksum = 0;
-	int i, whole_checksum = 0;
-
-	for (i = 0; i < length; i++) {
-		whole_checksum += msg[i];
-		checksum = ~(0xff & whole_checksum) + 1;
-	}
-	return checksum;
-}
+extern uint8_t test_osdp_compute_checksum(uint8_t *msg, int length);
 
 static void u16_to_le_bytes(uint16_t val, uint8_t out[2])
 {
@@ -87,22 +77,22 @@ static int test_checksum_vectors(void *data)
 	ARG_UNUSED(data);
 
 	/* Annex E / Checksum Example 1 */
-	static const uint8_t msg1[] = {
+	uint8_t msg1[] = {
 		0x53, 0x7F, 0x0C, 0x00, 0x00, 0x6E, 0x00, 0x80,
 		0x25, 0x00, 0x00
 	};
 
 	/* Annex E / Checksum Example 2 */
-	static const uint8_t msg2[] = {
+	uint8_t msg2[] = {
 		0x53, 0x00, 0x08, 0x00, 0x00, 0x61, 0x00
 	};
 
-	if (ref_checksum(msg1, sizeof(msg1)) != 0x0F) {
+	if (test_osdp_compute_checksum(msg1, sizeof(msg1)) != 0x0F) {
 		printf("error! checksum example 1 mismatch\n");
 		return -1;
 	}
 
-	if (ref_checksum(msg2, sizeof(msg2)) != 0x44) {
+	if (test_osdp_compute_checksum(msg2, sizeof(msg2)) != 0x44) {
 		printf("error! checksum example 2 mismatch\n");
 		return -1;
 	}
