@@ -296,7 +296,12 @@ int test_setup_devices_keys(struct test *t, osdp_t **cp, osdp_t **pd,
 osdp_t *test_setup_cp(uint32_t flags, const uint8_t *scbk);
 bool test_wait_for_online(osdp_t *cp_ctx, int pd_idx, int timeout_sec);
 
-/* Poll @cond(@arg) every 10ms until it holds; false once @timeout_ms passes. */
+/*
+ * Poll @cond(@arg) every 10ms until it holds; false once @timeout_ms passes.
+ * @cond runs under the API lock, so it may read state that callbacks write
+ * from inside refresh, and pd internals, without further locking. It must
+ * not block.
+ */
 bool test_wait_until(bool (*cond)(void *arg), void *arg, int timeout_ms);
 
 /*
@@ -330,14 +335,33 @@ void test_set_channel_hook(test_channel_hook_fn fn, void *arg);
  * refresh. It is recursive because callbacks run inside refresh, submit
  * and flush, and may call back into the API.
  *
- * The macros below route every mutating call a suite makes through a
- * locked wrapper, so a suite cannot make an unserialized call by accident.
- * The getters the library documents as exempt stay unwrapped. Inside the
- * harness, a wrapper reaches the real function by parenthesizing its name,
- * which suppresses the macro.
+ * The macros below route every call a suite makes through a locked wrapper,
+ * getters included, so a suite cannot make an unserialized call by accident.
+ * Inside the harness, a wrapper reaches the real function by parenthesizing
+ * its name, which suppresses the macro.
  */
 void test_api_lock(void);
 void test_api_unlock(void);
+
+/*
+ * Evaluate @expr, or store @val into @lv, under the API lock: for state that
+ * a callback writes from inside refresh, or a pd internal, touched by the
+ * test thread while a runner refreshes.
+ */
+#define TEST_LOCKED_READ(expr)                                                 \
+	({                                                                     \
+		__typeof__(expr) test_locked_v_;                               \
+		test_api_lock();                                               \
+		test_locked_v_ = (expr);                                       \
+		test_api_unlock();                                             \
+		test_locked_v_;                                                \
+	})
+#define TEST_LOCKED_WRITE(lv, val)                                             \
+	do {                                                                   \
+		test_api_lock();                                               \
+		(lv) = (val);                                                  \
+		test_api_unlock();                                             \
+	} while (0)
 
 void test_api_cp_refresh(osdp_t *ctx);
 void test_api_pd_refresh(osdp_t *ctx);
@@ -371,6 +395,11 @@ int test_api_cp_trs_scan_enable(osdp_t *ctx, int pd,
 				const struct osdp_trs_scan_params *params);
 int test_api_cp_trs_scan_disable(osdp_t *ctx, int pd);
 int test_api_cp_trs_get_max_apdu_len(const osdp_t *ctx, int pd);
+void test_api_get_status_mask(const osdp_t *ctx, uint8_t *bitmask);
+void test_api_get_sc_status_mask(const osdp_t *ctx, uint8_t *bitmask);
+int test_api_get_file_tx_status(const osdp_t *ctx, int pd, uint32_t *size,
+				uint32_t *offset);
+int test_api_cp_get_pd_id(const osdp_t *ctx, int pd, struct osdp_pd_id *id);
 
 #define osdp_cp_refresh(...)	      test_api_cp_refresh(__VA_ARGS__)
 #define osdp_pd_refresh(...)	      test_api_pd_refresh(__VA_ARGS__)
@@ -402,6 +431,10 @@ int test_api_cp_trs_get_max_apdu_len(const osdp_t *ctx, int pd);
 #define osdp_cp_trs_scan_disable(...) test_api_cp_trs_scan_disable(__VA_ARGS__)
 #define osdp_cp_trs_get_max_apdu_len(...)                                      \
 	test_api_cp_trs_get_max_apdu_len(__VA_ARGS__)
+#define osdp_get_status_mask(...)     test_api_get_status_mask(__VA_ARGS__)
+#define osdp_get_sc_status_mask(...)  test_api_get_sc_status_mask(__VA_ARGS__)
+#define osdp_get_file_tx_status(...)  test_api_get_file_tx_status(__VA_ARGS__)
+#define osdp_cp_get_pd_id(...)	      test_api_cp_get_pd_id(__VA_ARGS__)
 
 int async_runner_start(osdp_t *ctx, void (*fn)(osdp_t *));
 int async_runner_stop(int runner);

@@ -186,8 +186,13 @@ static bool stg_pd_is_disabled(void *arg)
 /* `pd` runs on `key` as its main key and holds nothing staged. */
 static bool stg_settled_on(struct osdp_pd *pd, const uint8_t *key)
 {
-	return memcmp(pd->sc.scbk, key, 16) == 0 &&
-	       !ISSET_FLAG(pd, PD_FLAG_SCBK_STAGED);
+	bool settled;
+
+	test_api_lock();
+	settled = memcmp(pd->sc.scbk, key, 16) == 0 &&
+		  !ISSET_FLAG(pd, PD_FLAG_SCBK_STAGED);
+	test_api_unlock();
+	return settled;
 }
 
 /* The CP app got its KEYSET back exactly once, with `status`. */

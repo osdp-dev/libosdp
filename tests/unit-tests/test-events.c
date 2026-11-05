@@ -563,7 +563,9 @@ static bool test_event_reply_degraded_to_nak_completes_failed()
 	test_completion_reset(&g_ev_compl);
 
 	pd = osdp_to_pd(g_test_ctx.pd_ctx, 0);
+	test_api_lock();
 	pd->peer_rx_size = 128; /* OSDP_MINIMUM_PACKET_SIZE */
+	test_api_unlock();
 
 	if (!test_submit_event(g_test_ctx.pd_ctx, &event)) {
 		printf(SUB_2 "failed to submit event\n");
@@ -610,10 +612,14 @@ static bool test_event_reply_degraded_to_nak_completes_failed()
  * (pd->peer_rx_size, normally set by CMD_ACURXSIZE) below
  * OSDP_MINIMUM_PACKET_SIZE for the reply to this event's POLL.
  *
- * The clamp is written from this thread while the PD refresh thread reads
- * it: a deliberate test-only poke at library-internal state, since no API
- * reaches it. Do not copy this pattern outside fault injection.
+ * The clamp is a deliberate test-only poke at library-internal state, since
+ * no API reaches it. Do not copy this pattern outside fault injection.
  */
+static bool pd_has_peer_rx_size(void *arg)
+{
+	return ((struct osdp_pd *)arg)->peer_rx_size != 0;
+}
+
 static bool test_event_reply_build_failure_completes()
 {
 	static struct osdp_event bad_event = {
@@ -624,6 +630,7 @@ static bool test_event_reply_build_failure_completes()
 		},
 	};
 	struct osdp_pd *pd;
+	struct osdp_event *submitted;
 
 	printf(SUB_2 "testing completion on reply build failure\n");
 	reset_test_state();
@@ -631,16 +638,17 @@ static bool test_event_reply_build_failure_completes()
 
 	/* The CP's osdp_ACURXSIZE would overwrite the clamp; let it land first */
 	pd = osdp_to_pd(g_test_ctx.pd_ctx, 0);
-	for (int i = 0; i < 200 && pd->peer_rx_size == 0; i++) {
-		usleep(10 * 1000);
-	}
+	test_wait_until(pd_has_peer_rx_size, pd, 2000);
 
-	if (!test_submit_event(g_test_ctx.pd_ctx, &bad_event)) {
+	test_api_lock();
+	submitted = test_submit_event(g_test_ctx.pd_ctx, &bad_event);
+	if (submitted)
+		pd->peer_rx_size = 8;
+	test_api_unlock();
+	if (!submitted) {
 		printf(SUB_2 "failed to submit event\n");
 		return false;
 	}
-
-	pd->peer_rx_size = 8;
 
 	if (!test_completion_wait(&g_ev_compl, 1, 5)) {
 		printf(SUB_2 "no completion for un-sendable event\n");

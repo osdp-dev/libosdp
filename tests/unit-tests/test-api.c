@@ -276,3 +276,38 @@ int test_api_cp_trs_get_max_apdu_len(const osdp_t *ctx, int pd)
 	test_api_unlock();
 	return rc;
 }
+
+void test_api_get_status_mask(const osdp_t *ctx, uint8_t *bitmask)
+{
+	test_api_lock();
+	(osdp_get_status_mask)(ctx, bitmask);
+	test_api_unlock();
+}
+
+void test_api_get_sc_status_mask(const osdp_t *ctx, uint8_t *bitmask)
+{
+	test_api_lock();
+	(osdp_get_sc_status_mask)(ctx, bitmask);
+	test_api_unlock();
+}
+
+int test_api_get_file_tx_status(const osdp_t *ctx, int pd, uint32_t *size,
+				uint32_t *offset)
+{
+	int rc;
+
+	test_api_lock();
+	rc = (osdp_get_file_tx_status)(ctx, pd, size, offset);
+	test_api_unlock();
+	return rc;
+}
+
+int test_api_cp_get_pd_id(const osdp_t *ctx, int pd, struct osdp_pd_id *id)
+{
+	int rc;
+
+	test_api_lock();
+	rc = (osdp_cp_get_pd_id)(ctx, pd, id);
+	test_api_unlock();
+	return rc;
+}

@@ -179,6 +179,24 @@ static void busy_test_teardown(void)
 	memset(&g_ctx, 0, sizeof(g_ctx));
 }
 
+static void forget_pd_command(void)
+{
+	test_api_lock();
+	g_ctx.cmd_seen = false;
+	g_ctx.last_cmd_id = 0;
+	test_api_unlock();
+}
+
+/* Have the PD app answer @cmd_id with BUSY @answers times before taking it */
+static void pd_app_busy_for(int cmd_id, int answers)
+{
+	test_api_lock();
+	g_ctx.busy_cmd_id = cmd_id;
+	g_ctx.busy_answers = answers;
+	g_ctx.busy_cmd_calls = 0;
+	test_api_unlock();
+}
+
 static bool pd_command_seen(void *arg)
 {
 	return g_ctx.cmd_seen && g_ctx.last_cmd_id == *(int *)arg;
@@ -227,8 +245,7 @@ static bool test_busy_retry_reuses_sequence(void)
 
 	printf(SUB_1 "busy retry reuses sequence -- ");
 
-	g_ctx.cmd_seen = false;
-	g_ctx.last_cmd_id = 0;
+	forget_pd_command();
 	test_completion_reset(&g_ctx.completion);
 	test_set_channel_hook(busy_hook, &s);
 
@@ -288,8 +305,7 @@ static bool test_busy_permanent_fails_command_softly(void)
 
 	printf(SUB_1 "permanent busy fails command softly -- ");
 
-	g_ctx.cmd_seen = false;
-	g_ctx.last_cmd_id = 0;
+	forget_pd_command();
 	test_completion_reset(&g_ctx.completion);
 	test_set_channel_hook(busy_hook, &s);
 
@@ -321,7 +337,7 @@ static bool test_busy_permanent_fails_command_softly(void)
 		       1 + OSDP_CMD_MAX_RETRIES, s.seq_count);
 		return false;
 	}
-	if (g_ctx.cmd_seen) {
+	if (TEST_LOCKED_READ(g_ctx.cmd_seen)) {
 		printf("PD saw a command that was never delivered!\n");
 		return false;
 	}
@@ -364,8 +380,7 @@ static bool wait_for_secure_online(int timeout_sec)
 /* A buzzer command must still get through, and under the secure channel. */
 static bool link_carries_next_command(void)
 {
-	g_ctx.cmd_seen = false;
-	g_ctx.last_cmd_id = 0;
+	forget_pd_command();
 	test_completion_reset(&g_ctx.completion);
 	if (!wait_for_secure_online(10)) {
 		printf("secure channel did not come back!\n");
@@ -395,12 +410,11 @@ static bool test_pd_app_busy_then_ack(void)
 	struct busy_hook_state s = {
 		.target_cmd = CMD_BUZ,
 	};
+	int busy_cmd_calls;
 
 	printf(SUB_1 "PD app busy, then ACK -- ");
 
-	g_ctx.busy_cmd_id = OSDP_CMD_BUZZER;
-	g_ctx.busy_answers = 2;
-	g_ctx.busy_cmd_calls = 0;
+	pd_app_busy_for(OSDP_CMD_BUZZER, 2);
 	test_completion_reset(&g_ctx.completion);
 	test_set_channel_hook(busy_hook, &s);
 
@@ -415,7 +429,8 @@ static bool test_pd_app_busy_then_ack(void)
 		return false;
 	}
 	test_set_channel_hook(NULL, NULL);
-	g_ctx.busy_cmd_id = 0;
+	busy_cmd_calls = TEST_LOCKED_READ(g_ctx.busy_cmd_calls);
+	pd_app_busy_for(0, 0);
 
 	if (test_completion_first_id(&g_ctx.completion) != OSDP_CMD_BUZZER ||
 	    test_completion_first_status(&g_ctx.completion) !=
@@ -425,9 +440,9 @@ static bool test_pd_app_busy_then_ack(void)
 		       test_completion_first_status(&g_ctx.completion));
 		return false;
 	}
-	if (g_ctx.busy_cmd_calls != 3) {
+	if (busy_cmd_calls != 3) {
 		printf("expected 3 calls into the app, saw %d!\n",
-		       g_ctx.busy_cmd_calls);
+		       busy_cmd_calls);
 		return false;
 	}
 	if (s.busy_replies != 2) {
@@ -461,12 +476,11 @@ static bool test_pd_app_busy_on_comset_done(void)
 			.baud_rate = 9600,
 		},
 	};
+	int busy_cmd_calls;
 
 	printf(SUB_1 "PD app busy on COMSET_DONE changes nothing -- ");
 
-	g_ctx.busy_cmd_id = OSDP_CMD_COMSET_DONE;
-	g_ctx.busy_answers = 1;
-	g_ctx.busy_cmd_calls = 0;
+	pd_app_busy_for(OSDP_CMD_COMSET_DONE, 1);
 	test_completion_reset(&g_ctx.completion);
 
 	if (!test_submit_command(g_ctx.cp_ctx, 0, &cmd)) {
@@ -479,12 +493,13 @@ static bool test_pd_app_busy_on_comset_done(void)
 		printf("COMSET did not complete!\n");
 		return false;
 	}
-	if (g_ctx.busy_cmd_calls != 1) {
+	busy_cmd_calls = TEST_LOCKED_READ(g_ctx.busy_cmd_calls);
+	if (busy_cmd_calls != 1) {
 		printf("expected 1 COMSET_DONE call, saw %d!\n",
-		       g_ctx.busy_cmd_calls);
+		       busy_cmd_calls);
 		return false;
 	}
-	g_ctx.busy_cmd_id = 0;
+	pd_app_busy_for(0, 0);
 	if (!link_carries_next_command())
 		return false;
 

@@ -708,6 +708,11 @@ static bool test_cp_rx_size_nak_keeps_pd_online(struct test *t)
 	return result;
 }
 
+static bool pd_has_peer_rx_size(void *arg)
+{
+	return ((struct osdp_pd *)arg)->peer_rx_size != 0;
+}
+
 /* Over a real link, the PD learns the CP's receive size, secure channel and all */
 static bool test_cp_tells_pd_its_rx_size(struct test *t)
 {
@@ -715,6 +720,7 @@ static bool test_cp_tells_pd_its_rx_size(struct test *t)
 	struct osdp_pd *pd;
 	int cp_runner, pd_runner;
 	bool result = false;
+	uint16_t peer_rx_size;
 
 	printf(SUB_1 "the CP tells the PD its receive size\n");
 
@@ -729,12 +735,13 @@ static bool test_cp_tells_pd_its_rx_size(struct test *t)
 		printf(SUB_2 "PD never came online\n");
 		goto out;
 	}
-	for (int i = 0; i < 200 && pd->peer_rx_size == 0; i++) {
-		usleep(10 * 1000);
-	}
-	if (pd->peer_rx_size != OSDP_PACKET_BUF_SIZE) {
+	test_wait_until(pd_has_peer_rx_size, pd, 2000);
+	test_api_lock();
+	peer_rx_size = pd->peer_rx_size;
+	test_api_unlock();
+	if (peer_rx_size != OSDP_PACKET_BUF_SIZE) {
 		printf(SUB_2 "PD holds receive size %u, want %d\n",
-		       pd->peer_rx_size, OSDP_PACKET_BUF_SIZE);
+		       peer_rx_size, OSDP_PACKET_BUF_SIZE);
 		goto out;
 	}
 	result = true;

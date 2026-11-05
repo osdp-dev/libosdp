@@ -211,6 +211,17 @@ static struct file_tx_notification g_notif;
 
 static struct test_completion g_compl;
 
+/* g_notif is written by the CP event callback, inside refresh. */
+static struct file_tx_notification file_tx_notif_snapshot(void)
+{
+	struct file_tx_notification snap;
+
+	test_api_lock();
+	snap = g_notif;
+	test_api_unlock();
+	return snap;
+}
+
 static int event_callback(void *arg, int pd, struct osdp_event *ev)
 {
 	ARG_UNUSED(arg);
@@ -289,6 +300,7 @@ static bool run_one_file_tx_case(struct test *t, const struct file_tx_opts *opts
 	osdp_t *cp_ctx, *pd_ctx;
 	int cp_runner = -1, pd_runner = -1;
 	uint8_t status = 0;
+	struct file_tx_notification notif;
 
 	memset(&g_notif, 0, sizeof(g_notif));
 	memset(&sender_data, 0, sizeof(sender_data));
@@ -424,7 +436,7 @@ static bool run_one_file_tx_case(struct test *t, const struct file_tx_opts *opts
 
 	if (!opts->no_notifications) {
 		rc = 0;
-		while (g_notif.count == 0) {
+		while (file_tx_notif_snapshot().count == 0) {
 			if (test_completion_count(&g_compl) != 0) {
 				printf(SUB_1 "completed before MP_DONE\n");
 				goto error;
@@ -438,24 +450,25 @@ static bool run_one_file_tx_case(struct test *t, const struct file_tx_opts *opts
 			}
 		}
 
-		if (g_notif.count != 1) {
+		notif = file_tx_notif_snapshot();
+		if (notif.count != 1) {
 			printf(SUB_1 "notification fired %d times; "
-			       "expected 1\n", g_notif.count);
+			       "expected 1\n", notif.count);
 			goto error;
 		}
-		if (g_notif.type != OSDP_NOTIFICATION_MP_DONE) {
+		if (notif.type != OSDP_NOTIFICATION_MP_DONE) {
 			printf(SUB_1 "unexpected notification type: %d\n",
-			       g_notif.type);
+			       notif.type);
 			goto error;
 		}
-		if (g_notif.arg0 != 1) {
+		if (notif.arg0 != 1) {
 			printf(SUB_1 "unexpected file_id: %d (want 1)\n",
-			       g_notif.arg0);
+			       notif.arg0);
 			goto error;
 		}
-		if (g_notif.arg1 != opts->expected_outcome) {
+		if (notif.arg1 != opts->expected_outcome) {
 			printf(SUB_1 "unexpected outcome: %d (want %d)\n",
-			       g_notif.arg1, opts->expected_outcome);
+			       notif.arg1, opts->expected_outcome);
 			goto error;
 		}
 	}
@@ -468,8 +481,9 @@ static bool run_one_file_tx_case(struct test *t, const struct file_tx_opts *opts
 		printf(SUB_1 "file tx never completed\n");
 		goto error;
 	}
+	notif = file_tx_notif_snapshot();
 	if (opts->no_notifications &&
-	    g_notif.count + g_notif.start + g_notif.progress != 0) {
+	    notif.count + notif.start + notif.progress != 0) {
 		printf(SUB_1 "notifications fired while disabled\n");
 		goto error;
 	}
@@ -506,10 +520,10 @@ static bool run_one_file_tx_case(struct test *t, const struct file_tx_opts *opts
 
 	if (opts->verify_content) {
 		if (!opts->no_notifications &&
-		    (g_notif.start != 1 || g_notif.progress < 1)) {
+		    (notif.start != 1 || notif.progress < 1)) {
 			printf(SUB_1 "unexpected lifecycle: start=%d progress=%d "
 			       "(want start==1, progress>=1)\n",
-			       g_notif.start, g_notif.progress);
+			       notif.start, notif.progress);
 			goto error;
 		}
 		result = test_check_rec_file();
@@ -560,9 +574,9 @@ static bool run_one_file_tx_case(struct test *t, const struct file_tx_opts *opts
 		const int min_retries = 5;
 		/* START is delivered even when no fragment ever commits, so a
 		 * DONE never arrives without a preceding START. */
-		if (g_notif.start != 1) {
+		if (notif.start != 1) {
 			printf(SUB_1 "aborted transfer: start=%d (want 1)\n",
-			       g_notif.start);
+			       notif.start);
 			goto error;
 		}
 		if (sender_data.empty_read_count < min_retries) {

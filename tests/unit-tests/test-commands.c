@@ -267,6 +267,7 @@ static void teardown_test_environment()
 
 static void reset_test_state()
 {
+	test_api_lock();
 	atomic_store(&g_test_ctx.cmd_seen, false);
 	g_test_ctx.last_cmd_id = 0;
 	atomic_store(&g_test_ctx.event_seen, false);
@@ -286,6 +287,7 @@ static void reset_test_state()
 		free(g_test_ctx.last_event_data);
 		g_test_ctx.last_event_data = NULL;
 	}
+	test_api_unlock();
 }
 
 static bool command_seen(void *arg)
@@ -374,7 +376,7 @@ static bool test_bio_command(int cmd_id, int event_type, const char *name,
 	printf(SUB_2 "testing %s (%s reply)\n", name,
 	       answer_inline ? "inline" : "deferred");
 	reset_test_state();
-	g_test_ctx.bio_answer_inline = answer_inline;
+	TEST_LOCKED_WRITE(g_test_ctx.bio_answer_inline, answer_inline);
 
 	if (cmd_id == OSDP_CMD_BIOREAD) {
 		cmd.bioread.type = OSDP_BIO_TYPE_RIGHT_INDEX_FINGER_PRINT;
@@ -912,7 +914,7 @@ static bool test_mfg_command_nack_soft_fail()
 {
 	printf(SUB_2 "testing manufacturer command NAK soft-fail\n");
 	reset_test_state();
-	g_test_ctx.mfg_nak_requested = true;
+	TEST_LOCKED_WRITE(g_test_ctx.mfg_nak_requested, true);
 
 	struct osdp_cmd cmd = {
 		.id = OSDP_CMD_MFG,
@@ -1032,7 +1034,7 @@ static bool test_mfg_command_inline_reply(int event_type, const char *name,
 
 	printf(SUB_2 "testing inline %s reply to manufacturer command\n", name);
 	reset_test_state();
-	g_test_ctx.mfg_inline_reply = event_type;
+	TEST_LOCKED_WRITE(g_test_ctx.mfg_inline_reply, event_type);
 
 	struct osdp_cmd cmd = {
 		.id = OSDP_CMD_MFG,

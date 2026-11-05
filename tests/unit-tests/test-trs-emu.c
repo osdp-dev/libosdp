@@ -45,6 +45,17 @@ struct trs_emu_ctx {
 
 static struct trs_emu_ctx g_emu;
 
+/* The callbacks fill g_emu, and play the card, from inside refresh */
+#define EMU_GET(field)	    TEST_LOCKED_READ(g_emu.field)
+#define EMU_SET(field, val) TEST_LOCKED_WRITE(g_emu.field, val)
+
+static void emu_set_card_present(bool present)
+{
+	test_api_lock();
+	emu_card_set_present(&g_emu.card, present);
+	test_api_unlock();
+}
+
 /* Answer BUSY (plaintext, CRC, SQN 0) to the next N XWR commands seen */
 struct emu_busy_hook {
 	int busy_remaining;
@@ -286,7 +297,7 @@ static bool emu_session(enum osdp_trs_cmd_e command,
 {
 	static struct osdp_cmd cmd;
 
-	g_emu.status_seen = false;
+	EMU_SET(status_seen, false);
 	cmd = (struct osdp_cmd){
 		.id = OSDP_CMD_XWR,
 		.trs = { .command = command },
@@ -306,9 +317,11 @@ static int emu_xfer(const uint8_t *capdu, int clen, uint8_t *rapdu,
 		    int max_rlen)
 {
 	static struct osdp_cmd cmd;
+	struct osdp_trs_reply last_reply;
+	bool event_seen;
 	int rlen;
 
-	g_emu.event_seen = false;
+	EMU_SET(event_seen, false);
 	test_completion_reset(&g_emu.completion);
 
 	cmd = (struct osdp_cmd){
@@ -322,15 +335,19 @@ static int emu_xfer(const uint8_t *capdu, int clen, uint8_t *rapdu,
 		return -1;
 	}
 	emu_wait_completion(15000);
-	if (!test_completion_count(&g_emu.completion) || !g_emu.event_seen ||
-	    g_emu.last_reply.reply != OSDP_TRS_REPLY_CARD_DATA) {
+	test_api_lock();
+	event_seen = g_emu.event_seen;
+	last_reply = g_emu.last_reply;
+	test_api_unlock();
+	if (!test_completion_count(&g_emu.completion) || !event_seen ||
+	    last_reply.reply != OSDP_TRS_REPLY_CARD_DATA) {
 		return -1;
 	}
-	rlen = g_emu.last_reply.card_data.apdu.length;
+	rlen = last_reply.card_data.apdu.length;
 	if (rlen > max_rlen) {
 		return -1;
 	}
-	memcpy(rapdu, g_emu.last_reply.card_data.apdu.data, rlen);
+	memcpy(rapdu, last_reply.card_data.apdu.data, rlen);
 	return rlen;
 }
 
@@ -361,7 +378,7 @@ static bool test_emu_piv_certificate_read(void)
 
 	printf(SUB_2 "testing emu PIV certificate read\n");
 
-	emu_card_set_present(&g_emu.card, true);
+	emu_set_card_present(true);
 
 	if (!emu_session(OSDP_TRS_CMD_START, OSDP_TRS_SESSION_OPENED)) {
 		printf(SUB_2 "session did not open\n");
@@ -433,13 +450,13 @@ static bool test_emu_permanent_busy_fails_softly(void)
 
 	printf(SUB_2 "testing emu permanently busy reader\n");
 
-	emu_card_set_present(&g_emu.card, true);
+	emu_set_card_present(true);
 	if (!emu_session(OSDP_TRS_CMD_START, OSDP_TRS_SESSION_OPENED)) {
 		printf(SUB_2 "session did not open\n");
 		return false;
 	}
 
-	g_emu.status_seen = false;
+	EMU_SET(status_seen, false);
 	test_completion_reset(&g_emu.completion);
 	test_set_channel_hook(emu_busy_hook_fn, &s);
 	if (emu_xfer(capdu, sizeof(capdu), rapdu, sizeof(rapdu)) >= 0) {
@@ -488,7 +505,7 @@ static struct osdp_event g_rpk40_ev;
  * app received it */
 static bool emu_rpk40_standard_read(void)
 {
-	g_emu.cardread_seen = false;
+	EMU_SET(cardread_seen, false);
 	if (!emu_wait_mode(TRS_MODE_00, 5000)) {
 		printf(SUB_2 "reader never in default mode\n");
 		return false;
@@ -531,7 +548,7 @@ static bool test_emu_rpk40_time_slice(void)
 
 	printf(SUB_2 "testing emu RPK40 mode time-slicing\n");
 
-	emu_card_set_present(&g_emu.card, false);
+	emu_set_card_present(false);
 	if (osdp_cp_trs_scan_enable(g_emu.cp_ctx, 0, &p)) {
 		printf(SUB_2 "failed to enable scan\n");
 		return false;
@@ -543,8 +560,8 @@ static bool test_emu_rpk40_time_slice(void)
 	}
 
 	/* A smart card arrives; only a probe can see it */
-	g_emu.event_seen = false;
-	emu_card_set_present(&g_emu.card, true);
+	EMU_SET(event_seen, false);
+	emu_set_card_present(true);
 	if (!emu_wait_mode(TRS_MODE_01, 5000)) {
 		printf(SUB_2 "no probe to sight the smart card in\n");
 		return false;
@@ -564,7 +581,7 @@ static bool test_emu_rpk40_time_slice(void)
 		return false;
 	}
 	if (!emu_wait_flag(&g_emu.event_seen, 3000) ||
-	    g_emu.last_reply.reply != OSDP_TRS_REPLY_CARD_PRESENT) {
+	    EMU_GET(last_reply.reply) != OSDP_TRS_REPLY_CARD_PRESENT) {
 		printf(SUB_2 "sighting never reached the app\n");
 		return false;
 	}
@@ -576,7 +593,7 @@ static bool test_emu_rpk40_time_slice(void)
 	}
 
 	/* The card leaves; ordinary credentials must keep working */
-	emu_card_set_present(&g_emu.card, false);
+	emu_set_card_present(false);
 	if (!emu_rpk40_standard_read()) {
 		return false;
 	}
