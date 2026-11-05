@@ -97,7 +97,7 @@ jobs:
             ) </dev/null >/dev/null 2>&1 &
           done
       - name: Build and smoke-test wheels
-        uses: pypa/cibuildwheel@v4.2.0
+        uses: pypa/cibuildwheel@v4.3.4
         with:
           package-dir: python/
           output-dir: wheelhouse
