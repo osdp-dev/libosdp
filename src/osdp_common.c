@@ -213,7 +213,7 @@ const char *osdp_cmd_name(int cmd_id)
 		return "INVALID";
 	}
 	name = names[cmd_id - CMD_POLL];
-	if (name[0] == '\0') {
+	if (!name) {
 		return "UNKNOWN";
 	}
 	return name;

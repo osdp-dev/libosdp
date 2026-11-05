@@ -684,6 +684,31 @@ static bool modify_flag_rejection_is_all_or_nothing(void)
 	return ok;
 }
 
+/*
+ * 0x63 sits inside the command ID range but has no assigned command. Before a
+ * session is up, ENFORCE_SECURE must turn it away with a plain NAK, the same
+ * as any other command outside the handshake allow-list.
+ */
+static bool enforce_secure_naks_unassigned_command(void)
+{
+	struct osdp *ctx = scp_pd_setup(scp_scbk, OSDP_FLAG_ENFORCE_SECURE);
+	uint8_t pkt[SCP_BUF_MAX];
+	struct osdp_pd *pd;
+	bool ok;
+	int len;
+
+	if (!ctx) {
+		return false;
+	}
+	pd = osdp_to_pd(ctx, 0);
+	len = scp_build_cmd(0, NULL, 0, 0x63, NULL, 0, pkt);
+	scp_exchange(ctx, pkt, len);
+	ok = scp_reply_byte(pd, 0) == REPLY_NAK &&
+	     scp_reply_byte(pd, 1) == OSDP_PD_NAK_SC_COND;
+	osdp_pd_teardown((osdp_t *)ctx);
+	return ok;
+}
+
 void run_sc_policy_tests(struct test *t)
 {
 	printf("\nStarting sc_policy tests\n");
@@ -700,6 +725,8 @@ void run_sc_policy_tests(struct test *t)
 		  sc_active_rejects_command_under_scs13());
 	TEST_CASE(t, "sc_active_allows_chlng_restart_under_scs11",
 		  sc_active_allows_chlng_restart_under_scs11());
+	TEST_CASE(t, "enforce_secure_naks_unassigned_command",
+		  enforce_secure_naks_unassigned_command());
 	TEST_CASE(t, "keyless_pd_disables_sc", keyless_pd_disables_sc());
 	TEST_CASE(t, "scbk_d_main_key_is_treated_as_absent",
 		  scbk_d_main_key_is_treated_as_absent());
