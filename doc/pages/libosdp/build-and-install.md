@@ -168,7 +168,7 @@ The same options are exposed by `configure.sh` flags for the lean build.
 | `--static`            | `OPT_OSDP_STATIC`             | OFF     | Build without dynamic memory allocation   |
 | `--lib-only`          | `OPT_OSDP_LIB_ONLY`           | OFF     | Only build the library                    |
 | `--crypto LIB`        | `OPT_OSDP_CRYPTO_BACKEND`     | `auto`  | Crypto backend (auto/openssl/mbedtls/tinyaes) |
-| N/A                   | `OPT_BUILD_SANITIZER`         | OFF     | Enable ASan/UBSan/LSan                    |
+| N/A                   | `OPT_BUILD_SANITIZER`         | OFF     | `address` (ASan/UBSan/LSan) or `thread` (TSan) |
 | N/A                   | `OPT_BUILD_SHARED`            | ON      | Build shared library                      |
 | N/A                   | `OPT_BUILD_STATIC`            | ON      | Build static library                      |
 | `--bare-metal`        | `OPT_BUILD_BARE_METAL`        | OFF     | Build for bare-metal targets              |

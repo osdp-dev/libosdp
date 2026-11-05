@@ -90,6 +90,32 @@ jobs:
         name: junit-results
         path: junit/*.xml
 
+  Sanitizers:
+    name: Unit tests (${{ matrix.sanitizer }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer: [address, thread]
+    env:
+      # Any report fails its suite, which fails the job.
+      ASAN_OPTIONS: abort_on_error=1:detect_leaks=1
+      UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+      TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        submodules: recursive
+    # ThreadSanitizer cannot map its shadow memory under the runner's
+    # default mmap ASLR entropy and aborts before main().
+    - name: Lower mmap ASLR entropy
+      if: matrix.sanitizer == 'thread'
+      run: sudo sysctl vm.mmap_rnd_bits=28
+    - name: Configure
+      run: cmake -DCMAKE_BUILD_TYPE=Debug -DOPT_BUILD_SANITIZER=${{ matrix.sanitizer }} .
+    - name: Run unit-tests
+      run: cmake --build . --parallel 7 --target check
+
   CheckPatch:
     runs-on: ubuntu-latest
     steps:

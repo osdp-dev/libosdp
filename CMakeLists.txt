@@ -49,7 +49,9 @@ option(OPT_OSDP_SKIP_MARK_BYTE "Don't send the leading mark byte (0xFF)" OFF)
 option(OPT_OSDP_RX_ZERO_COPY "Enable zero-copy RX buffers (requires recv_pkt/release_pkt)" OFF)
 option(OPT_OSDP_LOG_MINIMAL "Minimize logger RAM/stack usage for embedded targets" OFF)
 option(OPT_DISABLE_PRETTY_LOGGING "Don't colorize log ouputs" OFF)
-option(OPT_BUILD_SANITIZER "Enable different sanitizers during build" OFF)
+set(OPT_BUILD_SANITIZER "OFF" CACHE STRING
+	"Sanitizer to build everything with: OFF, address, or thread")
+set_property(CACHE OPT_BUILD_SANITIZER PROPERTY STRINGS OFF address thread)
 option(OPT_BUILD_STATIC "Build static library" ON)
 option(OPT_BUILD_SHARED "Build shared library" ON)
 option(OPT_OSDP_STATIC "Build without dynamic memory allocation" OFF)
@@ -78,6 +80,21 @@ else()
 	# required so _Static_assert (used by the IS_ENABLED self-test in
 	# utils/src/utils.c) is recognised as a keyword.
 	add_compile_options(/Zc:preprocessor /std:c11)
+endif()
+
+# Applied to every target, utils/ included: ThreadSanitizer misses races in
+# code it did not instrument, and AddressSanitizer would miss overflows there.
+if (OPT_BUILD_SANITIZER STREQUAL "address")
+	set(_osdp_sanitize -fsanitize=address,undefined -fno-sanitize-recover=all)
+elseif (OPT_BUILD_SANITIZER STREQUAL "thread")
+	set(_osdp_sanitize -fsanitize=thread)
+elseif (NOT OPT_BUILD_SANITIZER STREQUAL "OFF")
+	message(FATAL_ERROR "OPT_BUILD_SANITIZER: unknown sanitizer "
+		"'${OPT_BUILD_SANITIZER}'; use OFF, address, or thread")
+endif()
+if (_osdp_sanitize)
+	add_compile_options(${_osdp_sanitize} -fno-omit-frame-pointer)
+	add_link_options(${_osdp_sanitize})
 endif()
 
 if (OPT_BUILD_BARE_METAL)
