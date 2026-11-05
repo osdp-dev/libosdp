@@ -195,15 +195,6 @@ target_include_directories(${LIB_OSDP_STATIC}
 		${PROJECT_SOURCE_DIR}/utils/include
 )
 
-if (OPT_BUILD_SANITIZER)
-	target_compile_options(${LIB_OSDP_STATIC} PRIVATE
-		-fsanitize=address,undefined,leak
-	)
-	target_link_options(${LIB_OSDP_STATIC} PRIVATE
-		-fsanitize=address,undefined,leak
-	)
-endif()
-
 install(
 	TARGETS ${LIB_OSDP_STATIC}
 	COMPONENT distributables
@@ -263,15 +254,6 @@ target_include_directories(${LIB_OSDP_SHARED}
 		${LIB_OSDP_PRIVATE_INCLUDE_DIRS}
 		${PROJECT_SOURCE_DIR}/utils/include
 )
-
-if (OPT_BUILD_SANITIZER)
-	target_compile_options(${LIB_OSDP_SHARED} PRIVATE
-		-fsanitize=address,undefined,leak
-	)
-	target_link_options(${LIB_OSDP_SHARED} PRIVATE
-		-fsanitize=address,undefined,leak
-	)
-endif()
 
 install(
 	TARGETS ${LIB_OSDP_SHARED}

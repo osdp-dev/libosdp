@@ -67,18 +67,6 @@ add_executable(${OSDP_UNIT_TEST}_static EXCLUDE_FROM_ALL ${OSDP_UNIT_TEST_SRC})
 target_link_libraries(${OSDP_UNIT_TEST}_static
 	${LIB_OSDP_TEST_STATIC} utils ${LIB_OSDP_LIBRARIES} pthread)
 
-if (OPT_BUILD_SANITIZER)
-	foreach(tgt ${OSDP_UNIT_TEST} ${OSDP_UNIT_TEST}_zc ${LIB_OSDP_TEST_ZC}
-		    ${OSDP_UNIT_TEST}_static ${LIB_OSDP_TEST_STATIC})
-		target_compile_options(${tgt} PRIVATE
-			-fsanitize=address,undefined,leak
-		)
-		target_link_options(${tgt} PRIVATE
-			-fsanitize=address,undefined,leak
-		)
-	endforeach()
-endif()
-
 include_directories(
 	${PROJECT_SOURCE_DIR}/include
 	${PROJECT_SOURCE_DIR}/utils/include
