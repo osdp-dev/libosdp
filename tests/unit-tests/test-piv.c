@@ -130,6 +130,7 @@ static bool piv_run_op(const char *label, const struct osdp_cmd *cmd,
 {
 	int i;
 
+	test_api_lock();
 	g_piv.cmd_count = 0;
 	g_piv.reply_count = 0;
 	g_piv.mp_start = 0;
@@ -142,6 +143,7 @@ static bool piv_run_op(const char *label, const struct osdp_cmd *cmd,
 	memset(&g_piv.last_req, 0, sizeof(g_piv.last_req));
 	memset(&g_piv.last_auth, 0, sizeof(g_piv.last_auth));
 	g_piv.replies_at_completion = 0;
+	test_api_unlock();
 	test_completion_reset(&g_piv_compl);
 
 	if (!test_submit_command(g_piv.cp_ctx, 0, cmd)) {
@@ -325,11 +327,13 @@ static bool test_pivdata_busy_reject(void)
 
 	printf(SUB_2 "PIVDATA rejected while an op is in progress\n");
 
+	test_api_lock();
 	g_piv.cmd_count = 0;
 	g_piv.reply_count = 0;
 	g_piv.mp_done = 0;
 	g_piv.inline_reply = false; /* keeps the op open until we reply */
 	g_piv.reply_event_type = OSDP_EVENT_PIVDATAR;
+	test_api_unlock();
 	test_completion_reset(&g_piv_compl);
 
 	if (!test_submit_command(g_piv.cp_ctx, 0, &cmd)) {
@@ -407,11 +411,13 @@ static bool test_pivdata_rejected_without_smartcard_cap(void)
 
 	printf(SUB_2 "PIVDATA NAK'd by a PD without smart-card support\n");
 
+	test_api_lock();
 	g_piv.cmd_count = 0;
 	g_piv.mp_done = 0;
 	g_piv.mp_done_outcome = -1;
 	g_piv.inline_reply = true;
 	g_piv.reply_event_type = OSDP_EVENT_PIVDATAR;
+	test_api_unlock();
 	test_completion_reset(&g_piv_compl);
 
 	test_api_lock();

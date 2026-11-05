@@ -617,10 +617,16 @@ int async_runner_stop(int runner)
 static test_channel_hook_fn g_channel_hook;
 static void *g_channel_hook_arg;
 
+/*
+ * The channel callbacks run inside refresh, under the API lock, so taking it
+ * here swaps the hook and its argument as one pair between two frames.
+ */
 void test_set_channel_hook(test_channel_hook_fn fn, void *arg)
 {
+	test_api_lock();
 	g_channel_hook = fn;
 	g_channel_hook_arg = arg;
+	test_api_unlock();
 }
 
 /*
@@ -1247,11 +1253,21 @@ int test_setup_devices(struct test *t, osdp_t **cp, osdp_t **pd)
 	return test_setup_devices_ext(t, cp, pd, 0, 0);
 }
 
+static bool test_cond_holds(bool (*cond)(void *arg), void *arg)
+{
+	bool holds;
+
+	test_api_lock();
+	holds = cond(arg);
+	test_api_unlock();
+	return holds;
+}
+
 bool test_wait_until(bool (*cond)(void *arg), void *arg, int timeout_ms)
 {
 	double deadline = test_now_ms() + timeout_ms;
 
-	while (!cond(arg)) {
+	while (!test_cond_holds(cond, arg)) {
 		if (test_now_ms() >= deadline) {
 			return false;
 		}

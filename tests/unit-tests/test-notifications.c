@@ -176,6 +176,17 @@ static int notif_create_file(void)
 	return 0;
 }
 
+/* The callbacks update the records under g_nx.lock, from inside refresh */
+static struct notif_record notif_get(const struct notif_record *r)
+{
+	struct notif_record snap;
+
+	pthread_mutex_lock(&g_nx.lock);
+	snap = *r;
+	pthread_mutex_unlock(&g_nx.lock);
+	return snap;
+}
+
 static bool notif_seen(void *arg)
 {
 	struct notif_record *r = arg;
@@ -249,34 +260,39 @@ static void teardown_env(void)
 
 static bool test_pd_online_and_sc_notifications(void)
 {
+	struct notif_record pd_status, sc_status;
+
 	printf(SUB_2 "PD command callback sees PD_STATUS online and SC_STATUS active\n");
 
 	/* Both notifications should already have fired during the
 	 * setup_env handshake — setup blocks until the link is up. */
-	if (g_nx.pd_pd_status.count == 0) {
+	pd_status = notif_get(&g_nx.pd_pd_status);
+	if (pd_status.count == 0) {
 		printf(SUB_2 "no PD_STATUS notification on PD side\n");
 		return false;
 	}
-	if (g_nx.pd_pd_status.last_arg0 != 1) {
+	if (pd_status.last_arg0 != 1) {
 		printf(SUB_2 "PD_STATUS arg0=%d, want 1 (online)\n",
-		       g_nx.pd_pd_status.last_arg0);
+		       pd_status.last_arg0);
 		return false;
 	}
-	if (g_nx.pd_sc_status.count == 0) {
+	sc_status = notif_get(&g_nx.pd_sc_status);
+	if (sc_status.count == 0) {
 		printf(SUB_2 "no SC_STATUS notification on PD side\n");
 		return false;
 	}
-	if (g_nx.pd_sc_status.last_arg0 != 1) {
+	if (sc_status.last_arg0 != 1) {
 		printf(SUB_2 "SC_STATUS arg0=%d, want 1 (active)\n",
-		       g_nx.pd_sc_status.last_arg0);
+		       sc_status.last_arg0);
 		return false;
 	}
 	/* The CP may report the link online a moment before it reports SC;
 	 * once it has, it must have done so exactly once. */
-	if (!wait_for_notif(&g_nx.cp_sc_status, 1000) ||
-	    g_nx.cp_sc_status.count != 1 || g_nx.cp_sc_status.last_arg0 != 1) {
+	wait_for_notif(&g_nx.cp_sc_status, 1000);
+	sc_status = notif_get(&g_nx.cp_sc_status);
+	if (sc_status.count != 1 || sc_status.last_arg0 != 1) {
 		printf(SUB_2 "CP SC_STATUS count=%d arg0=%d, want 1 active\n",
-		       g_nx.cp_sc_status.count, g_nx.cp_sc_status.last_arg0);
+		       sc_status.count, sc_status.last_arg0);
 		return false;
 	}
 	return true;
@@ -298,6 +314,7 @@ static bool test_cp_file_tx_abort_on_disable(void)
 		.open = notif_fops_open, .read = notif_fops_read,
 		.write = notif_fops_write, .close = notif_fops_close,
 	};
+	struct notif_record done;
 	uint32_t size, offset;
 
 	printf(SUB_2 "CP aborts in-flight transfer when PD is disabled\n");
@@ -340,10 +357,10 @@ static bool test_cp_file_tx_abort_on_disable(void)
 		printf(SUB_2 "file-tx: MP_DONE not seen after disable\n");
 		goto err;
 	}
-	if (g_nx.cp_file_tx_done.last_arg1 != OSDP_MP_OUTCOME_ABORTED) {
+	done = notif_get(&g_nx.cp_file_tx_done);
+	if (done.last_arg1 != OSDP_MP_OUTCOME_ABORTED) {
 		printf(SUB_2 "file-tx: outcome=%d, want ABORTED=%d\n",
-		       g_nx.cp_file_tx_done.last_arg1,
-		       OSDP_MP_OUTCOME_ABORTED);
+		       done.last_arg1, OSDP_MP_OUTCOME_ABORTED);
 		goto err;
 	}
 	if (osdp_get_file_tx_status(g_nx.cp_ctx, 0, &size, &offset) != -1) {
@@ -393,7 +410,9 @@ static bool test_pd_offline_aborts_file_tx(void)
 		.open = notif_fops_open, .read = notif_fops_read,
 		.write = notif_fops_write, .close = notif_fops_close,
 	};
+	struct notif_record status, done;
 	uint32_t size, offset;
+	bool ok;
 
 	printf(SUB_2 "PD goes offline and aborts its transfer on CP silence\n");
 
@@ -428,19 +447,22 @@ static bool test_pd_offline_aborts_file_tx(void)
 	async_runner_stop(g_nx.cp_runner);
 	g_nx.cp_runner = -1;
 
-	if (!test_wait_until(pd_saw_offline_and_mp_done, NULL, 4000)) {
+	ok = test_wait_until(pd_saw_offline_and_mp_done, NULL, 4000);
+	status = notif_get(&g_nx.pd_pd_status);
+	done = notif_get(&g_nx.pd_file_tx_done);
+	if (!ok) {
 		printf(SUB_2 "pd-file-tx: offline %d, MP_DONE %d\n",
-		       g_nx.pd_pd_status.count, g_nx.pd_file_tx_done.count);
+		       status.count, done.count);
 		goto err;
 	}
-	if (g_nx.pd_pd_status.last_arg0 != 0) {
+	if (status.last_arg0 != 0) {
 		printf(SUB_2 "pd-file-tx: PD_STATUS arg0=%d, want 0\n",
-		       g_nx.pd_pd_status.last_arg0);
+		       status.last_arg0);
 		goto err;
 	}
-	if (g_nx.pd_file_tx_done.last_arg1 != OSDP_MP_OUTCOME_ABORTED) {
+	if (done.last_arg1 != OSDP_MP_OUTCOME_ABORTED) {
 		printf(SUB_2 "pd-file-tx: outcome=%d, want ABORTED=%d\n",
-		       g_nx.pd_file_tx_done.last_arg1, OSDP_MP_OUTCOME_ABORTED);
+		       done.last_arg1, OSDP_MP_OUTCOME_ABORTED);
 		goto err;
 	}
 	if (osdp_get_file_tx_status(g_nx.pd_ctx, 0, &size, &offset) != -1) {
@@ -477,6 +499,8 @@ static bool test_file_tx_notifies_both_roles(void)
 		.open = notif_fops_open, .read = notif_fops_read,
 		.write = notif_fops_write, .close = notif_fops_close,
 	};
+	struct notif_record cp_done, pd_done, pd_start;
+	bool done_before_start;
 
 	printf(SUB_2 "clean transfer notifies both CP and PD\n");
 
@@ -513,31 +537,34 @@ static bool test_file_tx_notifies_both_roles(void)
 		printf(SUB_2 "both-roles: PD never saw MP_DONE\n");
 		goto err;
 	}
-	if (g_nx.cp_file_tx_done.last_arg1 != OSDP_MP_OUTCOME_OK ||
-	    g_nx.pd_file_tx_done.last_arg1 != OSDP_MP_OUTCOME_OK) {
+	cp_done = notif_get(&g_nx.cp_file_tx_done);
+	pd_done = notif_get(&g_nx.pd_file_tx_done);
+	pd_start = notif_get(&g_nx.pd_mp_start);
+	pthread_mutex_lock(&g_nx.lock);
+	done_before_start = g_nx.pd_done_before_start;
+	pthread_mutex_unlock(&g_nx.lock);
+	if (cp_done.last_arg1 != OSDP_MP_OUTCOME_OK ||
+	    pd_done.last_arg1 != OSDP_MP_OUTCOME_OK) {
 		printf(SUB_2 "both-roles: outcome cp=%d pd=%d, want OK=%d\n",
-		       g_nx.cp_file_tx_done.last_arg1,
-		       g_nx.pd_file_tx_done.last_arg1, OSDP_MP_OUTCOME_OK);
+		       cp_done.last_arg1, pd_done.last_arg1,
+		       OSDP_MP_OUTCOME_OK);
 		goto err;
 	}
-	if (g_nx.cp_file_tx_done.last_arg0 != 1 ||
-	    g_nx.pd_file_tx_done.last_arg0 != 1) {
+	if (cp_done.last_arg0 != 1 || pd_done.last_arg0 != 1) {
 		printf(SUB_2 "both-roles: file_id cp=%d pd=%d, want 1\n",
-		       g_nx.cp_file_tx_done.last_arg0,
-		       g_nx.pd_file_tx_done.last_arg0);
+		       cp_done.last_arg0, pd_done.last_arg0);
 		goto err;
 	}
 	/* PD receiver lifecycle: exactly one MP_START, before MP_DONE, and
 	 * carrying the declared file size (peeked from the first frame). */
-	if (g_nx.pd_mp_start.count != 1 || g_nx.pd_done_before_start) {
+	if (pd_start.count != 1 || done_before_start) {
 		printf(SUB_2 "both-roles: PD start count=%d done-first=%d\n",
-		       g_nx.pd_mp_start.count, g_nx.pd_done_before_start);
+		       pd_start.count, done_before_start);
 		goto err;
 	}
-	if (g_nx.pd_mp_start.last_arg0 !=
-	    NOTIF_FILE_REPS * NOTIF_FILE_CHUNK_LEN) {
+	if (pd_start.last_arg0 != NOTIF_FILE_REPS * NOTIF_FILE_CHUNK_LEN) {
 		printf(SUB_2 "both-roles: PD START total=%d, want %d\n",
-		       g_nx.pd_mp_start.last_arg0,
+		       pd_start.last_arg0,
 		       NOTIF_FILE_REPS * NOTIF_FILE_CHUNK_LEN);
 		goto err;
 	}

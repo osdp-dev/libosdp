@@ -92,6 +92,10 @@ struct test_trs_ctx {
 
 static struct test_trs_ctx g_trs = { 0 };
 
+/* The callbacks fill g_trs from inside refresh, under the API lock */
+#define TRS_GET(field)	    TEST_LOCKED_READ(g_trs.field)
+#define TRS_SET(field, val) TEST_LOCKED_WRITE(g_trs.field, val)
+
 /* Build the card-data R-APDU reply into the app-owned resp_event */
 static void trs_fill_response(struct test_trs_ctx *ctx)
 {
@@ -122,6 +126,15 @@ static void trs_fill_error(struct test_trs_ctx *ctx)
 	resp->type = OSDP_EVENT_TRS;
 	resp->trs.reply = OSDP_TRS_REPLY_ERROR;
 	resp->trs.error.code = 0x6A;
+}
+
+/* Answer a deferred send-APDU from the test thread */
+static void trs_submit_response(void)
+{
+	test_api_lock();
+	trs_fill_response(&g_trs);
+	test_submit_event(g_trs.pd_ctx, &g_trs.resp_event);
+	test_api_unlock();
 }
 
 static int trs_cp_event_callback(void *arg, int pd, struct osdp_event *ev)
@@ -236,18 +249,22 @@ static bool pd_status_count_reached(void *arg)
 static bool wait_for_pd_statuses(const enum osdp_trs_session_status_e *want,
 				 int n, int timeout_ms)
 {
+	bool match;
+
 	test_wait_until(pd_status_count_reached, &n, timeout_ms);
-	if (g_trs.pd_status_count != n ||
-	    memcmp(g_trs.pd_status, want, n * sizeof(*want)) != 0) {
+	test_api_lock();
+	match = g_trs.pd_status_count == n &&
+		memcmp(g_trs.pd_status, want, n * sizeof(*want)) == 0;
+	if (!match) {
 		printf(SUB_2 "PD told %d TRS statuses; want %d:",
 		       g_trs.pd_status_count, n);
 		for (int i = 0; i < g_trs.pd_status_count; i++) {
 			printf(" %d", g_trs.pd_status[i]);
 		}
 		printf("\n");
-		return false;
 	}
-	return true;
+	test_api_unlock();
+	return match;
 }
 
 static int trs_pd_command_callback(void *arg, struct osdp_cmd *cmd)
@@ -417,15 +434,21 @@ static bool wait_for_xwr_complete_order(int timeout_sec)
  * its event handler and use it in its completion handler. */
 static bool trs_answer_precedes_completion(void)
 {
+	int card_data_order, xwr_complete_order;
+
 	if (!wait_for_xwr_complete_order(10)) {
 		printf(SUB_2 "XWR completion not reported\n");
 		return false;
 	}
-	if (!g_trs.card_data_order || !g_trs.xwr_complete_order ||
-	    g_trs.card_data_order >= g_trs.xwr_complete_order) {
+	test_api_lock();
+	card_data_order = g_trs.card_data_order;
+	xwr_complete_order = g_trs.xwr_complete_order;
+	test_api_unlock();
+	if (!card_data_order || !xwr_complete_order ||
+	    card_data_order >= xwr_complete_order) {
 		printf(SUB_2 "card-data event must precede XWR completion "
 		       "(event=%d completion=%d)\n",
-		       g_trs.card_data_order, g_trs.xwr_complete_order);
+		       card_data_order, xwr_complete_order);
 		return false;
 	}
 	return true;
@@ -531,6 +554,7 @@ static bool test_trs_max_apdu_len_accessor(void)
 		.id = OSDP_CMD_XWR,
 		.trs = { .command = OSDP_TRS_CMD_SEND_APDU },
 	};
+	struct osdp_trs_cmd last_cmd;
 	int max_len;
 
 	printf(SUB_2 "testing TRS max-APDU accessor\n");
@@ -561,10 +585,11 @@ static bool test_trs_max_apdu_len_accessor(void)
 		printf(SUB_2 "APDU of max bytes did not complete OK\n");
 		return false;
 	}
-	if (g_trs.last_cmd.apdu.length != max_len ||
-	    memcmp(g_trs.last_cmd.apdu.data, cmd.trs.apdu.data, max_len)) {
+	last_cmd = TRS_GET(last_cmd);
+	if (last_cmd.apdu.length != max_len ||
+	    memcmp(last_cmd.apdu.data, cmd.trs.apdu.data, max_len)) {
 		printf(SUB_2 "PD got a %d-byte C-APDU, want %d intact\n",
-		       g_trs.last_cmd.apdu.length, max_len);
+		       last_cmd.apdu.length, max_len);
 		return false;
 	}
 	return true;
@@ -731,8 +756,10 @@ static bool test_trs_session_start(void)
 	};
 	struct osdp_cmd cmd;
 
+	test_api_lock();
 	g_trs.status_seen = false;
 	g_trs.pd_status_count = 0;
+	test_api_unlock();
 
 	if (submit_trs_cmd(&cmd, OSDP_TRS_CMD_START)) {
 		printf(SUB_2 "Failed to submit TRS start\n");
@@ -747,13 +774,19 @@ static bool test_trs_session_start(void)
 
 static bool test_trs_apdu_exchange(void)
 {
+	struct osdp_trs_reply last_reply;
+	struct osdp_trs_cmd last_cmd;
+	bool cmd_seen;
+
 	printf(SUB_2 "testing TRS APDU exchange (synchronous)\n");
 
+	test_api_lock();
 	g_trs.event_seen = false;
 	g_trs.cmd_seen = false;
 	g_trs.defer = false;
 	g_trs.card_data_order = 0;
 	g_trs.xwr_complete_order = 0;
+	test_api_unlock();
 
 	/* Stack storage must outlive the submission; wait_for_trs_event()
 	 * below blocks here until the whole exchange completes. */
@@ -778,20 +811,26 @@ static bool test_trs_apdu_exchange(void)
 		return false;
 	}
 
+	test_api_lock();
+	cmd_seen = g_trs.cmd_seen;
+	last_cmd = g_trs.last_cmd;
+	last_reply = g_trs.last_reply;
+	test_api_unlock();
+
 	/* PD must have received the exact APDU the CP sent */
-	if (!g_trs.cmd_seen ||
-	    g_trs.last_cmd.command != OSDP_TRS_CMD_SEND_APDU ||
-	    g_trs.last_cmd.apdu.length != (int)sizeof(g_req_apdu) ||
-	    memcmp(g_trs.last_cmd.apdu.data, g_req_apdu,
+	if (!cmd_seen ||
+	    last_cmd.command != OSDP_TRS_CMD_SEND_APDU ||
+	    last_cmd.apdu.length != (int)sizeof(g_req_apdu) ||
+	    memcmp(last_cmd.apdu.data, g_req_apdu,
 		   sizeof(g_req_apdu)) != 0) {
 		printf(SUB_2 "PD did not receive the request APDU intact\n");
 		return false;
 	}
 
 	/* CP must have received the card-data reply the PD sent */
-	if (g_trs.last_reply.reply != OSDP_TRS_REPLY_CARD_DATA ||
-	    g_trs.last_reply.card_data.apdu.length != (int)sizeof(g_rsp_apdu) ||
-	    memcmp(g_trs.last_reply.card_data.apdu.data, g_rsp_apdu,
+	if (last_reply.reply != OSDP_TRS_REPLY_CARD_DATA ||
+	    last_reply.card_data.apdu.length != (int)sizeof(g_rsp_apdu) ||
+	    memcmp(last_reply.card_data.apdu.data, g_rsp_apdu,
 		   sizeof(g_rsp_apdu)) != 0) {
 		printf(SUB_2 "CP did not receive the response APDU intact\n");
 		return false;
@@ -827,9 +866,11 @@ static bool test_trs_pd_max_apdu_len(void)
 		return false;
 	}
 
+	test_api_lock();
 	g_trs.rsp_len = max_len;
 	g_trs.event_seen = false;
 	g_trs.defer = false;
+	test_api_unlock();
 	struct osdp_cmd cmd = {
 		.id = OSDP_CMD_XWR,
 		.trs = {
@@ -843,20 +884,24 @@ static bool test_trs_pd_max_apdu_len(void)
 	    !wait_for_trs_event(10)) {
 		printf(SUB_2 "max-length R-APDU did not arrive\n");
 		ok = false;
-	} else if (g_trs.last_reply.reply != OSDP_TRS_REPLY_CARD_DATA ||
-		   g_trs.last_reply.card_data.apdu.length != max_len) {
-		printf(SUB_2 "CP got a %d-byte R-APDU, want %d\n",
-		       g_trs.last_reply.card_data.apdu.length, max_len);
-		ok = false;
+	} else {
+		struct osdp_trs_reply last_reply = TRS_GET(last_reply);
+
+		if (last_reply.reply != OSDP_TRS_REPLY_CARD_DATA ||
+		    last_reply.card_data.apdu.length != max_len) {
+			printf(SUB_2 "CP got a %d-byte R-APDU, want %d\n",
+			       last_reply.card_data.apdu.length, max_len);
+			ok = false;
+		}
 	}
-	g_trs.rsp_len = 0;
+	TRS_SET(rsp_len, 0);
 	return ok;
 }
 
 static bool wait_for_apdu_count(int want, int timeout_ms)
 {
 	wait_for_count(&g_trs.apdu_count, want, timeout_ms);
-	return g_trs.apdu_count == want;
+	return TRS_GET(apdu_count) == want;
 }
 
 /*
@@ -875,13 +920,18 @@ static bool test_trs_deferred_apdu_holds_band(void)
 			.apdu = { .length = sizeof(g_req_apdu) },
 		},
 	};
+	struct osdp_trs_reply last_reply;
+	int apdu_count;
+	bool event_seen;
 	bool ok = false;
 
 	printf(SUB_2 "testing TRS band held for a deferred answer\n");
 
 	memcpy(cmd.trs.apdu.data, g_req_apdu, sizeof(g_req_apdu));
+	test_api_lock();
 	g_trs.defer = true;
 	g_trs.apdu_count = 0;
+	test_api_unlock();
 	test_completion_reset(&g_trs.completion);
 
 	if (!test_submit_command(g_trs.cp_ctx, 0, &cmd) ||
@@ -898,29 +948,33 @@ static bool test_trs_deferred_apdu_holds_band(void)
 		printf(SUB_2 "CP stopped polling with an answer outstanding\n");
 		goto out;
 	}
-	if (g_trs.apdu_count != 1 ||
+	test_api_lock();
+	apdu_count = g_trs.apdu_count;
+	event_seen = g_trs.event_seen;
+	test_api_unlock();
+	if (apdu_count != 1 ||
 	    test_completion_count(&g_trs.completion) != 0 ||
-	    g_trs.event_seen) {
+	    event_seen) {
 		printf(SUB_2 "CP moved on before the answer: %d C-APDUs at "
 		       "the PD, %d completions, %s card data\n",
-		       g_trs.apdu_count,
+		       apdu_count,
 		       test_completion_count(&g_trs.completion),
-		       g_trs.event_seen ? "some" : "no");
+		       event_seen ? "some" : "no");
 		goto out;
 	}
 
 	/* The card finally answers; it rides out on the next poll as XRD */
-	trs_fill_response(&g_trs);
-	test_submit_event(g_trs.pd_ctx, &g_trs.resp_event);
+	trs_submit_response();
 	if (!test_completion_wait(&g_trs.completion, 1, 3) ||
 	    test_completion_first_status(&g_trs.completion) !=
 		    OSDP_COMPLETION_OK) {
 		printf(SUB_2 "First send-APDU did not complete OK\n");
 		goto out;
 	}
-	if (g_trs.last_reply.reply != OSDP_TRS_REPLY_CARD_DATA ||
-	    g_trs.last_reply.card_data.apdu.length != (int)sizeof(g_rsp_apdu) ||
-	    memcmp(g_trs.last_reply.card_data.apdu.data, g_rsp_apdu,
+	last_reply = TRS_GET(last_reply);
+	if (last_reply.reply != OSDP_TRS_REPLY_CARD_DATA ||
+	    last_reply.card_data.apdu.length != (int)sizeof(g_rsp_apdu) ||
+	    memcmp(last_reply.card_data.apdu.data, g_rsp_apdu,
 		   sizeof(g_rsp_apdu)) != 0) {
 		printf(SUB_2 "Deferred response APDU mismatch\n");
 		goto out;
@@ -933,8 +987,7 @@ static bool test_trs_deferred_apdu_holds_band(void)
 		goto out;
 	}
 
-	trs_fill_response(&g_trs);
-	test_submit_event(g_trs.pd_ctx, &g_trs.resp_event);
+	trs_submit_response();
 	if (!test_completion_wait(&g_trs.completion, 2, 3) ||
 	    test_completion_status(&g_trs.completion) != OSDP_COMPLETION_OK) {
 		printf(SUB_2 "Second send-APDU did not complete OK\n");
@@ -942,7 +995,7 @@ static bool test_trs_deferred_apdu_holds_band(void)
 	}
 	ok = true;
 out:
-	g_trs.defer = false;
+	TRS_SET(defer, false);
 	return ok;
 }
 
@@ -982,23 +1035,30 @@ static bool submit_apdu_and_wait(enum osdp_completion_status *status)
 static bool test_trs_apdu_error_reply_fails_cmd(void)
 {
 	enum osdp_completion_status status;
-	bool ok;
+	struct osdp_trs_reply last_reply;
+	bool ok, event_seen;
 
 	printf(SUB_2 "testing TRS APDU answered with an error report\n");
 
+	test_api_lock();
 	g_trs.event_seen = false;
 	g_trs.status_seen = false;
 	g_trs.error_reply = true;
+	test_api_unlock();
 
 	ok = submit_apdu_and_wait(&status);
-	g_trs.error_reply = false;
+	TRS_SET(error_reply, false);
 	if (!ok) {
 		return false;
 	}
 
-	if (!g_trs.event_seen ||
-	    g_trs.last_reply.reply != OSDP_TRS_REPLY_ERROR ||
-	    g_trs.last_reply.error.code != 0x6A) {
+	test_api_lock();
+	event_seen = g_trs.event_seen;
+	last_reply = g_trs.last_reply;
+	test_api_unlock();
+	if (!event_seen ||
+	    last_reply.reply != OSDP_TRS_REPLY_ERROR ||
+	    last_reply.error.code != 0x6A) {
 		printf(SUB_2 "CP did not receive the error report\n");
 		return false;
 	}
@@ -1006,9 +1066,9 @@ static bool test_trs_apdu_error_reply_fails_cmd(void)
 		printf(SUB_2 "APDU answered with an error must complete as failed\n");
 		return false;
 	}
-	if (g_trs.status_seen) {
+	if (TRS_GET(status_seen)) {
 		printf(SUB_2 "error report must not end the session (status %d)\n",
-		       g_trs.last_status);
+		       TRS_GET(last_status));
 		return false;
 	}
 
@@ -1115,8 +1175,10 @@ static bool test_trs_card_scan_wire_nak(void)
 	printf(SUB_2 "testing TRS CARD_SCAN declined on the wire\n");
 
 	test_completion_reset(&g_trs.completion);
+	test_api_lock();
 	g_trs.status_seen = false;
 	g_trs.event_seen = false;
+	test_api_unlock();
 
 	test_set_channel_hook(trs_wire_nak_hook, &s);
 	if (submit_trs_cmd(&cmd, OSDP_TRS_CMD_CARD_SCAN)) {
@@ -1141,9 +1203,9 @@ static bool test_trs_card_scan_wire_nak(void)
 		       "saw %d transmissions\n", s.xwr_tx_count);
 		return false;
 	}
-	if (g_trs.status_seen) {
+	if (TRS_GET(status_seen)) {
 		printf(SUB_2 "NAK'd CARD_SCAN must not end the session "
-		       "(status %d)\n", g_trs.last_status);
+		       "(status %d)\n", TRS_GET(last_status));
 		return false;
 	}
 
@@ -1205,10 +1267,14 @@ static bool test_trs_scan_hold_and_adopt(void)
 	};
 	struct osdp_cmd start, stop;
 
+	struct osdp_event *sighting;
+
 	printf(SUB_2 "testing TRS sighting hold and band adoption\n");
 
+	test_api_lock();
 	g_trs.event_seen = false;
 	g_trs.status_seen = false;
+	test_api_unlock();
 
 	test_set_channel_hook(trs_mode_set_count_hook, &s);
 	if (osdp_cp_trs_scan_enable(g_trs.cp_ctx, 0, &p)) {
@@ -1223,19 +1289,22 @@ static bool test_trs_scan_hold_and_adopt(void)
 	}
 
 	/* The reader sights a card during the probe */
+	test_api_lock();
 	memset(&g_trs.resp_event, 0, sizeof(g_trs.resp_event));
 	g_trs.resp_event.type = OSDP_EVENT_TRS;
 	g_trs.resp_event.trs.reply = OSDP_TRS_REPLY_CARD_PRESENT;
 	g_trs.resp_event.trs.card_present.reader = 0;
 	g_trs.resp_event.trs.card_present.status =
 		OSDP_TRS_CARD_PRESENT_CONTACTLESS;
-	if (!test_submit_event(g_trs.pd_ctx, &g_trs.resp_event)) {
+	sighting = test_submit_event(g_trs.pd_ctx, &g_trs.resp_event);
+	test_api_unlock();
+	if (!sighting) {
 		test_set_channel_hook(NULL, NULL);
 		printf(SUB_2 "failed to submit sighting\n");
 		return false;
 	}
 	if (!wait_for_trs_event(10) ||
-	    g_trs.last_reply.reply != OSDP_TRS_REPLY_CARD_PRESENT) {
+	    TRS_GET(last_reply.reply) != OSDP_TRS_REPLY_CARD_PRESENT) {
 		test_set_channel_hook(NULL, NULL);
 		printf(SUB_2 "sighting not delivered to the app\n");
 		return false;
@@ -1256,7 +1325,7 @@ static bool test_trs_scan_hold_and_adopt(void)
 	/* Stop scanning before the band closes so no fresh probe muddies the
 	 * mode-set count between the CLOSED notification and the checks */
 	osdp_cp_trs_scan_disable(g_trs.cp_ctx, 0);
-	g_trs.status_seen = false;
+	TRS_SET(status_seen, false);
 	if (submit_trs_cmd(&stop, OSDP_TRS_CMD_STOP) ||
 	    !wait_for_trs_status(OSDP_TRS_SESSION_CLOSED, 10)) {
 		test_set_channel_hook(NULL, NULL);
@@ -1294,7 +1363,7 @@ static bool test_trs_scan_probe_failure_backoff(void)
 
 	printf(SUB_2 "testing TRS scan probe failure backoff\n");
 
-	g_trs.status_seen = false;
+	TRS_SET(status_seen, false);
 
 	test_set_channel_hook(trs_wire_nak_hook, &s);
 	if (osdp_cp_trs_scan_enable(g_trs.cp_ctx, 0, &p)) {
@@ -1309,14 +1378,14 @@ static bool test_trs_scan_probe_failure_backoff(void)
 		printf(SUB_2 "refused probes never backed off\n");
 		return false;
 	}
-	early_count = s.xwr_tx_count;
+	early_count = TEST_LOCKED_READ(s.xwr_tx_count);
 	if (early_count < 2) {
 		test_set_channel_hook(NULL, NULL);
 		printf(SUB_2 "refused probes never retried (%d)\n", early_count);
 		return false;
 	}
-	if (!g_trs.status_seen ||
-	    g_trs.last_status != OSDP_TRS_SCAN_SUSPENDED) {
+	if (!TRS_GET(status_seen) ||
+	    TRS_GET(last_status) != OSDP_TRS_SCAN_SUSPENDED) {
 		test_set_channel_hook(NULL, NULL);
 		printf(SUB_2 "refused probe must raise SCAN_SUSPENDED\n");
 		return false;
@@ -1326,7 +1395,7 @@ static bool test_trs_scan_probe_failure_backoff(void)
 	 * the ~25 probes an 80ms cadence would fire. A refused probe costs two
 	 * XWRs -- the mode-set and the just-in-case teardown behind it. */
 	usleep(3000 * 1000);
-	late_count = s.xwr_tx_count - early_count;
+	late_count = TEST_LOCKED_READ(s.xwr_tx_count) - early_count;
 	if (late_count > 4) {
 		test_set_channel_hook(NULL, NULL);
 		printf(SUB_2 "no backoff: %d transmissions in 3s\n", late_count);
@@ -1370,9 +1439,11 @@ static bool test_trs_scan_card_scan_unsupported_latches(void)
 
 	printf(SUB_2 "testing TRS card-scan refusal latches\n");
 
-	g_trs.status_seen = false;
 	test_completion_reset(&g_trs.completion);
+	test_api_lock();
+	g_trs.status_seen = false;
 	g_trs.card_status = OSDP_TRS_CARD_STATUS_UNKNOWN;
+	test_api_unlock();
 
 	test_set_channel_hook(trs_wire_nak_hook, &s);
 	if (osdp_cp_trs_scan_enable(g_trs.cp_ctx, 0, &p)) {
@@ -1386,7 +1457,7 @@ static bool test_trs_scan_card_scan_unsupported_latches(void)
 		printf(SUB_2 "refusal never reported to the app\n");
 		return false;
 	}
-	asked_at_verdict = s.card_scan_tx_count;
+	asked_at_verdict = TEST_LOCKED_READ(s.card_scan_tx_count);
 
 	/* Having heard the answer, the scan must stop asking */
 	if (!wait_for_probes(3, 3000)) {
@@ -1403,12 +1474,12 @@ static bool test_trs_scan_card_scan_unsupported_latches(void)
 		       asked_at_verdict, s.card_scan_tx_count);
 		return false;
 	}
-	if (g_trs.status_count[OSDP_TRS_SCAN_NO_DEPARTURE] != 1) {
+	if (TRS_GET(status_count[OSDP_TRS_SCAN_NO_DEPARTURE]) != 1) {
 		printf(SUB_2 "refusal reported %d times, want once\n",
-		       g_trs.status_count[OSDP_TRS_SCAN_NO_DEPARTURE]);
+		       TRS_GET(status_count[OSDP_TRS_SCAN_NO_DEPARTURE]));
 		return false;
 	}
-	if (g_trs.status_count[OSDP_TRS_SCAN_SUSPENDED]) {
+	if (TRS_GET(status_count[OSDP_TRS_SCAN_SUSPENDED])) {
 		printf(SUB_2 "a refused card scan must not suspend the scan\n");
 		return false;
 	}
@@ -1442,7 +1513,7 @@ static bool test_trs_scan_card_scan_timeout_is_not_unsupported(void)
 
 	printf(SUB_2 "testing TRS card-scan silence is not a refusal\n");
 
-	g_trs.card_status = OSDP_TRS_CARD_STATUS_UNKNOWN;
+	TRS_SET(card_status, OSDP_TRS_CARD_STATUS_UNKNOWN);
 
 	test_set_channel_hook(trs_wire_nak_hook, &s);
 	if (osdp_cp_trs_scan_enable(g_trs.cp_ctx, 0, &p)) {
@@ -1459,7 +1530,7 @@ static bool test_trs_scan_card_scan_timeout_is_not_unsupported(void)
 		return false;
 	}
 	/* ... and the next probe asks again, having latched nothing */
-	asked_at_settle = s.card_scan_tx_count;
+	asked_at_settle = TEST_LOCKED_READ(s.card_scan_tx_count);
 	wait_for_count(&s.card_scan_tx_count, asked_at_settle + 1, 6000);
 	test_set_channel_hook(NULL, NULL);
 	osdp_cp_trs_scan_disable(g_trs.cp_ctx, 0);
@@ -1473,7 +1544,7 @@ static bool test_trs_scan_card_scan_timeout_is_not_unsupported(void)
 		printf(SUB_2 "reader left in transparent mode after the fault\n");
 		return false;
 	}
-	if (g_trs.status_count[OSDP_TRS_SCAN_NO_DEPARTURE]) {
+	if (TRS_GET(status_count[OSDP_TRS_SCAN_NO_DEPARTURE])) {
 		printf(SUB_2 "silence was mistaken for a refusal\n");
 		return false;
 	}
@@ -1913,11 +1984,12 @@ static struct osdp_event g_unsolicited_ev;
  */
 static bool test_trs_unsolicited_xrd_out_of_session(void)
 {
+	struct osdp_trs_reply last_reply;
 	uint8_t status = 0;
 
 	printf(SUB_2 "testing unsolicited XRD outside a session\n");
 
-	g_trs.event_seen = false;
+	TRS_SET(event_seen, false);
 
 	g_unsolicited_ev = (struct osdp_event){
 		.type = OSDP_EVENT_TRS,
@@ -1938,15 +2010,16 @@ static bool test_trs_unsolicited_xrd_out_of_session(void)
 		printf(SUB_2 "out-of-session card sighting must surface\n");
 		return false;
 	}
-	if (g_trs.last_reply.reply != OSDP_TRS_REPLY_CARD_PRESENT ||
-	    g_trs.last_reply.card_present.reader != 0 ||
-	    g_trs.last_reply.card_present.status != OSDP_TRS_CARD_PRESENT) {
+	last_reply = TRS_GET(last_reply);
+	if (last_reply.reply != OSDP_TRS_REPLY_CARD_PRESENT ||
+	    last_reply.card_present.reader != 0 ||
+	    last_reply.card_present.status != OSDP_TRS_CARD_PRESENT) {
 		printf(SUB_2 "card sighting not intact\n");
 		return false;
 	}
 
 	/* Card data with no session to route it to stays ignored */
-	g_trs.event_seen = false;
+	TRS_SET(event_seen, false);
 	test_completion_reset(&g_trs.pd_event_done);
 	g_unsolicited_ev = (struct osdp_event){
 		.type = OSDP_EVENT_TRS,
@@ -1978,7 +2051,7 @@ static bool test_trs_unsolicited_xrd_out_of_session(void)
 		printf(SUB_2 "a stray XRD must not take the PD offline\n");
 		return false;
 	}
-	if (g_trs.event_seen) {
+	if (TRS_GET(event_seen)) {
 		printf(SUB_2 "stray card data must not surface as an event\n");
 		return false;
 	}
@@ -2003,7 +2076,7 @@ static bool test_trs_scan_cadence(void)
 
 	printf(SUB_2 "testing TRS presence-scan cadence\n");
 
-	g_trs.status_seen = false;
+	TRS_SET(status_seen, false);
 	test_completion_reset(&g_trs.completion);
 
 	if (osdp_cp_trs_scan_enable(g_trs.cp_ctx, 0, &p)) {
@@ -2023,7 +2096,7 @@ static bool test_trs_scan_cadence(void)
 	}
 	osdp_cp_trs_scan_disable(g_trs.cp_ctx, 0);
 
-	if (g_trs.status_seen) {
+	if (TRS_GET(status_seen)) {
 		printf(SUB_2 "probes must not raise session notifications\n");
 		return false;
 	}
@@ -2053,17 +2126,19 @@ static bool test_trs_scan_card_departure_event(void)
 		.mode0_dwell_ms = 80,
 		.mode1_dwell_ms = 150,
 	};
-	int present_after_settle, elapsed;
+	int present_after_settle, elapsed, card_scan_count;
 	tick_t start;
 
 	printf(SUB_2 "testing TRS scan reports card departure\n");
 
+	test_completion_reset(&g_trs.completion);
+	test_api_lock();
 	g_trs.present_events = 0;
 	g_trs.absent_events = 0;
 	g_trs.card_scan_count = 0;
 	g_trs.status_seen = false;
-	test_completion_reset(&g_trs.completion);
 	g_trs.card_status = OSDP_TRS_CARD_PRESENT_CONTACTLESS;
+	test_api_unlock();
 
 	start = osdp_millis_now();
 	if (osdp_cp_trs_scan_enable(g_trs.cp_ctx, 0, &p)) {
@@ -2077,13 +2152,13 @@ static bool test_trs_scan_card_departure_event(void)
 	}
 
 	/* The card stays put across several probes: still one sighting */
-	if (!wait_for_count(&g_trs.card_scan_count, g_trs.card_scan_count + 3,
-			    3000)) {
+	if (!wait_for_count(&g_trs.card_scan_count,
+			    TRS_GET(card_scan_count) + 3, 3000)) {
 		osdp_cp_trs_scan_disable(g_trs.cp_ctx, 0);
 		printf(SUB_2 "scan stopped asking with the card parked\n");
 		return false;
 	}
-	present_after_settle = g_trs.present_events;
+	present_after_settle = TRS_GET(present_events);
 	if (present_after_settle != 1) {
 		osdp_cp_trs_scan_disable(g_trs.cp_ctx, 0);
 		printf(SUB_2 "a parked card was announced %d times\n",
@@ -2092,20 +2167,21 @@ static bool test_trs_scan_card_departure_event(void)
 	}
 
 	/* Now it is lifted away */
-	g_trs.card_status = OSDP_TRS_CARD_NOT_PRESENT;
+	TRS_SET(card_status, OSDP_TRS_CARD_NOT_PRESENT);
 	wait_for_count(&g_trs.absent_events, 1, 4000);
 	osdp_cp_trs_scan_disable(g_trs.cp_ctx, 0);
 	elapsed = (int)osdp_millis_since(start);
-	g_trs.card_status = OSDP_TRS_CARD_STATUS_UNKNOWN;
+	TRS_SET(card_status, OSDP_TRS_CARD_STATUS_UNKNOWN);
 
-	if (g_trs.absent_events < 1) {
+	if (TRS_GET(absent_events) < 1) {
 		printf(SUB_2 "card removal was never reported\n");
 		return false;
 	}
 	/* One question per probe cycle, not one per refresh tick */
-	if (g_trs.card_scan_count > elapsed / 100) {
+	card_scan_count = TRS_GET(card_scan_count);
+	if (card_scan_count > elapsed / 100) {
 		printf(SUB_2 "asked %d times in %d ms; too chatty\n",
-		       g_trs.card_scan_count, elapsed);
+		       card_scan_count, elapsed);
 		return false;
 	}
 	if (!wait_for_pd_mode(TRS_MODE_00, 3000)) {
@@ -2116,9 +2192,9 @@ static bool test_trs_scan_card_departure_event(void)
 		printf(SUB_2 "library's own card scan reported a completion\n");
 		return false;
 	}
-	if (g_trs.status_seen) {
+	if (TRS_GET(status_seen)) {
 		printf(SUB_2 "probe raised a session notification (%d)\n",
-		       g_trs.last_status);
+		       TRS_GET(last_status));
 		return false;
 	}
 	return true;
@@ -2159,9 +2235,9 @@ static bool test_trs_scan_mode0_activity_defers_probe(void)
 		}
 		usleep(100 * 1000);
 	}
-	if (s.set_mode1 != 0) {
+	if (TEST_LOCKED_READ(s.set_mode1) != 0) {
 		printf(SUB_2 "%d probes sliced into keypad activity\n",
-		       s.set_mode1);
+		       TEST_LOCKED_READ(s.set_mode1));
 		goto out;
 	}
 	/* activity stops; the next dwell must end in a probe */
@@ -2209,7 +2285,7 @@ static bool test_trs_scan_disable_and_flush_mid_probe(void)
 		return false;
 	}
 	usleep(500 * 1000);
-	if (pd_trs_mode() != TRS_MODE_00) {
+	if (TEST_LOCKED_READ(pd_trs_mode()) != TRS_MODE_00) {
 		printf(SUB_2 "a disabled scan kept probing\n");
 		return false;
 	}
@@ -2225,7 +2301,7 @@ static bool test_trs_scan_disable_and_flush_mid_probe(void)
 	osdp_cp_flush_commands(g_trs.cp_ctx, 0);
 
 	/* A band right through the probe: adoption, exchange, orderly close */
-	g_trs.status_seen = false;
+	TRS_SET(status_seen, false);
 	if (submit_trs_cmd(&start, OSDP_TRS_CMD_START)) {
 		printf(SUB_2 "failed to submit START\n");
 		return false;
@@ -2238,7 +2314,7 @@ static bool test_trs_scan_disable_and_flush_mid_probe(void)
 		printf(SUB_2 "band unusable after flush\n");
 		return false;
 	}
-	g_trs.status_seen = false;
+	TRS_SET(status_seen, false);
 	if (submit_trs_cmd(&stop, OSDP_TRS_CMD_STOP)) {
 		printf(SUB_2 "failed to submit STOP\n");
 		return false;
@@ -2266,8 +2342,10 @@ static bool test_trs_session_stop(void)
 	};
 	struct osdp_cmd cmd;
 
+	test_api_lock();
 	g_trs.status_seen = false;
 	g_trs.pd_status_count = 0;
+	test_api_unlock();
 
 	if (submit_trs_cmd(&cmd, OSDP_TRS_CMD_STOP)) {
 		printf(SUB_2 "Failed to submit TRS stop\n");
@@ -2319,11 +2397,13 @@ static bool test_trs_second_reader_band(void)
 	printf(SUB_2 "testing TRS band on the second reader\n");
 
 	trs_set_readers(1);
+	test_api_lock();
 	g_trs.status_seen = false;
 	g_trs.pd_status_count = 0;
 	g_trs.event_seen = false;
 	g_trs.cmd_seen = false;
 	g_trs.defer = false;
+	test_api_unlock();
 
 	absent = (struct osdp_cmd){
 		.id = OSDP_CMD_XWR,
@@ -2367,9 +2447,9 @@ static bool test_trs_second_reader_band(void)
 		printf(SUB_2 "card answer not received\n");
 		goto out;
 	}
-	if (!g_trs.cmd_seen || g_trs.last_cmd.reader != 1) {
+	if (!TRS_GET(cmd_seen) || TRS_GET(last_cmd.reader) != 1) {
 		printf(SUB_2 "PD app saw reader %d; want 1\n",
-		       g_trs.last_cmd.reader);
+		       TRS_GET(last_cmd.reader));
 		goto out;
 	}
 
@@ -2385,17 +2465,17 @@ static bool test_trs_second_reader_band(void)
 		printf(SUB_2 "TRS session-closed notification not received\n");
 		goto out;
 	}
-	if (g_trs.last_status_reader != 1) {
+	if (TRS_GET(last_status_reader) != 1) {
 		printf(SUB_2 "CP told reader %d closed; want 1\n",
-		       g_trs.last_status_reader);
+		       TRS_GET(last_status_reader));
 		goto out;
 	}
 	if (!wait_for_pd_statuses(pd_want, ARRAY_SIZEOF(pd_want), 1000)) {
 		goto out;
 	}
-	if (g_trs.pd_status_reader[1] != 1) {
+	if (TRS_GET(pd_status_reader[1]) != 1) {
 		printf(SUB_2 "PD told to release reader %d's card; want 1\n",
-		       g_trs.pd_status_reader[1]);
+		       TRS_GET(pd_status_reader[1]));
 		goto out;
 	}
 	result = test_wait_for_online(g_trs.cp_ctx, 0, 10);
@@ -2425,7 +2505,7 @@ static bool test_trs_pd_closed_on_link_restart(void)
 	if (!test_trs_session_start()) {
 		return false;
 	}
-	g_trs.pd_status_count = 0;
+	TRS_SET(pd_status_count, 0);
 	if (osdp_cp_disable_pd(g_trs.cp_ctx, 0)) {
 		printf(SUB_2 "Failed to disable the PD\n");
 		return false;
@@ -2575,7 +2655,7 @@ static bool test_trs_band_flush_on_session_failure(void)
 
 	printf(SUB_2 "testing TRS band flush on session failure\n");
 
-	g_trs.status_seen = false;
+	TRS_SET(status_seen, false);
 	if (submit_trs_cmd(&start_cmd, OSDP_TRS_CMD_START)) {
 		printf(SUB_2 "failed to submit TRS start\n");
 		return false;
@@ -2588,7 +2668,7 @@ static bool test_trs_band_flush_on_session_failure(void)
 	atomic_store(&log.resubmit_armed, true);
 	atomic_store(&log.resubmit_rc, -1);
 	trs_use_completion(trs_band_flush_completion_cb, &log);
-	g_trs.status_seen = false;
+	TRS_SET(status_seen, false);
 	test_set_channel_hook(trs_wire_nak_hook, &hook);
 
 	if (!test_submit_command(g_trs.cp_ctx, 0, &cmd_a) ||
@@ -2617,9 +2697,9 @@ static bool test_trs_band_flush_on_session_failure(void)
 		goto out;
 	}
 	test_set_channel_hook(NULL, NULL);
-	if (g_trs.last_failure.reason != OSDP_TRS_FAIL_NO_REPLY) {
+	if (TRS_GET(last_failure.reason) != OSDP_TRS_FAIL_NO_REPLY) {
 		printf(SUB_2 "want reason NO_REPLY, got %d\n",
-		       g_trs.last_failure.reason);
+		       TRS_GET(last_failure.reason));
 		ok = false;
 	}
 
@@ -2685,13 +2765,14 @@ static bool test_trs_start_fails_when_mode_is_refused(void)
 {
 	struct trs_wire_nak_hook hook = { 0 };
 	struct trs_band_flush_log log = { 0 };
+	struct osdp_notification_trs_status failure;
 	struct osdp_cmd start_cmd, stop_cmd;
 	bool ok = true;
 
 	printf(SUB_2 "testing TRS start fails when the mode is refused\n");
 
 	trs_use_completion(trs_band_flush_completion_cb, &log);
-	g_trs.status_seen = false;
+	TRS_SET(status_seen, false);
 	test_set_channel_hook(trs_wire_nak_hook, &hook);
 
 	if (submit_trs_cmd(&start_cmd, OSDP_TRS_CMD_START) ||
@@ -2721,10 +2802,11 @@ static bool test_trs_start_fails_when_mode_is_refused(void)
 		printf(SUB_2 "STOP: want FLUSHED, got %d\n", log.status[1]);
 		ok = false;
 	}
-	if (g_trs.last_failure.reason != OSDP_TRS_FAIL_NAK ||
-	    g_trs.last_failure.nak_code != OSDP_PD_NAK_MSG_CHK) {
+	failure = TRS_GET(last_failure);
+	if (failure.reason != OSDP_TRS_FAIL_NAK ||
+	    failure.nak_code != OSDP_PD_NAK_MSG_CHK) {
 		printf(SUB_2 "want reason NAK(MSG_CHK), got %d(%d)\n",
-		       g_trs.last_failure.reason, g_trs.last_failure.nak_code);
+		       failure.reason, failure.nak_code);
 		ok = false;
 	}
 	if (!test_wait_for_online(g_trs.cp_ctx, 0, 10)) {
@@ -2749,20 +2831,20 @@ static bool test_trs_idle_session_is_closed(void)
 
 	printf(SUB_2 "testing TRS idle session is closed\n");
 
-	g_trs.status_seen = false;
+	TRS_SET(status_seen, false);
 	if (submit_trs_cmd(&start_cmd, OSDP_TRS_CMD_START) ||
 	    !wait_for_trs_status(OSDP_TRS_SESSION_OPENED, 5)) {
 		printf(SUB_2 "TRS session never opened\n");
 		return false;
 	}
-	g_trs.status_seen = false;
+	TRS_SET(status_seen, false);
 	if (!wait_for_trs_status(OSDP_TRS_SESSION_FAILED, 10)) {
 		printf(SUB_2 "idle session was not closed\n");
 		return false;
 	}
-	if (g_trs.last_failure.reason != OSDP_TRS_FAIL_IDLE) {
+	if (TRS_GET(last_failure.reason) != OSDP_TRS_FAIL_IDLE) {
 		printf(SUB_2 "want reason IDLE, got %d\n",
-		       g_trs.last_failure.reason);
+		       TRS_GET(last_failure.reason));
 		return false;
 	}
 	if (submit_trs_cmd(&stop_cmd, OSDP_TRS_CMD_STOP) == 0) {
@@ -2770,13 +2852,13 @@ static bool test_trs_idle_session_is_closed(void)
 		return false;
 	}
 
-	g_trs.status_seen = false;
+	TRS_SET(status_seen, false);
 	if (submit_trs_cmd(&start_cmd, OSDP_TRS_CMD_START) ||
 	    !wait_for_trs_status(OSDP_TRS_SESSION_OPENED, 5)) {
 		printf(SUB_2 "next session never opened\n");
 		return false;
 	}
-	g_trs.status_seen = false;
+	TRS_SET(status_seen, false);
 	if (submit_trs_cmd(&stop_cmd, OSDP_TRS_CMD_STOP) ||
 	    !wait_for_trs_status(OSDP_TRS_SESSION_CLOSED, 5)) {
 		printf(SUB_2 "next session never closed\n");
