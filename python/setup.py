@@ -12,7 +12,7 @@ import shutil
 import subprocess
 
 project_name = "libosdp"
-project_version = "3.2.9"
+project_version = "3.2.10"
 current_dir = os.path.dirname(os.path.realpath(__file__))
 repo_root = os.path.realpath(os.path.join(current_dir, ".."))
 

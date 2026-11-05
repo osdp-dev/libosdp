@@ -10,7 +10,7 @@ cmake_policy(SET CMP0063 NEW)
 # Generate compile_commands.json for IDE support
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-project(libosdp VERSION 3.2.9)
+project(libosdp VERSION 3.2.10)
 
 set(PROJECT_AUTHOR       "Siddharth Chandrasekaran")
 set(PROJECT_AUTHOR_EMAIL "sidcha.dev@gmail.com")

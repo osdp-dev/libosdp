@@ -1,3 +1,14 @@
+v3.2.10
+-------
+
+05 November 2026
+
+A point rlease to fix a null-ptr deref
+
+Fixes:
+  - common: Null-check command name before dereferencing it
+
+
 v3.2.9
 ------
 
