@@ -485,6 +485,10 @@ def cmd_prepare(root: Path, args: argparse.Namespace) -> None:
         die(f"a release of v{state.version} is already prepared and staged; run "
             f"'publish', or abandon it with:\n"
             f"  git restore --staged --worktree {' '.join(VERSION_FILES)}")
+    if not tag_exists(root, f"v{state.version}"):
+        die(f"v{state.version} is released in HEAD but not tagged; tag it with "
+            f"'git tag -s -a v{state.version} -m \"Release v{state.version}\"' "
+            "before preparing another release")
     check_agreement(root)
 
     if args.set:
@@ -564,9 +568,11 @@ def cmd_publish(root: Path, args: argparse.Namespace) -> None:
         write_state(root, State(version, prerelease=False))
     git(["add", *STAGE_FILES, str(path.relative_to(root))], root)
     git(["commit", "-s", "-m", f"Release {tag}"], root)
-    git(["tag", "-s", "-a", tag, "-m", f"Release {tag}"], root)
 
+    # Tagging is inside the rollback too: a missed YubiKey touch must not leave
+    # a Release commit without its tag, which the next prepare would bump past.
     try:
+        git(["tag", "-s", "-a", tag, "-m", f"Release {tag}"], root)
         verify_tag_signature(root, tag, args.key_url)
     except SystemExit:
         git(["tag", "-d", tag], root, check=False)
@@ -576,7 +582,7 @@ def cmd_publish(root: Path, args: argparse.Namespace) -> None:
         git(["reset", "--soft" if quick else "--hard", saved], root, check=False)
         kept = ("the release files are left staged" if quick
                 else "Release commit undone")
-        die(f"signature check failed — rolled back (tag {tag} deleted, {kept}). "
+        die(f"signing or its check failed — rolled back (tag {tag} deleted, {kept}). "
             "Fix your signing key and re-run publish.")
 
     print(f"Released {tag} (builds now report {version}).")
