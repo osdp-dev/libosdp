@@ -183,12 +183,12 @@ int osdp_decrypt_data(struct osdp_pd *pd, int is_cmd, uint8_t *data, int length)
 	int i;
 	uint8_t iv[16];
 
-	if (length % 16 != 0) {
+	if (length < 0 || length % 16 != 0) {
 		return -1;
 	}
 
-	if (sc_allow_empty_encrypted_data_block(pd) && length == 0) {
-		return 0;
+	if (length == 0) {
+		return sc_allow_empty_encrypted_data_block(pd) ? 0 : -1;
 	}
 
 	memcpy(iv, is_cmd ? pd->sc.r_mac : pd->sc.c_mac, 16);

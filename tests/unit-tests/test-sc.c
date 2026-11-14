@@ -376,6 +376,46 @@ static int test_sc_decrypt_data_invalid_len(struct osdp *ctx)
 	return 0;
 }
 
+static int test_sc_decrypt_data_negative_len(struct osdp *ctx)
+{
+	struct osdp_pd pd;
+	uint8_t buf[16] = { 0 };
+
+	ARG_UNUSED(ctx);
+	init_sc_data_ctx(&pd, true);
+
+	if (test_osdp_decrypt_data(&pd, 1, buf + 16, -16) != -1) {
+		printf("osdp_decrypt_data must fail for negative length\n");
+		return -1;
+	}
+	return 0;
+}
+
+static int test_sc_decrypt_data_empty_refused_by_default(struct osdp *ctx)
+{
+	struct osdp_pd pd;
+	uint8_t buf[2] = { 0x80 /* EOM marker */, 0 };
+
+	ARG_UNUSED(ctx);
+	init_sc_data_ctx(&pd, true);
+
+	/* In a packet the byte before the block is the command ID, and 0x80
+	 * (CMD_MFG) doubles as the EOM marker: stepping back from an empty
+	 * block would find it and overwrite it with the marker's 0. */
+	if (test_osdp_decrypt_data(&pd, 1, buf + 1, 0) != -1 ||
+	    buf[0] != 0x80) {
+		printf("osdp_decrypt_data must fail for empty block without "
+		       "touching the byte before it\n");
+		return -1;
+	}
+	SET_FLAG(&pd, PD_FLAG_ALLOW_EMPTY_EDB);
+	if (test_osdp_decrypt_data(&pd, 1, buf + 1, 0) != 0) {
+		printf("osdp_decrypt_data must tolerate an allowed empty block\n");
+		return -1;
+	}
+	return 0;
+}
+
 static int test_sc_decrypt_data_invalid_marker(struct osdp *ctx)
 {
 	struct osdp_pd pd;
@@ -416,6 +456,8 @@ void run_sc_tests(struct test *t)
 	DO_TEST(t, test_sc_decrypt_data_cmd_15b);
 	DO_TEST(t, test_sc_decrypt_data_reply_16b);
 	DO_TEST(t, test_sc_decrypt_data_invalid_len);
+	DO_TEST(t, test_sc_decrypt_data_negative_len);
+	DO_TEST(t, test_sc_decrypt_data_empty_refused_by_default);
 	DO_TEST(t, test_sc_decrypt_data_invalid_marker);
 
 	osdp_crypt_teardown();
