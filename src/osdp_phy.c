@@ -760,6 +760,15 @@ int osdp_phy_decode_packet(struct osdp_pd *pd, uint8_t **pkt_start)
 			pd->ephemeral_data[0] = OSDP_PD_NAK_SC_UNSUP;
 			return OSDP_ERR_PKT_NACK;
 		}
+		/* The SB length byte is the peer's to choose; it must cover
+		 * its own length and type bytes and leave room for the ID. */
+		if (pkt->data[0] < 2 || pkt->data[0] > len - 1) {
+			LOG_ERR("Invalid SB length %d in %d byte data block",
+				pkt->data[0], len);
+			pd->reply_id = REPLY_NAK;
+			pd->ephemeral_data[0] = OSDP_PD_NAK_SC_COND;
+			return OSDP_ERR_PKT_NACK;
+		}
 		if (pkt->data[1] < SCS_11 || pkt->data[1] > SCS_18) {
 			LOG_ERR("Invalid SB Type");
 			pd->reply_id = REPLY_NAK;
@@ -821,6 +830,13 @@ int osdp_phy_decode_packet(struct osdp_pd *pd, uint8_t **pkt_start)
 
 	if (is_sc_active &&
 	    pkt->control & PKT_CONTROL_SCB && pkt->data[1] >= SCS_15) {
+		if (len < 1 + 4) {
+			LOG_ERR("No room for ID and MAC in %d byte data block",
+				len);
+			pd->reply_id = REPLY_NAK;
+			pd->ephemeral_data[0] = OSDP_PD_NAK_SC_COND;
+			return OSDP_ERR_PKT_NACK;
+		}
 		/* validate MAC */
 		is_cmd = is_pd_mode(pd);
 		osdp_compute_mac(pd, is_cmd, buf, mac_offset);
