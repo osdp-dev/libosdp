@@ -18,6 +18,8 @@ extern int test_osdp_phy_packet_init(struct osdp_pd *pd, uint8_t *buf, int max_l
 extern uint16_t test_osdp_compute_crc16(const uint8_t *buf, size_t len);
 extern uint8_t test_osdp_compute_checksum(uint8_t *msg, int length);
 extern int test_cp_phy_state_update(struct osdp_pd *pd);
+extern int test_osdp_compute_mac(struct osdp_pd *pd, int is_cmd,
+				 const uint8_t *data, int len);
 
 struct refresh_yield_test_data {
 	int send_count;
@@ -612,6 +614,100 @@ out:
 	CLEAR_FLAG(p, PD_FLAG_ENABLE_NOTIF);
 	CLEAR_FLAG(p, PD_FLAG_SKIP_SEQ_CHECK);
 	p->phy_state = OSDP_CP_PHY_STATE_IDLE;
+	return rc;
+}
+
+/* Build an SCB reply (no mark, CRC, seq 1) whose SB length byte is
+ * `sb_len` whatever the SB actually holds. With `with_mac`, the MAC is the
+ * one the session expects, as a peer holding the keys would compute it. */
+static int cp_test_build_sb_reply(struct osdp_pd *p, uint8_t sb_len,
+				  uint8_t scs, const uint8_t *body,
+				  int body_len, bool with_mac, uint8_t *out)
+{
+	int n = 0;
+	int pkt_len = 5 + 2 + body_len + (with_mac ? 4 : 0) + 2;
+	uint16_t crc;
+
+	out[n++] = 0x53;
+	out[n++] = 0xe5;
+	out[n++] = pkt_len;
+	out[n++] = 0;
+	out[n++] = 0x0d; /* SCB | CRC | seq 1 */
+	out[n++] = sb_len;
+	out[n++] = scs;
+	memcpy(out + n, body, body_len);
+	n += body_len;
+	if (with_mac) {
+		test_osdp_compute_mac(p, 0, out, n);
+		memcpy(out + n, p->sc.r_mac, 4);
+		n += 4;
+	}
+	crc = test_osdp_compute_crc16(out, n);
+	out[n++] = crc & 0xff;
+	out[n++] = (crc >> 8) & 0xff;
+	return n;
+}
+
+/*
+ * The SB length byte comes off the wire. It must cover the SB's own length
+ * and type bytes, and must leave the reply ID (and the MAC, when the SCS
+ * type carries one) inside the frame; any other value would have the phy
+ * consume, MAC and decrypt bytes the frame does not have.
+ */
+static int test_phy_sb_length_out_of_frame_reject(struct osdp *ctx)
+{
+	static const uint8_t body[] = {
+		REPLY_ACK, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00
+	};
+	static const struct {
+		uint8_t sb_len;
+		uint8_t scs;
+		int body_len;
+		bool with_mac;
+	} cases[] = {
+		{ 28, SCS_18, sizeof(body), true },  /* past the frame end */
+		{ 17, SCS_18, sizeof(body), true },  /* takes the reply ID */
+		{ 14, SCS_18, sizeof(body), true },  /* takes part of the MAC */
+		{ 0, SCS_16, 1, true },              /* below its own size */
+		{ 1, SCS_16, 1, true },
+		{ 2, SCS_16, 1, false },             /* frame has no MAC */
+	};
+	struct osdp_pd *p = GET_CURRENT_PD(ctx);
+	uint8_t packet[64], *buf = NULL;
+	int err, n, rc = 0;
+	size_t i;
+
+	printf(SUB_1 "Testing SB length outside the frame is refused -- ");
+	for (i = 0; i < ARRAY_SIZEOF(cases) && rc == 0; i++) {
+		reset_pd_packet_state(p);
+		memset(&p->sc, 0x5a, sizeof(p->sc));
+		sc_activate(p);
+		SET_FLAG(p, PD_FLAG_SKIP_SEQ_CHECK);
+		n = cp_test_build_sb_reply(p, cases[i].sb_len, cases[i].scs,
+					   body, cases[i].body_len,
+					   cases[i].with_mac, packet);
+		osdp_rb_push_buf(p->rx_rb, packet, n);
+		err = osdp_phy_check_packet(p);
+		if (err != OSDP_ERR_PKT_NONE) {
+			printf("failed! [%zu] check returned %d\n", i, err);
+			rc = -1;
+		} else {
+			err = osdp_phy_decode_packet(p, &buf);
+			if (err != OSDP_ERR_PKT_NACK ||
+			    p->nak_code != OSDP_PD_NAK_SC_COND) {
+				printf("failed! [%zu] decode %d nak=%d\n", i,
+				       err, p->nak_code);
+				rc = -1;
+			}
+		}
+		sc_deactivate(p);
+		CLEAR_FLAG(p, PD_FLAG_SKIP_SEQ_CHECK);
+	}
+	memset(&p->sc, 0, sizeof(p->sc));
+	if (rc == 0) {
+		printf("success!\n");
+	}
 	return rc;
 }
 
@@ -1419,6 +1515,7 @@ void run_cp_phy_tests(struct test *t)
 	DO_TEST(t, test_phy_parse_hardcoded_sc_inactive_scs16_reject);
 	DO_TEST(t, test_phy_parse_hardcoded_sc_active_invalid_mac_reject);
 	DO_TEST(t, test_cp_bad_mac_reply_ends_sc);
+	DO_TEST(t, test_phy_sb_length_out_of_frame_reject);
 	DO_TEST(t, test_phy_parse_hardcoded_plaintext_when_sc_active_reject);
 	DO_TEST(t, test_phy_plaintext_keyset_ack_tolerated);
 	DO_TEST(t, test_phy_plaintext_keyset_ack_refused_enforcing);

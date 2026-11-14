@@ -220,6 +220,79 @@ static int test_pd_phy_retransmit_cmd_id_mismatch(struct osdp *ctx)
 	return 0;
 }
 
+/* The seq-repeat check finds the command ID behind the SB length byte the
+ * CP sent. A length that points past the frame must not let stale buffer
+ * bytes stand in for the ID and replay the cached reply. */
+static int test_pd_phy_retransmit_sb_len_past_frame(struct osdp *ctx)
+{
+	struct osdp_pd *p = osdp_to_pd(ctx, 0);
+	const uint8_t pattern[] = { 0xaa, 0xbb, 0xcc, 0xdd };
+	/* After the header: SB length 40, SCS_15, then the command byte. */
+	const uint8_t sb_tail[] = { SCS_15, CMD_POLL };
+	uint8_t packet[32];
+	int pkt_len;
+
+	printf(SUB_1 "Testing PD seq-repeat ignores an SB past the frame -- ");
+
+	pd_prime_cached_reply(p, pattern, sizeof(pattern), CMD_POLL, 1);
+	memset(p->packet_buf, CMD_POLL, OSDP_PACKET_BUF_SIZE);
+
+	pkt_len = pd_test_build_cmd_packet(0x09 /* SCB, seq=1 */, 40,
+					   sb_tail, sizeof(sb_tail),
+					   packet, sizeof(packet));
+	if (pkt_len < 0) {
+		printf("failed to build packet\n");
+		return -1;
+	}
+
+	tx_capture_reset();
+	osdp_rb_push_buf(p->rx_rb, packet, pkt_len);
+	osdp_phy_check_packet(p);
+
+	if (g_tx_capture_len != 0) {
+		printf("PD replayed its cached reply\n");
+		return -1;
+	}
+	printf("success!\n");
+	return 0;
+}
+
+/* Nor may it place the ID inside a secure frame's trailing MAC, whose
+ * bytes the sender does not choose as a command ID. */
+static int test_pd_phy_retransmit_sb_len_into_mac(struct osdp *ctx)
+{
+	struct osdp_pd *p = osdp_to_pd(ctx, 0);
+	const uint8_t pattern[] = { 0xaa, 0xbb, 0xcc, 0xdd };
+	/* After the header: SB length 4, SCS_15, a command byte and a MAC
+	 * whose second byte, where the SB length points, is CMD_POLL. */
+	const uint8_t sb_tail[] = { SCS_15, CMD_ID, 0x00, CMD_POLL, 0x00, 0x00 };
+	uint8_t packet[32];
+	int pkt_len;
+
+	printf(SUB_1 "Testing PD seq-repeat ignores an ID in the MAC -- ");
+
+	pd_prime_cached_reply(p, pattern, sizeof(pattern), CMD_POLL, 1);
+
+	pkt_len = pd_test_build_cmd_packet(0x09 /* SCB, seq=1 */, 4,
+					   sb_tail, sizeof(sb_tail),
+					   packet, sizeof(packet));
+	if (pkt_len < 0) {
+		printf("failed to build packet\n");
+		return -1;
+	}
+
+	tx_capture_reset();
+	osdp_rb_push_buf(p->rx_rb, packet, pkt_len);
+	osdp_phy_check_packet(p);
+
+	if (g_tx_capture_len != 0) {
+		printf("PD replayed its cached reply\n");
+		return -1;
+	}
+	printf("success!\n");
+	return 0;
+}
+
 /* When the CP sends a seq=0 packet to restart communication the PD resets
  * sequence state, deactivates SC, and must also invalidate any cached
  * reply left over from the previous conversation. */
@@ -611,6 +684,8 @@ void run_pd_phy_tests(struct test *t)
 
 	DO_TEST(t, test_pd_phy_retransmit_cached_reply);
 	DO_TEST(t, test_pd_phy_retransmit_cmd_id_mismatch);
+	DO_TEST(t, test_pd_phy_retransmit_sb_len_past_frame);
+	DO_TEST(t, test_pd_phy_retransmit_sb_len_into_mac);
 	DO_TEST(t, test_pd_phy_seq_zero_clears_cache);
 	DO_TEST(t, test_pd_phy_sc_deactivate_clears_cache);
 	DO_TEST(t, test_pd_phy_sc_setup_clears_cache);
