@@ -274,6 +274,35 @@ static int reply_backing_event_type(int reply_id)
 	}
 }
 
+/* Each length field must fit the array it describes: the reply builders copy
+ * that many bytes out of it. */
+static bool pd_event_lengths_fit(const struct osdp_event *event)
+{
+	switch (event->type) {
+	case OSDP_EVENT_CARDREAD:
+		return BITS_TO_BYTES(event->cardread.length) <=
+		       OSDP_EVENT_CARDREAD_MAX_DATALEN;
+	case OSDP_EVENT_KEYPRESS:
+		return event->keypress.length >= 0 &&
+		       event->keypress.length <= OSDP_EVENT_KEYPRESS_MAX_DATALEN;
+	case OSDP_EVENT_MFGREP:
+		return event->mfgrep.length <= OSDP_EVENT_MFGREP_MAX_DATALEN;
+	case OSDP_EVENT_MFGSTATR:
+		return event->mfgstatr.length <= OSDP_EVENT_MFGSTAT_MAX_DATALEN;
+	case OSDP_EVENT_MFGERRR:
+		return event->mfgerrr.length <= OSDP_EVENT_MFGSTAT_MAX_DATALEN;
+	case OSDP_EVENT_BIOREADR:
+		return event->bioreadr.length <=
+		       OSDP_EVENT_BIOREADR_MAX_TEMPLATE_LEN;
+	case OSDP_EVENT_PIVDATAR:
+	case OSDP_EVENT_GENAUTHR:
+	case OSDP_EVENT_CRAUTHR:
+		return event->piv_reply.length <= OSDP_PIV_DATA_MAX_LEN;
+	default:
+		return true;
+	}
+}
+
 /**
  * Consume a reply that the app submitted from within its command callback so it
  * rides out as the reply to this command instead of a later poll response.
@@ -1492,6 +1521,9 @@ static int pd_build_reply(struct osdp_pd *pd, uint8_t *buf, int max_len)
 			osdp_reply_name(pd->reply_id), pd->reply_id);
 		goto out;
 	}
+	if (event_type >= 0 && event && !pd_event_lengths_fit(event)) {
+		goto out;
+	}
 
 	switch (pd->reply_id) {
 	case REPLY_ACK:
@@ -2436,6 +2468,12 @@ int osdp_pd_submit_event(osdp_t *ctx, const struct osdp_event *event)
 	}
 
 	if (event->type <= 0 || event->type >= OSDP_EVENT_SENTINEL) {
+		return -1;
+	}
+
+	if (!pd_event_lengths_fit(event)) {
+		LOG_ERR("Event: %d; data length exceeds its buffer",
+			event->type);
 		return -1;
 	}
 

@@ -9,6 +9,8 @@
 #include <osdp.h>
 #include "test.h"
 
+extern int test_pd_build_reply(struct osdp_pd *pd, uint8_t *buf, int max_len);
+
 /* Test context for event tests */
 struct test_event_ctx {
 	osdp_t *cp_ctx;
@@ -465,6 +467,191 @@ static bool test_submit_checks_status_and_reader(struct test *t)
 	return result;
 }
 
+struct length_check {
+	const char *what;
+	enum osdp_event_type type;
+	int length;
+	bool accepted;
+};
+
+static void length_check_event(const struct length_check *c,
+			       struct osdp_event *ev)
+{
+	memset(ev, 0, sizeof(*ev));
+	ev->type = c->type;
+	switch (c->type) {
+	case OSDP_EVENT_CARDREAD:
+		ev->cardread.format = OSDP_CARD_FMT_RAW_UNSPECIFIED;
+		ev->cardread.length = c->length;
+		break;
+	case OSDP_EVENT_KEYPRESS:
+		ev->keypress.length = c->length;
+		break;
+	case OSDP_EVENT_MFGREP:
+		ev->mfgrep.length = c->length;
+		break;
+	case OSDP_EVENT_MFGSTATR:
+		ev->mfgstatr.length = c->length;
+		break;
+	case OSDP_EVENT_MFGERRR:
+		ev->mfgerrr.length = c->length;
+		break;
+	case OSDP_EVENT_BIOREADR:
+		ev->bioreadr.length = c->length;
+		break;
+	case OSDP_EVENT_PIVDATAR:
+	case OSDP_EVENT_GENAUTHR:
+	case OSDP_EVENT_CRAUTHR:
+		ev->piv_reply.length = c->length;
+		break;
+	default:
+		break;
+	}
+}
+
+/*
+ * The reply builders copy `length` bytes out of the event's own array, so a
+ * length that is negative or larger than that array must be refused at
+ * submit, with nothing queued. Runs on a pair that is never refreshed.
+ */
+static bool test_submit_checks_lengths(struct test *t)
+{
+	static const struct length_check checks[] = {
+		{ "keypress -1", OSDP_EVENT_KEYPRESS, -1, false },
+		{ "keypress over max", OSDP_EVENT_KEYPRESS,
+		  OSDP_EVENT_KEYPRESS_MAX_DATALEN + 1, false },
+		{ "keypress at max", OSDP_EVENT_KEYPRESS,
+		  OSDP_EVENT_KEYPRESS_MAX_DATALEN, true },
+		{ "cardread bits over max", OSDP_EVENT_CARDREAD,
+		  OSDP_EVENT_CARDREAD_MAX_DATALEN * 8 + 1, false },
+		{ "cardread bits at max", OSDP_EVENT_CARDREAD,
+		  OSDP_EVENT_CARDREAD_MAX_DATALEN * 8, true },
+		{ "mfgrep over max", OSDP_EVENT_MFGREP,
+		  OSDP_EVENT_MFGREP_MAX_DATALEN + 1, false },
+		{ "mfgrep at max", OSDP_EVENT_MFGREP,
+		  OSDP_EVENT_MFGREP_MAX_DATALEN, true },
+		{ "mfgstatr over max", OSDP_EVENT_MFGSTATR,
+		  OSDP_EVENT_MFGSTAT_MAX_DATALEN + 1, false },
+		{ "mfgerrr over max", OSDP_EVENT_MFGERRR,
+		  OSDP_EVENT_MFGSTAT_MAX_DATALEN + 1, false },
+		{ "bioreadr over max", OSDP_EVENT_BIOREADR,
+		  OSDP_EVENT_BIOREADR_MAX_TEMPLATE_LEN + 1, false },
+		{ "pivdatar over max", OSDP_EVENT_PIVDATAR,
+		  OSDP_PIV_DATA_MAX_LEN + 1, false },
+		{ "genauthr over max", OSDP_EVENT_GENAUTHR,
+		  OSDP_PIV_DATA_MAX_LEN + 1, false },
+		{ "crauthr over max", OSDP_EVENT_CRAUTHR,
+		  OSDP_PIV_DATA_MAX_LEN + 1, false },
+	};
+	struct osdp_event event;
+	osdp_t *cp, *pd;
+	bool accepted, result = true;
+	int flushed, want_queued = 0;
+	size_t i;
+
+	printf(SUB_2 "testing submit-time length checks\n");
+
+	if (test_setup_devices(t, &cp, &pd)) {
+		printf(SUB_2 "device setup failed\n");
+		return false;
+	}
+
+	for (i = 0; i < ARRAY_SIZEOF(checks); i++) {
+		length_check_event(&checks[i], &event);
+		accepted = test_submit_event(pd, &event) != NULL;
+		if (accepted != checks[i].accepted) {
+			printf(SUB_2 "%s: %s, want %s\n", checks[i].what,
+			       accepted ? "accepted" : "refused",
+			       checks[i].accepted ? "accepted" : "refused");
+			result = false;
+		}
+		want_queued += checks[i].accepted;
+	}
+
+	flushed = osdp_pd_flush_events(pd);
+	if (flushed != want_queued) {
+		printf(SUB_2 "%d events queued, want %d\n", flushed,
+		       want_queued);
+		result = false;
+	}
+	osdp_cp_teardown(cp);
+	osdp_pd_teardown(pd);
+	return result;
+}
+
+/*
+ * An app may still change a queued event, which it must not, after submit
+ * accepted it. The reply builder must then NAK rather than copy past the
+ * event's array.
+ */
+static bool test_build_checks_lengths(struct test *t)
+{
+	static const struct {
+		const char *what;
+		int reply_id;
+		struct length_check ev;
+	} checks[] = {
+		{ "keypress -1", REPLY_KEYPAD,
+		  { NULL, OSDP_EVENT_KEYPRESS, -1, false } },
+		{ "keypress over max", REPLY_KEYPAD,
+		  { NULL, OSDP_EVENT_KEYPRESS,
+		    OSDP_EVENT_KEYPRESS_MAX_DATALEN + 1, false } },
+		{ "cardread over max", REPLY_RAW,
+		  { NULL, OSDP_EVENT_CARDREAD,
+		    OSDP_EVENT_CARDREAD_MAX_DATALEN * 8 + 1, false } },
+		{ "mfgrep over max", REPLY_MFGREP,
+		  { NULL, OSDP_EVENT_MFGREP,
+		    OSDP_EVENT_MFGREP_MAX_DATALEN + 1, false } },
+		{ "mfgstatr over max", REPLY_MFGSTATR,
+		  { NULL, OSDP_EVENT_MFGSTATR,
+		    OSDP_EVENT_MFGSTAT_MAX_DATALEN + 1, false } },
+	};
+	uint8_t buf[OSDP_PACKET_BUF_SIZE];
+	struct osdp_event ev, *queued;
+	struct osdp_pd *p;
+	osdp_t *cp, *pd;
+	bool result = true;
+	int off, n;
+	size_t i;
+
+	printf(SUB_2 "testing reply-build length checks\n");
+
+	if (test_setup_devices(t, &cp, &pd)) {
+		printf(SUB_2 "device setup failed\n");
+		return false;
+	}
+	p = osdp_to_pd(pd, 0);
+
+	for (i = 0; i < ARRAY_SIZEOF(checks); i++) {
+		length_check_event(&checks[i].ev, &ev);
+		queued = test_event_dup(&ev);
+		if (queued == NULL) {
+			result = false;
+			break;
+		}
+		memset(buf, 0, sizeof(buf));
+		off = osdp_phy_packet_get_data_offset(p, buf);
+		p->reply_id = checks[i].reply_id;
+		p->active_event = queued;
+		test_api_lock();
+		n = test_pd_build_reply(p, buf, sizeof(buf));
+		test_api_unlock();
+		if (n != 2 || buf[off] != REPLY_NAK || p->active_event) {
+			printf(SUB_2 "%s: built %d bytes, id %02x\n",
+			       checks[i].what, n, buf[off]);
+			result = false;
+		}
+		if (p->active_event) {
+			p->active_event = NULL;
+			test_event_free(queued);
+		}
+	}
+
+	osdp_cp_teardown(cp);
+	osdp_pd_teardown(pd);
+	return result;
+}
+
 /*
  * LibOSDP does not support osdp_FMT, so an ASCII card read must be refused
  * at submit -- never queued, never completed -- instead of being answered
@@ -701,6 +888,8 @@ void run_event_tests(struct test *t)
 		  test_submit_requires_completion_callback());
 	TEST_CASE(t, "submit_checks_status_and_reader",
 		  test_submit_checks_status_and_reader(t));
+	TEST_CASE(t, "submit_checks_lengths", test_submit_checks_lengths(t));
+	TEST_CASE(t, "build_checks_lengths", test_build_checks_lengths(t));
 	TEST_CASE(t, "reply_degraded_to_nak_completion",
 		  test_event_reply_degraded_to_nak_completes_failed());
 	TEST_CASE(t, "reply_build_failure_completion",
