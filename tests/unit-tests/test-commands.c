@@ -9,6 +9,9 @@
 #include <osdp.h>
 #include "test.h"
 
+extern int test_cp_build_command(struct osdp_pd *pd, const struct osdp_cmd *cmd,
+				 uint8_t *buf, int max_len);
+
 /* Test context for command tests */
 struct test_command_ctx {
 	osdp_t *cp_ctx;
@@ -975,6 +978,108 @@ static bool test_keyset_unusable_key_refused()
 	return true;
 }
 
+/* A command whose length field is `excess` bytes past its array's size */
+static void max_length_cmd(int cmd_id, int excess, struct osdp_cmd *cmd)
+{
+	memset(cmd, 0, sizeof(*cmd));
+	cmd->id = cmd_id;
+	switch (cmd_id) {
+	case OSDP_CMD_TEXT:
+		cmd->text.length = OSDP_CMD_TEXT_MAX_LEN + excess;
+		break;
+	case OSDP_CMD_MFG:
+		cmd->mfg.length = OSDP_CMD_MFG_MAX_DATALEN + excess;
+		break;
+	case OSDP_CMD_BIOMATCH:
+		cmd->biomatch.length =
+			OSDP_CMD_BIOMATCH_MAX_TEMPLATE_LEN + excess;
+		break;
+	}
+}
+
+static const int length_cmd_ids[] = {
+	OSDP_CMD_TEXT, OSDP_CMD_MFG, OSDP_CMD_BIOMATCH,
+};
+
+/*
+ * The command builder copies `length` bytes out of the command's own array,
+ * so a length past that array must be refused at submit, with nothing
+ * queued.
+ */
+static bool test_submit_refuses_oversize_lengths()
+{
+	struct osdp_cmd cmd;
+	size_t i;
+
+	printf(SUB_2 "testing submit refuses oversize command lengths\n");
+	reset_test_state();
+
+	for (i = 0; i < ARRAY_SIZEOF(length_cmd_ids); i++) {
+		max_length_cmd(length_cmd_ids[i], 1, &cmd);
+		if (test_submit_command(g_test_ctx.cp_ctx, 0, &cmd)) {
+			printf(SUB_2 "command %d accepted\n", cmd.id);
+			return false;
+		}
+	}
+	if (osdp_cp_flush_commands(g_test_ctx.cp_ctx, 0) != 0) {
+		printf(SUB_2 "a refused command was queued\n");
+		return false;
+	}
+
+	/* A full array is still a valid command. Whatever the PD makes of
+	 * these, they are flushed or answered before the link is checked. */
+	for (i = 0; i < ARRAY_SIZEOF(length_cmd_ids); i++) {
+		max_length_cmd(length_cmd_ids[i], 0, &cmd);
+		if (!test_submit_command(g_test_ctx.cp_ctx, 0, &cmd)) {
+			printf(SUB_2 "command %d at max length refused\n",
+			       cmd.id);
+			return false;
+		}
+	}
+	osdp_cp_flush_commands(g_test_ctx.cp_ctx, 0);
+	if (!pd_still_takes_commands()) {
+		printf(SUB_2 "PD stopped taking commands\n");
+		return false;
+	}
+	return true;
+}
+
+/*
+ * A command changed after submit accepted it, which the app must not do,
+ * must still fail to build rather than be copied past its array.
+ */
+static bool test_build_refuses_oversize_lengths(struct test *t)
+{
+	static const int cmd_ids[] = { CMD_TEXT, CMD_MFG, CMD_BIOMATCH };
+	uint8_t buf[OSDP_PACKET_BUF_SIZE] = { 0 };
+	struct osdp_cmd cmd;
+	struct osdp_pd *p;
+	osdp_t *cp, *pd;
+	bool result = true;
+	size_t i;
+
+	printf(SUB_2 "testing build refuses oversize command lengths\n");
+
+	if (test_setup_devices(t, &cp, &pd)) {
+		printf(SUB_2 "device setup failed\n");
+		return false;
+	}
+	p = osdp_to_pd(cp, 0);
+
+	for (i = 0; i < ARRAY_SIZEOF(cmd_ids); i++) {
+		max_length_cmd(length_cmd_ids[i], 1, &cmd);
+		p->cmd_id = cmd_ids[i];
+		if (test_cp_build_command(p, &cmd, buf, sizeof(buf)) >= 0) {
+			printf(SUB_2 "command %d built\n", cmd.id);
+			result = false;
+		}
+	}
+
+	osdp_cp_teardown(cp);
+	osdp_pd_teardown(pd);
+	return result;
+}
+
 static bool test_tdset_invalid_time_naks()
 {
 	printf(SUB_2 "testing tdset command with invalid month NAKs\n");
@@ -1262,6 +1367,8 @@ void run_command_tests(struct test *t)
 	TEST_CASE(t, "status_reply_selection", test_status_reply_selection(t));
 	TEST_CASE(t, "tdset_needs_time_keeping",
 		  test_tdset_needs_time_keeping(t));
+	TEST_CASE(t, "build_refuses_oversize_lengths",
+		  test_build_refuses_oversize_lengths(t));
 
 	/* Setup test environment once */
 	if (setup_test_environment(t) != 0) {
@@ -1277,6 +1384,8 @@ void run_command_tests(struct test *t)
 	TEST_CASE(t, "tdset_invalid_time_naks", test_tdset_invalid_time_naks());
 	TEST_CASE(t, "keyset_unusable_key_refused",
 		  test_keyset_unusable_key_refused());
+	TEST_CASE(t, "submit_refuses_oversize_lengths",
+		  test_submit_refuses_oversize_lengths());
 	TEST_CASE(t, "mfg_command_with_reply", test_mfg_command_with_reply());
 	TEST_CASE(t, "mfg_command_inline_replies",
 		  test_mfg_command_inline_replies());
