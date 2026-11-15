@@ -288,6 +288,10 @@ static int cp_build_command(struct osdp_pd *pd, uint8_t *buf, int max_len)
 		break;
 	case CMD_TEXT:
 		cmd = (struct osdp_cmd *)pd->ephemeral_data;
+		if (cmd->text.length > OSDP_CMD_TEXT_MAX_LEN) {
+			LOG_ERR("Invalid TEXT length (%d)", cmd->text.length);
+			return OSDP_CP_ERR_GENERIC;
+		}
 		assert_buf_len(CMD_TEXT_LEN + cmd->text.length, max_len);
 		buf[len++] = pd->cmd_id;
 		buf[len++] = cmd->text.reader;
@@ -1435,6 +1439,20 @@ static int cp_refresh(struct osdp_pd *pd)
 	return 0;
 }
 
+/* Each length field must fit the array it describes: the command builder
+ * copies that many bytes out of it. */
+static bool cp_cmd_lengths_fit(const struct osdp_cmd *cmd)
+{
+	switch (cmd->id) {
+	case OSDP_CMD_TEXT:
+		return cmd->text.length <= OSDP_CMD_TEXT_MAX_LEN;
+	case OSDP_CMD_MFG:
+		return cmd->mfg.length <= OSDP_CMD_MFG_MAX_DATALEN;
+	default:
+		return true;
+	}
+}
+
 static int cp_submit_command(struct osdp_pd *pd, const struct osdp_cmd *cmd)
 {
 	struct osdp_cmd *p;
@@ -1454,6 +1472,11 @@ static int cp_submit_command(struct osdp_pd *pd, const struct osdp_cmd *cmd)
 
 	if (cmd->flags & ~all_flags) {
 		LOG_ERR("Invalid command flag");
+		return -1;
+	}
+
+	if (!cp_cmd_lengths_fit(cmd)) {
+		LOG_ERR("Command %d: data length exceeds its buffer", cmd->id);
 		return -1;
 	}
 
