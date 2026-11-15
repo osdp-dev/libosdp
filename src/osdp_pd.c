@@ -784,6 +784,25 @@ static inline void assert_buf_len(int need, int have)
 	(void)have;
 }
 
+/* Each length field must fit the array it describes: the reply builders copy
+ * that many bytes out of it. */
+static bool pd_event_lengths_fit(const struct osdp_event *event)
+{
+	switch (event->type) {
+	case OSDP_EVENT_CARDREAD:
+		return event->cardread.length >= 0 &&
+		       event->cardread.length <=
+			       OSDP_EVENT_CARDREAD_MAX_DATALEN * 8;
+	case OSDP_EVENT_KEYPRESS:
+		return event->keypress.length >= 0 &&
+		       event->keypress.length <= OSDP_EVENT_KEYPRESS_MAX_DATALEN;
+	case OSDP_EVENT_MFGREP:
+		return event->mfgrep.length <= OSDP_EVENT_MFGREP_MAX_DATALEN;
+	default:
+		return true;
+	}
+}
+
 /**
  * Returns:
  * +ve: length of command
@@ -880,6 +899,9 @@ static int pd_build_reply(struct osdp_pd *pd, uint8_t *buf, int max_len)
 		break;
 	case REPLY_KEYPAD:
 		event = (struct osdp_event *)pd->ephemeral_data;
+		if (!pd_event_lengths_fit(event)) {
+			break;
+		}
 		assert_buf_len(REPLY_KEYPAD_LEN + event->keypress.length, max_len);
 		buf[len++] = pd->reply_id;
 		buf[len++] = (uint8_t)event->keypress.reader_no;
@@ -892,6 +914,9 @@ static int pd_build_reply(struct osdp_pd *pd, uint8_t *buf, int max_len)
 		int len_bytes;
 
 		event = (struct osdp_event *)pd->ephemeral_data;
+		if (!pd_event_lengths_fit(event)) {
+			break;
+		}
 		len_bytes = (event->cardread.length + 7) / 8;
 		assert_buf_len(REPLY_RAW_LEN + len_bytes, max_len);
 		buf[len++] = pd->reply_id;
@@ -926,6 +951,9 @@ static int pd_build_reply(struct osdp_pd *pd, uint8_t *buf, int max_len)
 		break;
 	case REPLY_MFGREP:
 		event = (struct osdp_event *)pd->ephemeral_data;
+		if (!pd_event_lengths_fit(event)) {
+			break;
+		}
 		assert_buf_len(REPLY_MFGREP_LEN + event->mfgrep.length, max_len);
 		buf[len++] = pd->reply_id;
 		bwrite_u24_le(event->mfgrep.vendor_code, buf, &len);
@@ -1397,6 +1425,12 @@ int osdp_pd_submit_event(osdp_t *ctx, const struct osdp_event *event)
 
 	if (event->type <= 0 ||
 	    event->type >= OSDP_EVENT_SENTINEL) {
+		return -1;
+	}
+
+	if (!pd_event_lengths_fit(event)) {
+		LOG_ERR("Event: %d; data length exceeds its buffer",
+			event->type);
 		return -1;
 	}
 
