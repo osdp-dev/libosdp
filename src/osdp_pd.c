@@ -339,6 +339,18 @@ static void pd_stage_event_mfgrep(struct osdp_pd *pd, struct osdp_cmd_mfg *cmd)
 	memcpy(pd->ephemeral_data, &ev, sizeof(ev));
 }
 
+/*
+ * A PD set up without a key holds the zeros its context was cleared to, and
+ * an all-zero key from setup or KEYSET is no secret either. A session on
+ * such a key would be open to any CP configured with an all-zero key.
+ */
+static bool pd_chlng_key_is_unset(struct osdp_pd *pd)
+{
+	static const uint8_t zeros[16] = { 0 };
+
+	return !sc_use_scbkd(pd) && memcmp(pd->sc.scbk, zeros, 16) == 0;
+}
+
 static int pd_decode_command(struct osdp_pd *pd, uint8_t *buf, int len)
 {
 	int i, ret = OSDP_PD_ERR_GENERIC, pos = 0;
@@ -723,6 +735,11 @@ static int pd_decode_command(struct osdp_pd *pd, uint8_t *buf, int len)
 		sc_deactivate(pd);
 		osdp_sc_setup(pd);
 		memcpy(pd->sc.cp_random, buf + pos, 8);
+		if (pd_chlng_key_is_unset(pd)) {
+			LOG_ERR("CHLNG for an SCBK, but none is set");
+			pd->ephemeral_data[0] = OSDP_PD_NAK_SC_COND;
+			break;
+		}
 		pd->reply_id = REPLY_CCRYPT;
 		ret = OSDP_PD_ERR_NONE;
 		break;
