@@ -1,3 +1,19 @@
+v3.2.11
+-------
+
+18 November 2026
+
+Security fixes
+
+Fixes:
+  - pd: Refuse a CHLNG for an SCBK the PD was never given
+  - cp: Bound command data lengths at submit and build
+  - pd: Bound event data lengths at submit and build
+  - sc: Refuse negative and empty decrypt lengths
+  - phy: Bound the security block length to the frame
+  - ci: Build Apple silicon on macos-15
+
+
 v3.2.10
 -------
 
