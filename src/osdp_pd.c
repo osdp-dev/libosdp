@@ -666,6 +666,18 @@ static void pd_pick_chlng_key(struct osdp_pd *pd)
 	SET_FLAG(pd, PD_FLAG_SC_USE_STAGED);
 }
 
+/*
+ * Setup and KEYSET store only usable keys, so an unusable main key means the
+ * PD was never given one: an install-mode PD without a key still holds the
+ * zeros its context was cleared to, and a session on them would be open to
+ * any CP configured with an all-zero key.
+ */
+static bool pd_chlng_key_is_unset(struct osdp_pd *pd)
+{
+	return !sc_use_scbkd(pd) && !ISSET_FLAG(pd, PD_FLAG_SC_USE_STAGED) &&
+	       !osdp_scbk_is_usable(pd->sc.scbk);
+}
+
 static void notify_pd_status(struct osdp_pd *pd, bool is_online)
 {
 	struct osdp_notification n = { .type = OSDP_NOTIFICATION_PD_STATUS };
@@ -1432,6 +1444,11 @@ static int pd_decode_command(struct osdp_pd *pd, uint8_t *buf, int len)
 			CLEAR_FLAG(pd, PD_FLAG_SC_USE_STAGED);
 		} else {
 			pd_pick_chlng_key(pd);
+		}
+		if (pd_chlng_key_is_unset(pd)) {
+			LOG_ERR("CHLNG for an SCBK, but none is set");
+			pd->nak_code = OSDP_PD_NAK_SC_COND;
+			break;
 		}
 		pd->reply_id = REPLY_CCRYPT;
 		ret = OSDP_PD_ERR_NONE;

@@ -347,12 +347,12 @@ out:
 	return ok;
 }
 
-static bool chlng_reply_is(const uint8_t *scbk, uint32_t flags,
+static bool chlng_reply_is(const uint8_t *scbk, uint32_t flags, bool asks_scbkd,
 			   uint8_t want_reply, uint8_t want_nak)
 {
 	struct osdp *ctx = scp_pd_setup(scbk, flags);
-	/* SCS_11 with SEC_BLK_DATA[0] = 0 asks for SCBK-D */
-	const uint8_t sb[] = { 3, SCS_11, 0 };
+	/* SEC_BLK_DATA[0] of SCS_11 selects the key: 0 SCBK-D, 1 SCBK */
+	const uint8_t sb[] = { 3, SCS_11, asks_scbkd ? 0 : 1 };
 	const uint8_t rnd[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
 	struct osdp_pd *pd;
 	uint8_t pkt[SCP_BUF_MAX];
@@ -374,12 +374,30 @@ static bool chlng_reply_is(const uint8_t *scbk, uint32_t flags,
 
 static bool keyless_pd_naks_chlng(void)
 {
-	return chlng_reply_is(NULL, 0, REPLY_NAK, OSDP_PD_NAK_SC_UNSUP);
+	return chlng_reply_is(NULL, 0, true, REPLY_NAK, OSDP_PD_NAK_SC_UNSUP);
 }
 
 static bool install_mode_pd_answers_chlng(void)
 {
-	return chlng_reply_is(NULL, OSDP_FLAG_INSTALL_MODE, REPLY_CCRYPT, 0);
+	return chlng_reply_is(NULL, OSDP_FLAG_INSTALL_MODE, true, REPLY_CCRYPT,
+			      0);
+}
+
+/*
+ * A PD in install mode with no key holds an all-zero SCBK. Answering a CHLNG
+ * for the real key would run the session on those zeros, so a CP configured
+ * with an all-zero key would get a channel the PD reports as keyed.
+ */
+static bool install_mode_keyless_pd_naks_real_key_chlng(void)
+{
+	return chlng_reply_is(NULL, OSDP_FLAG_INSTALL_MODE, false, REPLY_NAK,
+			      OSDP_PD_NAK_SC_COND);
+}
+
+static bool install_mode_keyed_pd_answers_real_key_chlng(void)
+{
+	return chlng_reply_is(scp_scbk, OSDP_FLAG_INSTALL_MODE, false,
+			      REPLY_CCRYPT, 0);
 }
 
 /* Clearing the capability after setup is the documented way to turn SC off;
@@ -658,6 +676,10 @@ void run_sc_policy_tests(struct test *t)
 	TEST_CASE(t, "keyless_pd_naks_chlng", keyless_pd_naks_chlng());
 	TEST_CASE(t, "install_mode_pd_answers_chlng",
 		  install_mode_pd_answers_chlng());
+	TEST_CASE(t, "install_mode_keyless_pd_naks_real_key_chlng",
+		  install_mode_keyless_pd_naks_real_key_chlng());
+	TEST_CASE(t, "install_mode_keyed_pd_answers_real_key_chlng",
+		  install_mode_keyed_pd_answers_real_key_chlng());
 	TEST_CASE(t, "set_capabilities_can_disable_sc",
 		  set_capabilities_can_disable_sc());
 	TEST_CASE(t, "set_capabilities_is_refused_after_refresh",
