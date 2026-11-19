@@ -2932,9 +2932,9 @@ static void cp_release_pd_resources(struct osdp_pd *pd_array, int count)
 		}
 #ifndef OPT_OSDP_STATIC
 #ifdef OPT_OSDP_RX_ZERO_COPY
-		safe_free(pd->rx_pkt);
+		osdp_free(pd->rx_pkt);
 #else
-		safe_free(pd->rx_rb);
+		osdp_free(pd->rx_rb);
 #endif
 #endif /* OPT_OSDP_STATIC */
 	}
@@ -3143,13 +3143,13 @@ void osdp_cp_teardown(osdp_t *ctx)
 		osdp_fill_zeros(pd->staged_rnd_a, sizeof(pd->staged_rnd_a));
 
 #ifndef OPT_OSDP_STATIC
-		safe_free(pd->file);
-		safe_free(pd->piv);
-		safe_free(pd->bio);
+		osdp_free(pd->file);
+		osdp_free(pd->piv);
+		osdp_free(pd->bio);
 #ifdef OPT_OSDP_RX_ZERO_COPY
-		safe_free(pd->rx_pkt);
+		osdp_free(pd->rx_pkt);
 #else
-		safe_free(pd->rx_rb);
+		osdp_free(pd->rx_rb);
 #endif
 #endif /* OPT_OSDP_STATIC */
 	}
@@ -3159,8 +3159,8 @@ void osdp_cp_teardown(osdp_t *ctx)
 	}
 
 #ifndef OPT_OSDP_STATIC
-	safe_free(cp_ctx->pd);
-	safe_free(cp_ctx);
+	osdp_free(cp_ctx->pd);
+	osdp_free(cp_ctx);
 #endif
 }
 

@@ -21,6 +21,13 @@
 
 #include <utils/crc16.h>
 
+/*
+ * Like osdp_millis_now(), the heap has no portable default on a bare-metal
+ * target utils cannot identify: calloc() there means newlib's sbrk heap,
+ * a second one beside whatever the application already runs. Leave the hooks
+ * undefined so the application supplies them or fails to link.
+ */
+#ifndef UTILS_UNKNOWN_TARGET
 __weak void *osdp_calloc(size_t nmemb, size_t size)
 {
 	return calloc(nmemb, size);
@@ -30,6 +37,7 @@ __weak void osdp_free(void *ptr)
 {
 	free(ptr);
 }
+#endif
 
 #if defined(OPT_OSDP_STATIC) && defined(OPT_OSDP_EXCLUSIVE_ROLE)
 /* One shared instance overlaying the CP and PD static pools; the accessors

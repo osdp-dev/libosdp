@@ -2377,19 +2377,19 @@ void osdp_pd_teardown(osdp_t *ctx)
 #ifndef OPT_OSDP_STATIC
 #ifdef OPT_OSDP_RX_ZERO_COPY
 	{
-		safe_free(pd->rx_pkt);
+		osdp_free(pd->rx_pkt);
 	}
 #else /* OPT_OSDP_RX_ZERO_COPY */
 	{
-		safe_free(pd->rx_rb);
+		osdp_free(pd->rx_rb);
 	}
 #endif /* OPT_OSDP_RX_ZERO_COPY */
-	safe_free(pd->file);
-	safe_free(pd->piv);
-	safe_free(pd->bio);
-	safe_free(pd_ctx->rx_buf);
-	safe_free(pd);
-	safe_free(ctx);
+	osdp_free(pd->file);
+	osdp_free(pd->piv);
+	osdp_free(pd->bio);
+	osdp_free(pd_ctx->rx_buf);
+	osdp_free(pd);
+	osdp_free(ctx);
 #endif
 }
 

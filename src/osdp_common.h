@@ -183,10 +183,6 @@ int osdp_log_cb_emit(bool is_cp, int pd_address, int log_level,
 #define NUM_PD(ctx)    (TO_OSDP(ctx)->_num_pd)
 #define PD_MASK(ctx)   (uint32_t)(BIT(NUM_PD(ctx)) - 1)
 
-#define safe_free(p)                                                           \
-	if (p)                                                                 \
-	osdp_free(p)
-
 #define osdp_dump hexdump // for zephyr compatibility.
 
 static inline __noreturn void die()
@@ -900,9 +896,16 @@ uint16_t osdp_compute_crc16(const uint8_t *buf, size_t len);
 
 /* Every heap allocation in libosdp; OPT_OSDP_STATIC builds bypass these. An
  * application supplies its own heap by defining them and linking libosdp
- * statically. utils/src/pcap_gen.c (packet trace only) is outside the hook. */
+ * statically; a target utils cannot identify must. osdp_free() is handed
+ * NULL for anything that was never allocated, as free() would be.
+ * utils/src/pcap_gen.c (packet trace only) is outside the hook. */
+#ifdef UTILS_UNKNOWN_TARGET
+void *osdp_calloc(size_t nmemb, size_t size);
+void osdp_free(void *ptr);
+#else
 __weak void *osdp_calloc(size_t nmemb, size_t size);
 __weak void osdp_free(void *ptr);
+#endif
 
 const char *osdp_cmd_name(int cmd_id);
 const char *osdp_reply_name(int reply_id);
