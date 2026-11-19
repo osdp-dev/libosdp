@@ -200,10 +200,21 @@ static inline __noreturn void die()
 #endif
 }
 
+#if defined(__BARE_METAL__) && defined(OPT_OSDP_LOG_MINIMAL)
+/* Bare metal has no console to printf() to, and reaching stdio would link in
+ * newlib's FILE layer, its heap and syscall stubs; tell the log callback. */
+#define BUG_REPORT()                                                           \
+	osdp_log_emit(false, -1, LOG_EMERG, __FILE__, __LINE__,                \
+		      "BUG in %s(). Please report this issue!", __func__)
+#else
+#define BUG_REPORT()                                                           \
+	printf("BUG at %s:%d %s(). Please report this issue!",                 \
+	       __FILE__, __LINE__, __func__)
+#endif
+
 #define BUG()                                                                  \
 	do {                                                                   \
-		printf("BUG at %s:%d %s(). Please report this issue!",         \
-		       __FILE__, __LINE__, __func__);                          \
+		BUG_REPORT();                                                  \
 		die();                                                         \
 	} while (0)
 
@@ -213,6 +224,17 @@ static inline __noreturn void die()
 			BUG();                                                 \
 		}                                                              \
 	} while (0)
+
+#ifdef __BARE_METAL__
+/* newlib's assert() lands in __assert_func(), which prints through stdio and
+ * calls abort(). Fail through BUG() instead, keeping NDEBUG's meaning. */
+#undef assert
+#ifdef NDEBUG
+#define assert(pred) ((void)0)
+#else
+#define assert(pred) BUG_ON(!(pred))
+#endif
+#endif
 
 /**
  * OSDP application exposed method arg checker.

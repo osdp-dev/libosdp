@@ -6,10 +6,8 @@
 
 #include <stdint.h>
 #include <stdlib.h>
-#include <assert.h>
 
-#include <utils/utils.h>
-
+#include "../osdp_common.h"
 #include "tinyaes_src.h"
 
 void osdp_crypt_setup()
