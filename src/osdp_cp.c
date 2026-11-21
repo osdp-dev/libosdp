@@ -2962,7 +2962,7 @@ static int cp_add_pd(struct osdp *ctx, int num_pd, const osdp_pd_info_t *info_li
 		pd->osdp_ctx = ctx;
 		pd->packet_buf = osdp_tx_staging_buf(pd);
 		if (info->name) {
-			strncpy(pd->name, info->name, OSDP_PD_NAME_MAXLEN - 1);
+			snprintf(pd->name, OSDP_PD_NAME_MAXLEN, "%s", info->name);
 		} else {
 			snprintf(pd->name, OSDP_PD_NAME_MAXLEN, "PD-%d", info->address);
 		}

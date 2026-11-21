@@ -2267,7 +2267,7 @@ osdp_t *osdp_pd_setup(struct osdp_channel *channel, const osdp_pd_info_t *info)
 	pd->idx = 0;
 	pd->packet_buf = osdp_tx_staging_buf(pd);
 	if (info->name) {
-		strncpy(pd->name, info->name, OSDP_PD_NAME_MAXLEN - 1);
+		snprintf(pd->name, OSDP_PD_NAME_MAXLEN, "%s", info->name);
 	} else {
 		snprintf(pd->name, OSDP_PD_NAME_MAXLEN, "PD-%d", info->address);
 	}

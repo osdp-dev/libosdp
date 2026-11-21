@@ -46,6 +46,18 @@ __weak void osdp_free(void *ptr)
 union osdp_role_arena g_osdp_role_arena;
 #endif
 
+static const char *osdp_basename(const char *file)
+{
+	const char *base = file;
+
+	for (; *file; file++) {
+		if (*file == PATH_SEPARATOR) {
+			base = file + 1;
+		}
+	}
+	return base;
+}
+
 #ifdef OPT_OSDP_LOG_MINIMAL
 #define OSDP_MIN_LOG_BUF_LEN 160
 
@@ -56,13 +68,6 @@ static struct {
 };
 
 static char g_osdp_log_buf[OSDP_MIN_LOG_BUF_LEN + 2];
-
-static const char *osdp_basename(const char *file)
-{
-	const char *base = strrchr(file, PATH_SEPARATOR);
-
-	return base ? base + 1 : file;
-}
 
 static int osdp_log_emit_v(int log_level, int pd_address, const char *file,
 			   unsigned long line, const char *fmt, va_list ap)
@@ -148,8 +153,7 @@ int osdp_log_cb_emit(bool is_cp, int pd_address, int log_level,
 		len = sizeof(msg) - 1;
 	}
 
-	base = strrchr(file, PATH_SEPARATOR);
-	base = base ? base + 1 : file;
+	base = osdp_basename(file);
 
 	g_osdp_log_callback(pd_address, log_level, msg, base, line);
 	return len;
