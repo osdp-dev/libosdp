@@ -206,7 +206,7 @@ static inline void cp_own_engine_cmd(struct osdp_pd *pd,
 static const char *cp_get_cap_name(int cap)
 {
 	if (cap <= OSDP_PD_CAP_UNUSED || cap >= OSDP_PD_CAP_SENTINEL) {
-		return NULL;
+		return "UNKNOWN";
 	}
 	const char *cap_name[] = {
 		[OSDP_PD_CAP_CONTACT_STATUS_MONITORING] = "ContactStatusMonitoring",
