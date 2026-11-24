@@ -514,7 +514,7 @@ enum osdp_status_report_type {
  */
 struct osdp_status_report {
 	/**
-	 * The kind of event to report see `enum osdp_event_status_type_e`
+	 * The kind of status to report; see `enum osdp_status_report_type`
 	 */
 	enum osdp_status_report_type type;
 	/**
@@ -557,9 +557,8 @@ struct osdp_status_report {
 /**
  * @brief Max biometric template that fits in a single OSDP packet.
  *
- * @note The OSDP spec allows biometric templates to be split across multiple
- * packets (see "Multi-Part Messages"); LibOSDP does not implement multi-part
- * messages, so a template must fit within one packet.
+ * @note LibOSDP sends the BIOMATCH template in a single packet, so it must
+ * fit within one packet.
  */
 #ifndef OSDP_CMD_BIOMATCH_MAX_TEMPLATE_LEN
 #define OSDP_CMD_BIOMATCH_MAX_TEMPLATE_LEN 128
@@ -1027,7 +1026,7 @@ struct osdp_cmd_comset {
 	/**
 	 * Baud rate.
 	 *
-	 * Valid values: 9600, 19200, 38400, 115200, 230400.
+	 * Valid values: 9600, 19200, 38400, 57600, 115200, 230400.
 	 */
 	uint32_t baud_rate;
 };
@@ -1082,7 +1081,7 @@ struct osdp_cmd_mfg {
 	 */
 	uint8_t data[OSDP_CMD_MFG_MAX_DATALEN];
 	/**
-	 * Length of the data (internal use)
+	 * Number of bytes of @a data to send; at most OSDP_CMD_MFG_MAX_DATALEN
 	 */
 	uint8_t length;
 };
@@ -1391,9 +1390,9 @@ struct osdp_trs_scan_params {
 	 */
 	uint16_t hold_ms;
 	/**
-	 * Reader the scan asks whether a card is present (0 = first, the
-	 * default). Sightings a reader volunteers are delivered whichever
-	 * reader reports them.
+	 * Reader the scan asks whether a card is present: 0 (the default) is
+	 * this PD, 1 the first attached reader, and so on. Sightings a reader
+	 * volunteers are delivered whichever reader reports them.
 	 */
 	uint8_t reader;
 };
@@ -1503,11 +1502,11 @@ struct osdp_trs_pin_entry {
 struct osdp_trs_cmd {
 	enum osdp_trs_cmd_e command; /**< Which TRS command; selects the union */
 	/**
-	 * Reader the command addresses (0 = first, 1 = second, up to the PD's
-	 * READERS capability). A band talks to the card in one reader: every
-	 * command from START to STOP must name the reader its START named, and
-	 * STOP releases that reader's card. On a PD, the reader the CP
-	 * addressed.
+	 * Reader the command addresses: 0 is this PD, 1 the first attached
+	 * reader, and so on, up to the PD's READERS capability. A band talks
+	 * to the card in one reader: every command from START to STOP must
+	 * name the reader its START named, and STOP releases that reader's
+	 * card. On a PD, the reader the CP addressed.
 	 */
 	uint8_t reader;
 	union {
@@ -1523,7 +1522,7 @@ enum osdp_trs_card_protocol_e {
 };
 
 struct osdp_trs_card_info {
-	uint8_t reader;                         /**< Reader number (0 = first, 1 = second) */
+	uint8_t reader;                         /**< Reader (0 = this PD, 1 = first attached) */
 	enum osdp_trs_card_protocol_e protocol; /**< Card communication protocol */
 	uint8_t csn_len;                        /**< Length of @a csn in bytes */
 	uint8_t csn[OSDP_TRS_CSN_MAX_LEN];      /**< Card serial number */
@@ -1547,19 +1546,19 @@ enum osdp_trs_card_status_e {
 };
 
 struct osdp_trs_card_present {
-	uint8_t reader; /**< Reader number (0 = first, 1 = second) */
+	uint8_t reader; /**< Reader number (0 = this PD, 1 = first attached) */
 	enum osdp_trs_card_status_e status; /**< Smart-card presence status */
 };
 
 struct osdp_trs_card_data {
-	uint8_t reader; /**< Reader number (0 = first, 1 = second) */
+	uint8_t reader; /**< Reader number (0 = this PD, 1 = first attached) */
 	uint8_t reader_status; /**< Result of the APDU exchange as reported by the reader
 	                            *   (reader-defined; not standardized by OSDP) */
 	struct osdp_trs_apdu apdu; /**< R-APDU returned by the card */
 };
 
 struct osdp_trs_pin_complete {
-	uint8_t reader; /**< Reader number (0 = first, 1 = second) */
+	uint8_t reader; /**< Reader number (0 = this PD, 1 = first attached) */
 	uint8_t reader_status; /**< Result of the secure PIN entry sequence as reported by the
 	             *   reader (reader-defined; not standardized by OSDP) */
 	uint8_t tries; /**< Number of PIN-entry attempts */
@@ -1677,8 +1676,9 @@ struct osdp_notification {
  * OSDP packet broadcast flag to the PD.
  *
  * According to the OSDP specification: "the use of the broadcast address should
- * be limited to controlled (single PD) configurations". So this flag will be
- * ignored in ENFORCE_SECURE mode.
+ * be limited to controlled (single PD) configurations". So
+ * osdp_cp_submit_command() refuses a command with this flag when the CP
+ * manages more than one PD, or when the PD is in ENFORCE_SECURE mode.
  */
 #define OSDP_CMD_FLAG_BROADCAST 0x000000001
 
@@ -1835,13 +1835,11 @@ struct osdp_event_keypress {
 };
 
 /**
- * @brief OSDP Event Manufacturer Specific Command
+ * @brief OSDP Event Manufacturer Specific Reply
  *
- * @note OSDP spec v2.2 makes this structure fixed at 4 bytes (3-byte vendor
- * code and 1-byte data). LibOSDP allows for some additional data to be passed
- * in this command using the @a data and @a length fields while using the
- * 1-byte data (as specified in the specification) as @a command. To be fully
- * compliant with the specification, you can set @a length to 0.
+ * On the wire, osdp_MFGREP carries the 3-byte vendor code followed by
+ * @a length bytes of @a data, whose content the OSDP spec leaves to the
+ * vendor. @a length may be 0.
  */
 struct osdp_event_mfgrep {
 	/**
@@ -2476,7 +2474,7 @@ int osdp_cp_cancel(osdp_t *ctx, int pd, enum osdp_mp_msg_type what);
  * @param ctx OSDP context
  * @param pd PD offset (0-indexed) of this PD in `osdp_pd_info_t *` passed to
  * osdp_cp_setup()
- * @return int Count of events dequeued
+ * @return int Count of commands dequeued
  */
 OSDP_EXPORT
 int osdp_cp_flush_commands(osdp_t *ctx, int pd);
@@ -2856,7 +2854,7 @@ void osdp_get_abi_info(struct osdp_abi_info *info);
  *
  * @param ctx OSDP context
  * @param bitmask pointer to an array of bytes. must be as large as
- * (num_pds + 7 / 8).
+ * ((num_pds + 7) / 8).
  */
 OSDP_EXPORT
 void osdp_get_status_mask(const osdp_t *ctx, uint8_t *bitmask);
@@ -2867,7 +2865,7 @@ void osdp_get_status_mask(const osdp_t *ctx, uint8_t *bitmask);
  *
  * @param ctx OSDP context
  * @param bitmask pointer to an array of bytes. must be as large as
- * (num_pds + 7 / 8).
+ * ((num_pds + 7) / 8).
  */
 OSDP_EXPORT
 void osdp_get_sc_status_mask(const osdp_t *ctx, uint8_t *bitmask);
@@ -3035,7 +3033,7 @@ typedef int (*osdp_file_close_fn_t)(void *arg);
  * @retval false Still working; ask again.
  *
  * @note An unregistered (NULL) finalize behaves as returning true with
- * OSDP_MP_OUTCOME_OK, which is what every release before this one did.
+ * OSDP_MP_OUTCOME_OK.
  *
  * @note The transfer remains open for as long as this returns false. If the
  * CP misses an osdp_FTSTAT and retransmits its last chunk, LibOSDP re-drives
