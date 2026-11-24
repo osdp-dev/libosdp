@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-10-29
+lastUpdated: 2026-11-26
 description: "LibOSDP command structure reference — the osdp_cmd data structures and enums used to send OSDP commands such as LED, buzzer, output, text, biometric, key-set and transparent-reader (TRS) to a PD."
 ---
 # Application Commands
@@ -82,6 +82,22 @@ for how keying and install mode work.
 <!-- doxygen:enum:osdp_biometric_format_e -->
 
 <!-- doxygen:enum:osdp_biometric_status_e -->
+
+## Time and Date Set Command
+
+<!-- doxygen:struct:osdp_cmd_tdset:members -->
+
+## Smartcard Commands
+
+`OSDP_CMD_PIVDATA` retrieves a PIV object; `OSDP_CMD_GENAUTH` and
+`OSDP_CMD_CRAUTH` send a challenge to the card. See
+[Smartcard Commands](/libosdp/smartcard) for the flow.
+
+<!-- doxygen:struct:osdp_cmd_pivdata:members -->
+
+<!-- doxygen:struct:osdp_cmd_auth:members -->
+
+<!-- doxygen:define:OSDP_PIV_DATA_MAX_LEN -->
 
 ## File Transfer Command
 
