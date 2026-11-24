@@ -30,7 +30,9 @@ void osdp_compute_session_keys(struct osdp_pd *pd)
 	int i;
 	uint8_t scbk[16];
 
-	if (ISSET_FLAG(pd, PD_FLAG_SC_USE_SCBKD)) {
+	if (ISSET_FLAG(pd, PD_FLAG_SC_NO_KEY)) {
+		osdp_fill_random(scbk, 16);
+	} else if (ISSET_FLAG(pd, PD_FLAG_SC_USE_SCBKD)) {
 		memcpy(scbk, osdp_scbk_default, 16);
 	} else {
 		memcpy(scbk, pd->sc.scbk, 16);
