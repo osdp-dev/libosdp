@@ -1445,10 +1445,15 @@ static int pd_decode_command(struct osdp_pd *pd, uint8_t *buf, int len)
 		} else {
 			pd_pick_chlng_key(pd);
 		}
+		/* Answered all the same, on a throwaway key, as such a CHLNG
+		 * always was: a CP holding a real key sees the cryptogram
+		 * mismatch that sends it to SCBK-D, where a NAK might be read
+		 * as no secure channel at all. */
 		if (pd_chlng_key_is_unset(pd)) {
-			LOG_ERR("CHLNG for an SCBK, but none is set");
-			pd->nak_code = OSDP_PD_NAK_SC_COND;
-			break;
+			LOG_WRN("CHLNG for an SCBK, but none is set");
+			SET_FLAG(pd, PD_FLAG_SC_NO_KEY);
+		} else {
+			CLEAR_FLAG(pd, PD_FLAG_SC_NO_KEY);
 		}
 		pd->reply_id = REPLY_CCRYPT;
 		ret = OSDP_PD_ERR_NONE;
@@ -1467,6 +1472,15 @@ static int pd_decode_command(struct osdp_pd *pd, uint8_t *buf, int len)
 			break;
 		}
 		memcpy(pd->sc.cp_cryptogram, buf + pos, CMD_SCRYPT_DATA_LEN);
+		/* The throwaway key is only as unguessable as
+		 * osdp_fill_random(), a plain PRNG on some backends, so an
+		 * attempt without a key never completes whatever the CP
+		 * sends. Same NAK as a mismatch: to the CP it is one. */
+		if (ISSET_FLAG(pd, PD_FLAG_SC_NO_KEY)) {
+			pd->nak_code = OSDP_PD_NAK_SC_UNSUP;
+			LOG_WRN("SCRYPT for a CHLNG made without a key");
+			break;
+		}
 		if (osdp_verify_cp_cryptogram(pd)) {
 			/**
 			 * The PD can respond with NAK(5) when it fails to

@@ -476,6 +476,7 @@ static inline __noreturn void die()
 #define PD_FLAG_SC_USE_STAGED  BIT(21) /* in this SC attempt, use staged_scbk */
 #define PD_FLAG_KEYSET_PENDING BIT(22) /* CP: app KEYSET not yet answered */
 #define PD_FLAG_RX_SIZE_SENT   BIT(23) /* CP: osdp_ACURXSIZE sent on this link */
+#define PD_FLAG_SC_NO_KEY      BIT(31) /* PD: this SC attempt has no key */
 
 /* PD Init flags */
 #define PD_FLAG_ENFORCE_SECURE  BIT(24) /* See: OSDP_FLAG_ENFORCE_SECURE */

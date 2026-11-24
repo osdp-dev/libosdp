@@ -383,15 +383,121 @@ static bool install_mode_pd_answers_chlng(void)
 			      0);
 }
 
+static const uint8_t keyless_rnd_a[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
+
 /*
- * A PD in install mode with no key holds an all-zero SCBK. Answering a CHLNG
- * for the real key would run the session on those zeros, so a CP configured
- * with an all-zero key would get a channel the PD reports as keyed.
+ * Run a real-key CHLNG against a keyless install-mode PD. On a CCRYPT, fill
+ * zero_cp with the handshake a CP holding the all-zero key would compute
+ * from that reply, and copy out the cryptogram the PD actually sent.
  */
-static bool install_mode_keyless_pd_naks_real_key_chlng(void)
+static struct osdp *keyless_real_key_chlng(struct osdp_pd *zero_cp,
+					   uint8_t *pd_cryptogram)
 {
-	return chlng_reply_is(NULL, OSDP_FLAG_INSTALL_MODE, false, REPLY_NAK,
-			      OSDP_PD_NAK_SC_COND);
+	struct osdp *ctx = scp_pd_setup(NULL, OSDP_FLAG_INSTALL_MODE);
+	const uint8_t sb[] = { 3, SCS_11, 1 };
+	struct osdp_pd *pd;
+	uint8_t pkt[SCP_BUF_MAX];
+	int len, off;
+
+	if (!ctx) {
+		return NULL;
+	}
+	pd = osdp_to_pd(ctx, 0);
+	SET_FLAG(pd, PD_FLAG_SKIP_SEQ_CHECK);
+	len = scp_build_cmd(0, sb, sizeof(sb), CMD_CHLNG, keyless_rnd_a,
+			    sizeof(keyless_rnd_a), pkt);
+	scp_exchange(ctx, pkt, len);
+	if (scp_reply_byte(pd, 0) != REPLY_CCRYPT) {
+		osdp_pd_teardown((osdp_t *)ctx);
+		return NULL;
+	}
+	/* REPLY_CCRYPT data: cUID[8] RND.B[8] cryptogram[16] */
+	off = scp_reply_off(pd) + 1;
+	memcpy(pd_cryptogram, scp_tx + off + 16, 16);
+
+	memset(zero_cp, 0, sizeof(*zero_cp));
+	osdp_sc_setup(zero_cp);
+	memcpy(zero_cp->sc.cp_random, keyless_rnd_a, 8);
+	memcpy(zero_cp->sc.pd_random, scp_tx + off + 8, 8);
+	osdp_compute_session_keys(zero_cp);
+	osdp_compute_pd_cryptogram(zero_cp);
+	osdp_compute_cp_cryptogram(zero_cp);
+	return ctx;
+}
+
+static bool keyless_scrypt_is_refused(struct osdp *ctx, const uint8_t *crypt)
+{
+	const uint8_t sb[] = { 3, SCS_13, 1 };
+	struct osdp_pd *pd = osdp_to_pd(ctx, 0);
+	uint8_t pkt[SCP_BUF_MAX];
+	int len;
+
+	len = scp_build_cmd(1, sb, sizeof(sb), CMD_SCRYPT, crypt, 16, pkt);
+	scp_exchange(ctx, pkt, len);
+	return scp_reply_byte(pd, 0) == REPLY_NAK && !sc_is_active(pd);
+}
+
+/*
+ * A PD in install mode with no key still answers a CHLNG for the real key:
+ * the CP has to see the cryptogram mismatch the spec makes its cue to fall
+ * back to SCBK-D, not a NAK it may take for "no secure channel here". The
+ * answer must not be computed on the all-zero bytes the context was cleared
+ * to, or a CP holding an all-zero key would match it.
+ */
+static bool install_mode_keyless_pd_answers_on_no_key(void)
+{
+	struct osdp_pd zero_cp;
+	uint8_t pd_cryptogram[16];
+	struct osdp *ctx = keyless_real_key_chlng(&zero_cp, pd_cryptogram);
+	bool ok;
+
+	if (!ctx) {
+		return false;
+	}
+	ok = memcmp(zero_cp.sc.pd_cryptogram, pd_cryptogram, 16) != 0;
+	osdp_sc_teardown(&zero_cp);
+	osdp_pd_teardown((osdp_t *)ctx);
+	return ok;
+}
+
+static bool install_mode_keyless_pd_refuses_zero_key_scrypt(void)
+{
+	struct osdp_pd zero_cp;
+	uint8_t pd_cryptogram[16];
+	struct osdp *ctx = keyless_real_key_chlng(&zero_cp, pd_cryptogram);
+	bool ok;
+
+	if (!ctx) {
+		return false;
+	}
+	ok = keyless_scrypt_is_refused(ctx, zero_cp.sc.cp_cryptogram);
+	osdp_sc_teardown(&zero_cp);
+	osdp_pd_teardown((osdp_t *)ctx);
+	return ok;
+}
+
+/*
+ * The throwaway key is only as unguessable as osdp_fill_random(), which on
+ * some backends is a plain PRNG. A CP that reproduced the PD's own session
+ * keys must still be refused.
+ */
+static bool install_mode_keyless_pd_refuses_any_scrypt(void)
+{
+	struct osdp_pd zero_cp;
+	uint8_t pd_cryptogram[16];
+	struct osdp *ctx = keyless_real_key_chlng(&zero_cp, pd_cryptogram);
+	struct osdp_pd *pd;
+	bool ok;
+
+	if (!ctx) {
+		return false;
+	}
+	pd = osdp_to_pd(ctx, 0);
+	osdp_compute_cp_cryptogram(pd);
+	ok = keyless_scrypt_is_refused(ctx, pd->sc.cp_cryptogram);
+	osdp_sc_teardown(&zero_cp);
+	osdp_pd_teardown((osdp_t *)ctx);
+	return ok;
 }
 
 static bool install_mode_keyed_pd_answers_real_key_chlng(void)
@@ -676,8 +782,12 @@ void run_sc_policy_tests(struct test *t)
 	TEST_CASE(t, "keyless_pd_naks_chlng", keyless_pd_naks_chlng());
 	TEST_CASE(t, "install_mode_pd_answers_chlng",
 		  install_mode_pd_answers_chlng());
-	TEST_CASE(t, "install_mode_keyless_pd_naks_real_key_chlng",
-		  install_mode_keyless_pd_naks_real_key_chlng());
+	TEST_CASE(t, "install_mode_keyless_pd_answers_on_no_key",
+		  install_mode_keyless_pd_answers_on_no_key());
+	TEST_CASE(t, "install_mode_keyless_pd_refuses_zero_key_scrypt",
+		  install_mode_keyless_pd_refuses_zero_key_scrypt());
+	TEST_CASE(t, "install_mode_keyless_pd_refuses_any_scrypt",
+		  install_mode_keyless_pd_refuses_any_scrypt());
 	TEST_CASE(t, "install_mode_keyed_pd_answers_real_key_chlng",
 		  install_mode_keyed_pd_answers_real_key_chlng());
 	TEST_CASE(t, "set_capabilities_can_disable_sc",
