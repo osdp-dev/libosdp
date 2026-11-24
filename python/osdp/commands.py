@@ -462,7 +462,7 @@ class Comset:
     """The PD's new address."""
 
     baud_rate: int = 9600
-    """The new baud rate: 9600, 19200, 38400, 115200 or 230400."""
+    """The new baud rate: 9600, 19200, 38400, 57600, 115200 or 230400."""
 
     def __post_init__(self) -> None:
         check_range("address", self.address, UINT8_MAX)

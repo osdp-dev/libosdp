@@ -32,7 +32,12 @@ class Channel(abc.ABC):
 
     @abc.abstractmethod
     def write(self, buf: bytes) -> int:
-        """Send as much of `buf` as possible; return how much was sent."""
+        """Queue all of `buf` for sending and return len(buf).
+
+        Return 0 when the channel cannot take the packet right now; the
+        library offers the same bytes again on a later refresh. Writes are
+        all or nothing: any other return value drops the packet.
+        """
 
     @abc.abstractmethod
     def flush(self) -> None:
