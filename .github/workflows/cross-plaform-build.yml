@@ -24,7 +24,7 @@ jobs:
           - { job: windows-arm64, runner: windows-11-arm,   rids: "win-arm64",                          wheel_archs: "ARM64" }
           # Apple Silicon cross-builds the x86_64 assets and tests them under
           # Rosetta; GitHub is retiring its Intel macOS images.
-          - { job: macos-arm64,   runner: macos-14,         rids: "osx-arm64 osx-x64",                  wheel_archs: "arm64 x86_64 universal2" }
+          - { job: macos-arm64,   runner: macos-15,         rids: "osx-arm64 osx-x64",                  wheel_archs: "arm64 x86_64 universal2" }
     steps:
       - uses: actions/checkout@v7
         with:
