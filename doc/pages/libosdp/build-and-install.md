@@ -276,7 +276,7 @@ library, published to the PlatformIO Registry as `LibOSDP`; add it to
 bundled TinyAES backend. Sketches are in `examples/platformio/`.
 
 **.NET.** The `LibOSDP` NuGet package (`dotnet add package LibOSDP`) wraps the
-C library for .NET 8 and .NET 10 and ships prebuilt native libraries for
+C library for .NET 10 and ships prebuilt native libraries for
 Windows, Linux and macOS. Its sources are in `dotnet/` and examples in
 `examples/dotnet/`. It compares its own structure layout with the native
 library's through `osdp_get_abi_info()` before using it.

@@ -32,9 +32,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: |
-            8.0.x
-            10.0.x
+          dotnet-version: 10.0.x
       # cibuildwheel uses the runner's Python to drive builds on macOS and
       # Windows; Linux builds happen inside the manylinux/musllinux images.
       - uses: actions/setup-python@v7
