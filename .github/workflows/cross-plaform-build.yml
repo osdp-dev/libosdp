@@ -159,12 +159,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: MinGW64 GCC
-            msystem: MINGW64
-            packages: >-
-              mingw-w64-x86_64-gcc
-              mingw-w64-x86_64-cmake
-              mingw-w64-x86_64-ninja
           - name: UCRT64 GCC
             msystem: UCRT64
             packages: >-
