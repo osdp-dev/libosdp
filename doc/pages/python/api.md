@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-10-29
+lastUpdated: 2026-11-26
 description: "LibOSDP Python API reference — PDInfo, the PD capabilities model, the Channel transport, KeyStore, file transfer, logging, errors, and the enumerations shared across the bindings."
 ---
 # API Reference
@@ -54,6 +54,8 @@ pd_cap = PDCapabilities([
     (Capability.AudibleControl, 1, 1),
 ])
 ```
+
+<!-- pydoc:class:types.PDCapabilities -->
 
 <!-- pydoc:class:types.PDCapability:fields -->
 
@@ -161,6 +163,25 @@ surfacing them as `UNKNOWN_0x..` members rather than raising mid-callback.
 ### NakCode
 
 <!-- pydoc:class:enums.NakCode -->
+
+### MpMsgType
+
+The multi-part operation family; what `ControlPanel.cancel()` takes, and what
+a multi-part `events.Notification` reports in `mp_type`.
+
+<!-- pydoc:class:enums.MpMsgType -->
+
+### MpOutcome
+
+<!-- pydoc:class:enums.MpOutcome -->
+
+### CommandId
+
+<!-- pydoc:class:enums.CommandId -->
+
+### EventId
+
+<!-- pydoc:class:enums.EventId -->
 
 ## See also
 

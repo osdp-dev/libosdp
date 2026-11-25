@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-10-29
+lastUpdated: 2026-11-26
 description: "LibOSDP Python peripheral device (PD) reference — the PeripheralDevice class, its lifecycle, the command-handler contract for accepting, answering, or NAKing commands, and reporting events."
 ---
 # Peripheral Device
@@ -19,8 +19,9 @@ do.
    `set_command_handler` / `set_event_completion_handler`.
 3. **Start** — `start()` spawns the background thread that services the bus and
    keeps the library refreshed within OSDP's 50ms window.
-4. **Wait for the link** — `sc_wait()` blocks until the secure channel is up (or
-   returns once online for an unkeyed link).
+4. **Wait for the link** — `sc_wait()` blocks until the secure channel is up
+   and returns `False` if it is not up within the timeout. A PD without a
+   secure channel checks `is_online()` instead.
 5. **Run** — answer commands in the handler and report events with
    `submit_event()`.
 6. **Tear down** — `teardown()`.

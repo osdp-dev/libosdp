@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-10-29
+lastUpdated: 2026-11-26
 description: "LibOSDP Python commands reference — every command dataclass a control panel sends to a PD (LED, buzzer, output, text, keyset, comset, manufacturer, file transfer, status, biometrics) and its fields."
 ---
 # Commands
@@ -44,8 +44,8 @@ Drive a digital output line. Its `control_code` is an `OutputControlCode`:
 
 Control a reader LED. An LED command carries a **temporary** block, a
 **permanent** block, or both; each is described by the helper dataclasses below.
-Counts are in units of 100ms, and within a block `on_count` and `off_count`
-cannot both be zero.
+Counts are in units of 100ms, and within a block whose control code is `Set`,
+`on_count` and `off_count` cannot both be zero.
 
 <!-- pydoc:class:commands.LED -->
 
@@ -82,12 +82,22 @@ Show text on a reader's display. Its `control_code` is a `TextControlCode`:
 
 ### Comset / ComsetDone
 
-Change a PD's address and baud rate. A PD acknowledges by returning a
-`ComsetDone` from its command handler.
+Change a PD's address and baud rate. The CP submits a `Comset`; the PD's
+command handler receives it, and the library replies with the new settings.
+Once that reply has gone out and the change has taken effect, the library
+hands the PD's command handler a `ComsetDone`. Applications never submit a
+`ComsetDone`.
 
 <!-- pydoc:class:commands.Comset -->
 
 <!-- pydoc:class:commands.ComsetDone -->
+
+### TDSet
+
+Set the PD's local time and date. The PD must advertise
+`Capability.TimeKeeping`.
+
+<!-- pydoc:class:commands.TDSet -->
 
 ### Keyset
 
@@ -145,6 +155,12 @@ Drive a smart card directly: a `TrsStart` opens a card session, `TrsSendApdu`,
 <!-- pydoc:class:commands.TrsCardScan -->
 
 <!-- pydoc:class:commands.TrsStop -->
+
+<!-- pydoc:class:enums.TrsCommand -->
+
+<!-- pydoc:class:enums.TrsPinFormat -->
+
+<!-- pydoc:class:enums.TrsPinComplete -->
 
 ### Status
 

@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-10-29
+lastUpdated: 2026-11-26
 description: "LibOSDP Python events reference — every event dataclass a peripheral device reports to a control panel (card read, key press, biometrics, status, manufacturer, notification) and its fields."
 ---
 # Events
@@ -28,8 +28,10 @@ match cp.get_event(101):
 ### CardRead
 
 A card was presented to a reader. For the raw formats, `bits` is the exact bit
-count and `data` is the packed payload; for ASCII, `data` is the character
-bytes. `format` is a `CardFormat`:
+count and `data` is the packed payload. `format` is a `CardFormat`;
+`CardFormat.ASCII` exists for completeness, but LibOSDP does not support
+osdp_FMT, so a PD refuses to submit an ASCII card read and a CP never reports
+one:
 
 <!-- pydoc:class:events.CardRead -->
 
@@ -93,6 +95,22 @@ entry finishing (`TrsPinComplete`), or an exchange the reader could not do
 
 <!-- pydoc:class:events.TrsError -->
 
+<!-- pydoc:class:enums.TrsReply -->
+
+<!-- pydoc:class:enums.TrsCardProtocol -->
+
+<!-- pydoc:class:enums.TrsCardStatus -->
+
+<!-- pydoc:class:enums.TrsErrorCode -->
+
+The session life-cycle arrives as an `events.Notification` of type
+`NotificationType.TrsStatus`; its `trs_status` and `trs_fail_reason`
+properties use these:
+
+<!-- pydoc:class:enums.TrsSessionStatus -->
+
+<!-- pydoc:class:enums.TrsFailReason -->
+
 ## Status and manufacturer
 
 ### Status
@@ -115,10 +133,13 @@ Vendor-specific replies and status/error notifications.
 ## Notification
 
 A library-generated notification, delivered as an event when notifications are
-enabled. Beyond the raw `type`/`arg0`/`arg1` fields, `Notification` exposes
-computed properties (`succeeded`, `sc_active`, `pd_online`, `file_id`,
-`file_tx_outcome`) that decode the arguments for the notification kind. `type`
-is a [`NotificationType`](/python/commands#notification).
+enabled. `type` is a [`NotificationType`](/python/commands#notification), and
+it decides which of the typed fields are meaningful: `active`/`scbk_d` for
+secure channel status, `online` for link status, `mp_type`/`object_id`/
+`total`/`offset`/`outcome` for multi-part transfers, the PD identity fields
+for a PD ID, and `status`/`reader`/`reason`/`nak_code` for TRS status. The
+properties `sc_active`, `pd_online`, `file_id`, `pd_id`, `mp_outcome`,
+`trs_status` and `trs_fail_reason` return those fields as the matching types.
 
 <!-- pydoc:class:events.Notification -->
 

@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-07-15
+lastUpdated: 2026-11-26
 description: "Install the LibOSDP Python bindings — pre-built PyPI wheels, install from GitHub, and building from source on Linux, macOS, and Windows including the compiler toolchain each platform needs."
 ---
 # Build and Install
@@ -15,7 +15,8 @@ on each platform.
 pip install libosdp
 ```
 
-Wheels are published for CPython 3.10–3.14 on Linux (manylinux and musllinux,
+Wheels are published for CPython 3.10–3.15 (plus the free-threaded 3.15t
+build) on Linux (manylinux and musllinux,
 x86_64 and aarch64), macOS (x86_64, arm64, universal2), and Windows (AMD64,
 ARM64). `pip` picks the matching wheel and no compiler is involved. The package
 requires **Python 3.10 or newer** and has no runtime dependencies.
