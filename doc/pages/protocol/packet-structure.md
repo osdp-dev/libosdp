@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-06-24
+lastUpdated: 2026-11-26
 description: "The OSDP packet structure on the wire — header, security block, command/reply data, and CRC/checksum framing for the Open Supervised Device Protocol."
 ---
 # Packet Structure
@@ -8,12 +8,15 @@ This document describes how OSDP packets are built and decoded.
 
 ## Header
 
-All OSDP packets must have the following 5 bytes.
+All OSDP packets must have the following 5 bytes. The transmitter usually
+sends a mark byte (`0xFF`) ahead of them, to drive the line to the marking
+state before the message starts; it is not part of the packet.
+(`OPT_OSDP_SKIP_MARK_BYTE` makes LibOSDP leave it out.)
 
 | Byte | Name       | Meaning                                | Value       |
 |------|------------|----------------------------------------|-------------|
 | 0    | SOM        | Start of Message                       | `0x53`      |
-| 1    | ADDR       | Physical Address of the PD             | `0x00–0x7E` |
+| 1    | ADDR       | Physical Address of the PD             | `0x00–0x7E`; `0x7F` broadcast. Bit 7 is set in a PD's reply |
 | 2    | LEN\_LSB   | Packet Length Least Significant Byte   | Any         |
 | 3    | LEN\_MSB   | Packet Length Most Significant Byte    | Any         |
 | 4    | CTRL       | Message Control Information            | See below   |
@@ -52,7 +55,8 @@ after the fixed header; otherwise it is offset by the SCB length.
 ### Message Authentication Code (Optional)
 
 Present in secure channel messages. These 4 bytes appear just before the
-CRC/CKSUM bytes.
+CRC/CKSUM bytes; the offsets below assume CRC mode (with a 1-byte checksum
+they move one byte later).
 
 | Byte | Name     | Meaning                              | Value |
 |------|----------|--------------------------------------|-------|

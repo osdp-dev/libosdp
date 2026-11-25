@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-07-18
+lastUpdated: 2026-11-26
 description: "Reference for OSDP commands and replies — the full message set exchanged between a control panel (CP) and peripheral device (PD) on the OSDP bus."
 ---
 # Command and Reply Codes
@@ -100,11 +100,13 @@ flows that use it.
 
 ## LibOSDP Behavior Notes
 
-For `CMD_MFG`, immediate command response follows normal callback ACK/NAK
-rules: callback return `< 0` yields `REPLY_NAK`, callback return `>= 0`
-yields `REPLY_ACK`. If the application wants to send `REPLY_MFGREP`, it must
-do so asynchronously by submitting an `OSDP_EVENT_MFGREP` event, which is then
-delivered on a subsequent `CMD_POLL` cycle.
+For `CMD_MFG`, a PD application that submits an `OSDP_EVENT_MFGREP`,
+`OSDP_EVENT_MFGSTATR` or `OSDP_EVENT_MFGERRR` event from within the command
+callback has it sent as the reply (`REPLY_MFGREP`, `REPLY_MFGSTATR` or
+`REPLY_MFGERRR`). Otherwise the command is answered by the callback's return
+value — `REPLY_NAK` for `< 0`, `REPLY_ACK` for `0` — and an event submitted
+later is delivered on a subsequent `CMD_POLL` cycle. A CP reports a
+`REPLY_MFGERRR` to `CMD_MFG` as a failed command but keeps the PD online.
 
 **Transparent Reader Support (`CMD_XWR` / `REPLY_XRD`).** These code points back
 the transparent-reader feature, in which the CP drives a smartcard directly by
