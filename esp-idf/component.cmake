@@ -113,6 +113,7 @@ set(osdp_srcs
 	"${OSDP_ROOT}/src/osdp_multipart.c"
 	"${OSDP_ROOT}/src/osdp_piv.c"
 	"${OSDP_ROOT}/src/osdp_bio.c"
+	"${OSDP_ROOT}/src/osdp_trs.c"
 	"${OSDP_ROOT}/src/osdp_metrics.c"
 
 	"${OSDP_ROOT}/utils/src/utils.c"
