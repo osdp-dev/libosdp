@@ -101,9 +101,6 @@ jobs:
           output-dir: wheelhouse
         env:
           CIBW_ARCHS: ${{ matrix.wheel_archs }}
-          # Build for Python >= 3.10 only: setuptools >= 83 (needed for the
-          # PEP 639 license expression in setup.py) dropped Python 3.9.
-          CIBW_SKIP: "cp39-*"
       - name: Collect the .NET tests
         if: ${{ !cancelled() && steps.dotnet_start.outcome == 'success' }}
         shell: bash

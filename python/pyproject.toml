@@ -7,7 +7,7 @@ name = "libosdp"
 version = "4.0.0.dev0"
 description = "Library implementation of IEC 60839-11-5 OSDP (Open Supervised Device Protocol)"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = "Apache-2.0"
 license-files = ["vendor/LICENSE"]
 authors = [
@@ -22,7 +22,6 @@ classifiers = [
     "Operating System :: POSIX :: Linux",
     "Programming Language :: C",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -51,7 +50,7 @@ packages = ["osdp"]
 osdp = ["py.typed", "*.pyi"]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.11"
 strict = true
 files = ["osdp"]
 

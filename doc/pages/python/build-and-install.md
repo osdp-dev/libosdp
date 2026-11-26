@@ -15,11 +15,11 @@ on each platform.
 pip install libosdp
 ```
 
-Wheels are published for CPython 3.10–3.15 (plus the free-threaded 3.15t
-build) on Linux (manylinux and musllinux,
+Wheels are published for CPython 3.11–3.15 (plus the free-threaded 3.14t
+and 3.15t builds) on Linux (manylinux and musllinux,
 x86_64 and aarch64), macOS (x86_64, arm64, universal2), and Windows (AMD64,
 ARM64). `pip` picks the matching wheel and no compiler is involved. The package
-requires **Python 3.10 or newer** and has no runtime dependencies.
+requires **Python 3.11 or newer** and has no runtime dependencies.
 
 ## From GitHub
 
