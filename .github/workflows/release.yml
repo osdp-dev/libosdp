@@ -116,13 +116,15 @@ jobs:
     uses: ./.github/workflows/reusable-ci.yml
 
   esp_idf_build:
-    name: Build ESP-IDF component (${{ matrix.target }})
+    name: Build ESP-IDF component (${{ matrix.idf }}, ${{ matrix.target }})
     needs: preflight
     runs-on: ubuntu-latest
-    container: espressif/idf:release-v5.5
+    container: espressif/idf:${{ matrix.idf }}
     strategy:
       fail-fast: false
       matrix:
+        # The oldest and newest ESP-IDF releases idf_component.yml admits.
+        idf: [release-v5.5, release-v6.0]
         # One Xtensa and one RISC-V target. The component is portable C over
         # esp_timer/esp_random, so the instruction set is the only axis that can
         # plausibly break it; a per-chip matrix would buy nothing but minutes.
