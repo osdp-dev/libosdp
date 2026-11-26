@@ -137,7 +137,15 @@ if(CONFIG_LIBOSDP_PACKET_TRACE OR CONFIG_LIBOSDP_DATA_TRACE)
 	)
 endif()
 
-if(CONFIG_LIBOSDP_CRYPTO_MBEDTLS)
+if(CONFIG_LIBOSDP_CRYPTO_PSA)
+	list(APPEND osdp_srcs "${OSDP_ROOT}/src/crypto/psa.c")
+elseif(CONFIG_LIBOSDP_CRYPTO_MBEDTLS)
+	if(IDF_VERSION_MAJOR GREATER_EQUAL 6)
+		message(FATAL_ERROR
+			"CONFIG_LIBOSDP_CRYPTO_MBEDTLS needs the mbedtls_aes_* API, "
+			"which Mbed TLS 4 in ESP-IDF ${IDF_VERSION_MAJOR}.x no longer "
+			"provides. Select CONFIG_LIBOSDP_CRYPTO_PSA instead.")
+	endif()
 	list(APPEND osdp_srcs "${OSDP_ROOT}/src/crypto/mbedtls.c")
 elseif(CONFIG_LIBOSDP_CRYPTO_TINYAES)
 	list(APPEND osdp_srcs
@@ -147,7 +155,8 @@ elseif(CONFIG_LIBOSDP_CRYPTO_TINYAES)
 else()
 	message(FATAL_ERROR
 		"No LibOSDP crypto backend selected. "
-		"Enable CONFIG_LIBOSDP_CRYPTO_MBEDTLS or CONFIG_LIBOSDP_CRYPTO_TINYAES.")
+		"Enable CONFIG_LIBOSDP_CRYPTO_PSA, CONFIG_LIBOSDP_CRYPTO_MBEDTLS "
+		"or CONFIG_LIBOSDP_CRYPTO_TINYAES.")
 endif()
 
 idf_component_register(

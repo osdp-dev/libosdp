@@ -137,9 +137,11 @@ integrations pick a backend of their own (see
 - **Zephyr** selects it in Kconfig: `CONFIG_LIBOSDP_CRYPTO_PSA` (the default;
   the PSA Crypto API, which needs Zephyr 4.3 or later),
   `CONFIG_LIBOSDP_CRYPTO_MBEDTLS` or `CONFIG_LIBOSDP_CRYPTO_TINYAES`.
-- **ESP-IDF** selects it in Kconfig too: `CONFIG_LIBOSDP_CRYPTO_MBEDTLS` (the
-  default; the SDK's MbedTLS, which routes AES through the hardware
-  accelerator where the chip has one) or `CONFIG_LIBOSDP_CRYPTO_TINYAES`.
+- **ESP-IDF** selects it in Kconfig too: `CONFIG_LIBOSDP_CRYPTO_PSA` (the
+  default; the PSA Crypto API of the SDK's mbedtls component, which routes
+  AES through the hardware accelerator where the chip has one),
+  `CONFIG_LIBOSDP_CRYPTO_MBEDTLS` (ESP-IDF 5.x only, since Mbed TLS 4 in
+  ESP-IDF 6 drops its AES API) or `CONFIG_LIBOSDP_CRYPTO_TINYAES`.
 - **PlatformIO / Arduino** always builds the bundled TinyAES.
 
 ## Running the Test Suite
