@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-06-24
+lastUpdated: 2026-11-26
 description: "Build and install LibOSDP from source with CMake or the lean Make build — produces static and shared libraries for Linux, macOS, and Windows."
 ---
 # Build and Install
@@ -362,3 +362,21 @@ cmake --build build
 ```
 
 > **Note:** vcpkg is the recommended method to consume LibOSDP on Windows.
+
+### Using OpenBSD packages
+
+LibOSDP is in the OpenBSD ports tree as
+[`devel/libosdp`](https://github.com/openbsd/ports/tree/master/devel/libosdp),
+built as a shared library against the base system's `libcrypto`. Install the
+binary package with:
+
+```sh
+doas pkg_add libosdp
+```
+
+or build it from a ports checkout with
+`cd /usr/ports/devel/libosdp && make install`. The package ships the CMake
+config and `libosdp.pc`, so both [find_package](#find-package-recommended) and
+[pkg-config](#using-pkg-config) work as described above. The packaged version
+follows the ports tree and can trail the latest LibOSDP release; check it with
+`pkg_info -Q libosdp`.
