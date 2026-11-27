@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-06-24
+lastUpdated: 2026-11-27
 description: "Frequently asked questions about the OSDP protocol — secure channel, interoperability, RS-485 wiring, addressing, and common integration questions."
 ---
 # Frequently Asked Questions
@@ -32,10 +32,12 @@ Security Industry Association and must be purchased from their website.
 Yes. OSDP is open to consumption. You can procure the specification document
 and implement it yourself.
 
-There is one specific use case — Transparent Mode for smart cards — that **may**
-have a license requirement from HID/Assa. An alternative method, Extended
-Packet Mode (developed by the OSDP WG and included in the standard), transports
-APDUs from a smart card without encumbrance.
+That includes smart cards. Transparent Mode, where the ACU exchanges APDUs with
+the card through the PD using `osdp_XWR` and `osdp_XRD`, is part of the
+standard (v2.2 section 5.11), and LibOSDP implements it fully; see
+[Smartcard Commands](/libosdp/smartcard). The specification also names an Extended
+Packet Mode in its smart card capability, but defines no messages for it, and
+LibOSDP does not implement it.
 
 ## I'm contributing to LibOSDP — should I buy the specification?
 
