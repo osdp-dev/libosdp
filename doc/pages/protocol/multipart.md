@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-07-18
+lastUpdated: 2026-11-26
 description: "How OSDP fragments large payloads — the spec section 5.10 multi-part format for smart-card commands, the separate file-transfer feature, and the under-specified biometric case — and how LibOSDP unifies all three behind one engine and one notification path."
 ---
 # Multi-part Messages
@@ -157,7 +157,7 @@ a synthesized command in PD mode). The payload is `struct osdp_mp_notification`:
 | Field | Meaning |
 |-------|---------|
 | `mp_type` | Which family this transfer belongs to (`enum osdp_mp_msg_type`) |
-| `object_id` | File id for file transfer; reserved (0) for the others |
+| `object_id` | Per-family id: the file id for file transfer, the PIV element for `OSDP_MP_MSG_PIV`, the key reference for GENAUTH/CRAUTH on a CP (0 on a PD), the reader for a biometric read |
 | `total` | Full payload length |
 | `offset` | Bytes transferred so far |
 | `outcome` | Meaningful at `MP_DONE` — see the outcome table |
@@ -175,15 +175,16 @@ multi-part transfer reports its progress through three notifications:
 | `OSDP_NOTIFICATION_MP_PROGRESS` | Each time a fragment advances the offset while the transfer is still short of `total`. The final fragment does not emit `MP_PROGRESS`. |
 | `OSDP_NOTIFICATION_MP_DONE` | Exactly once, when the transfer terminates — for any reason. `mp.outcome` carries the result. |
 
-`MP_DONE`'s outcome is an `osdp_file_tx_outcome` (shared with file transfer):
+`MP_DONE`'s outcome is an `enum osdp_mp_outcome`. `OK` and `ABORTED` apply to
+every family; the other three are reported only by file transfer:
 
 | Outcome | Meaning |
 |---------|---------|
-| `OSDP_FILE_TX_OUTCOME_OK` | Payload fully transferred and accepted |
-| `OSDP_FILE_TX_OUTCOME_OK_REBOOTING` | Accepted; the PD will now reset |
-| `OSDP_FILE_TX_OUTCOME_ABORTED` | Aborted — locally (`CMD_ABORT`, timeout, teardown) or by the remote |
-| `OSDP_FILE_TX_OUTCOME_UNRECOGNIZED` | The PD did not recognize the contents |
-| `OSDP_FILE_TX_OUTCOME_INVALID` | The PD rejected the data as malformed |
+| `OSDP_MP_OUTCOME_OK` | Payload fully transferred and accepted |
+| `OSDP_MP_OUTCOME_OK_REBOOTING` | File transfer: accepted; the PD will now reset |
+| `OSDP_MP_OUTCOME_ABORTED` | Aborted — locally (`CMD_ABORT`, timeout, teardown) or by the remote |
+| `OSDP_MP_OUTCOME_UNRECOGNIZED` | File transfer: the PD did not recognize the contents |
+| `OSDP_MP_OUTCOME_INVALID` | File transfer: the PD rejected the data as malformed |
 
 Because `MP_START` fires before any work and `MP_DONE` fires exactly once on
 every terminal path, an application can bracket a transfer purely on these two

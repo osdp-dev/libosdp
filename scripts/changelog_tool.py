@@ -164,6 +164,12 @@ def parse_markdown_release(text: str, expected_version: str | None = None) -> Re
                 continue
             if MARKDOWN_HEADING_RE.fullmatch(stripped):
                 break
+            # An indented line continues the bullet above it, so release
+            # files can be hard-wrapped and still read well as plain text.
+            if items and lines[i][0] in " \t" and not stripped.startswith("-"):
+                items[-1] += " " + stripped
+                i += 1
+                continue
             bullet = re.fullmatch(r"-\s+(.+)", stripped)
             if not bullet:
                 die(f"Release {version} has a non-bullet line in section {title}: {lines[i]}")

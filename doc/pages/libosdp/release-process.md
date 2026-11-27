@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-07-24
+lastUpdated: 2026-11-26
 description: "How to read a LibOSDP version — what a bare version, a git-position suffix, and the -dev pre-release marker each mean, how release lines and maintenance branches work, what a version bump promises, and how to verify a release is authentic."
 ---
 # Releases and Versioning
@@ -91,6 +91,8 @@ Every release is tagged `v<version>` in the
 - **GitHub Releases** — release notes come from that version's changelog entry,
   `CHANGELOG/RELEASE-v<version>.md` in the repository.
 - **PyPI** — `pip install libosdp`.
+- **NuGet** — the `LibOSDP` package, for .NET (`dotnet add package LibOSDP`).
+- **ESP Component Registry** — the `sidcha/libosdp` component, for ESP-IDF.
 - **PlatformIO Registry** — the `LibOSDP` library, for Arduino/PlatformIO builds.
 
 ## Verifying a release is genuine
@@ -101,11 +103,21 @@ release. You can check the same thing yourself:
 
 ```sh
 curl -sS https://github.com/sidcha.gpg | gpg --import
-git verify-tag v4.0.1
+git verify-tag --raw v4.0.1 2>&1 | grep -E 'GOODSIG|VALIDSIG'
 ```
 
-A `Good signature` line means the tag is the maintainer's. Because the tag covers
-the commit, this also confirms the entire source tree at that point.
+That key URL serves every key the maintainer's account publishes, including
+retired ones, so a good signature alone is not enough. The tag is genuine when
+the output has a `GOODSIG` line (gpg prints `EXPKEYSIG` or `REVKEYSIG`
+instead for an expired or revoked key) and the last field of the `VALIDSIG`
+line, the certifying primary key, is the release key:
+
+```text
+D8861B9C6B9C4284D980D6016804DFEE281234B2
+```
+
+Because the tag covers the commit, this also confirms the entire source tree at
+that point.
 
 ---
 

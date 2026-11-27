@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-10-29
+lastUpdated: 2026-11-26
 description: "LibOSDP control panel (CP) C API — set up an OSDP control panel, register peripheral devices, send commands, track completion, and handle events."
 ---
 # Control Panel
@@ -85,6 +85,8 @@ general authenticate exchange) is not a queued command; stop it with
 
 <!-- doxygen:function:osdp_cp_cancel -->
 
+<!-- doxygen:enum:osdp_mp_msg_type -->
+
 Refer to the [command structure](/api/command-structure) document for more
 information on how to populate the `cmd` structure.
 
@@ -125,8 +127,8 @@ advertise and their compliance levels.
 
 ## Others
 
-`osdp_cp_get_pd_id` fills an `osdp_pd_id` with the identity a PD reported during
-setup.
+`osdp_cp_get_pd_id` fills an `osdp_pd_id` with the identity a PD last
+reported; the CP reads it each time the PD comes online.
 
 <!-- doxygen:struct:osdp_pd_id:members -->
 

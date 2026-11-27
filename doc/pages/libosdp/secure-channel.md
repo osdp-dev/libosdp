@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-10-28
+lastUpdated: 2026-11-26
 description: "Enable the OSDP secure channel in LibOSDP for encrypted, authenticated CP–PD links — covering SCBK keys, install mode, key rotation, random-number requirements, and secure channel setup."
 ---
 # OSDP Secure Channel
@@ -10,17 +10,21 @@ session (PD by sending a NAK, CP by starting a new SC handshake). This document
 explains the secure channel workflow to help application developers understand
 failure logs emitted by LibOSDP.
 
-LibOSDP has a working implementation of the secure channel. Any CP/PD using
-this library will advertise this as an implicit capability. To disable secure
-communication (e.g. for debugging), call `osdp_pd_set_capabilities()` after
-`osdp_setup()` and set the compliance level of
+LibOSDP has a working implementation of the secure channel. A PD set up with
+an SCBK, or in [install mode](#install-mode), advertises it as an implicit
+capability. To disable secure communication on such a PD (e.g. for
+debugging), call `osdp_pd_set_capabilities()` after `osdp_pd_setup()` and
+before the first `osdp_pd_refresh()`, and set the compliance level of
 `OSDP_PD_CAP_COMMUNICATION_SECURITY` to 0.
 
 ## Secure Channel Session
 
 A SC session is initiated with a handshake involving 2 command-reply
 transactions between the CP and PD. Once established, a session can be kept
-active indefinitely until either party discards it or a timeout (400 ms) occurs.
+active indefinitely until either party discards it or a timeout occurs. A
+LibOSDP PD drops a session that has carried no valid command for
+`OSDP_PD_SC_TIMEOUT_MS` (8 s by default); `CMD_KEEPACTIVE` extends that
+window.
 
 The CP starts by sending `CMD_CHLNG`, to which the PD replies with
 `REPLY_CCRYPT`. With this response the CP authenticates the PD and computes
@@ -28,8 +32,9 @@ its session keys. Next, the CP sends `CMD_SCRYPT`, which the PD uses to
 authenticate the CP and compute its session keys. If all goes well, both CP and
 PD will have a working set of session keys (s-enc, s-mac1, and s-mac2). The
 final message of the handshake is the `REPLY_RMAC_I` response from the PD,
-which carries the initial reply MAC the CP will use as the IV for encrypting
-its next command (MAC chaining).
+which carries the initial reply MAC. That MAC seeds the MAC chain of the CP's
+next command, and its bitwise inverse is the IV for encrypting that command's
+data.
 
 This process works if both the CP and PD have the same SCBK. If there is a
 mismatch, the CP will fail to verify the PD's authenticity when it receives
@@ -263,6 +268,9 @@ Where the randomness comes from depends on the [crypto backend](/libosdp/build-a
 - **OpenSSL / MbedTLS:** nonces are drawn from the crypto library's CSPRNG,
   which is seeded from the operating system's entropy source. No extra work is
   needed on hosted platforms.
+- **PSA (Zephyr):** nonces come from `psa_generate_random()`, so they are as
+  strong as the entropy source the Zephyr build gives the PSA crypto
+  implementation.
 - **TinyAES (bundled fallback):** nonces come from the platform's `rand_u32()`.
   This is only as strong as the underlying source — on hosted builds it falls
   back to the C library's `rand()`, and on some microcontrollers it is a

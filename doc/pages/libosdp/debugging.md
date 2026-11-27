@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-07-15
+lastUpdated: 2026-11-26
 description: "Debug LibOSDP integrations with built-in tracing, packet capture, and logging, plus the recommended on-bus capture workflow for production troubleshooting."
 ---
 # Debugging
@@ -20,14 +20,17 @@ such as [pastebin.com](https://pastebin.com/) and include the link.
 
 ## Log Level
 
-LibOSDP supports different logging levels, with `LOG_DEBUG` being the most
-verbose. When asking for help, set the log level to `LOG_DEBUG`.
+LibOSDP supports different logging levels, with `OSDP_LOG_DEBUG` being the
+most verbose. When asking for help, set the log level to `OSDP_LOG_DEBUG`.
 
 Call [`osdp_logger_init()`](/api/miscellaneous) **before** `osdp_cp/pd_setup()`:
 
 ```c
-osdp_logger_init("osdp::cp", LOG_DEBUG, uart_puts);
+osdp_logger_init("osdp::cp", OSDP_LOG_DEBUG, uart_puts);
 ```
+
+A build with `OPT_OSDP_LOG_MINIMAL` has no `osdp_logger_init()`; route log
+messages with `osdp_set_log_callback()` instead.
 
 Any log messages other than `DEBUG` and `INFO` should be treated as
 out-of-ordinary events requiring attention.

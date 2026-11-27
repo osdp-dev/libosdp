@@ -24,7 +24,7 @@ jobs:
           - { job: windows-arm64, runner: windows-11-arm,   rids: "win-arm64",                          wheel_archs: "ARM64" }
           # Apple Silicon cross-builds the x86_64 assets and tests them under
           # Rosetta; GitHub is retiring its Intel macOS images.
-          - { job: macos-arm64,   runner: macos-14,         rids: "osx-arm64 osx-x64",                  wheel_archs: "arm64 x86_64 universal2" }
+          - { job: macos-arm64,   runner: macos-15,         rids: "osx-arm64 osx-x64",                  wheel_archs: "arm64 x86_64 universal2" }
     steps:
       - uses: actions/checkout@v7
         with:
@@ -32,9 +32,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: |
-            8.0.x
-            10.0.x
+          dotnet-version: 10.0.x
       # cibuildwheel uses the runner's Python to drive builds on macOS and
       # Windows; Linux builds happen inside the manylinux/musllinux images.
       - uses: actions/setup-python@v7
@@ -103,9 +101,6 @@ jobs:
           output-dir: wheelhouse
         env:
           CIBW_ARCHS: ${{ matrix.wheel_archs }}
-          # Build for Python >= 3.10 only: setuptools >= 83 (needed for the
-          # PEP 639 license expression in setup.py) dropped Python 3.9.
-          CIBW_SKIP: "cp39-*"
       - name: Collect the .NET tests
         if: ${{ !cancelled() && steps.dotnet_start.outcome == 'success' }}
         shell: bash
@@ -159,12 +154,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: MinGW64 GCC
-            msystem: MINGW64
-            packages: >-
-              mingw-w64-x86_64-gcc
-              mingw-w64-x86_64-cmake
-              mingw-w64-x86_64-ninja
           - name: UCRT64 GCC
             msystem: UCRT64
             packages: >-

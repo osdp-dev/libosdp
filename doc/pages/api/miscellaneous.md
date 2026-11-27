@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-10-24
+lastUpdated: 2026-11-26
 description: "Miscellaneous LibOSDP C API helpers — logging, versioning, status, metrics, and file transfer utilities supporting OSDP control panel and peripheral device apps."
 ---
 # Miscellaneous
@@ -26,6 +26,21 @@ richer structured callback.
 
 <!-- doxygen:function:osdp_get_source_info -->
 
+## Build Information
+
+Build options and the `*_MAX_LEN` payload limits change the size of the public
+structures (see [Tunables and Buffer Sizes](/libosdp/build-and-install#tunables-and-buffer-sizes)).
+A binding that mirrors those structures in another language checks its own
+layout against the library's with `osdp_get_abi_info()`.
+
+<!-- doxygen:struct:osdp_abi_info:members -->
+
+<!-- doxygen:define:OSDP_ABI_OPT_RX_ZERO_COPY -->
+
+<!-- doxygen:define:OSDP_ABI_OPT_LOG_MINIMAL -->
+
+<!-- doxygen:function:osdp_get_abi_info -->
+
 ## Status and Metrics
 
 <!-- doxygen:function:osdp_get_status_mask -->
@@ -48,6 +63,8 @@ against storage your application controls.
 <!-- doxygen:typedef:osdp_file_write_fn_t -->
 
 <!-- doxygen:typedef:osdp_file_close_fn_t -->
+
+<!-- doxygen:typedef:osdp_file_finalize_fn_t -->
 
 <!-- doxygen:struct:osdp_file_ops:members -->
 

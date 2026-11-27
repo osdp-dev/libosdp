@@ -330,7 +330,7 @@ class ControlPanel:
 
         Answered from tracked state: the library reports each PD's identity as
         it collects it. Ask before the PD has come online and the fields read
-        as zero, as they always have.
+        as zero.
         """
         self.ctx  # refuse to answer for a context that has been released
         return self._pd_ids[self.pd_addr.index(address)]

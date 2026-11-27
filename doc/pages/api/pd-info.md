@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-06-24
+lastUpdated: 2026-11-26
 description: "LibOSDP pd_info_t reference — configure an OSDP device address, baud rate, capabilities, and secure channel keys when creating a CP or PD context."
 ---
 # PD Info
@@ -30,6 +30,8 @@ covered in [Debugging](/libosdp/debugging).
 <!-- doxygen:define:OSDP_FLAG_CAPTURE_PACKETS -->
 
 <!-- doxygen:define:OSDP_FLAG_ALLOW_EMPTY_ENCRYPTED_DATA_BLOCK -->
+
+<!-- doxygen:define:OSDP_FLAG_BIOREADR_MULTIPART -->
 
 ## Command and event data ownership
 

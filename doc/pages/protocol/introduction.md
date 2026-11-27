@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-06-24
+lastUpdated: 2026-11-26
 description: "An introduction to OSDP (Open Supervised Device Protocol) — the control panel and peripheral device model, the RS-485 bus, and secure access control."
 ---
 # Introduction
@@ -25,8 +25,8 @@ any one of the following baud rates: 9600, 19200, 38400, 57600, 115200, or
 
 ## Character Encoding
 
-The complete 8-bit character is used. All possible bit patterns may appear
-within a message.
+Text data is UTF-8 encoded (ISO/IEC 10646). Binary fields use the complete
+8-bit character, so any bit pattern may appear within a message.
 
 ## Channel Access
 

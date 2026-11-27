@@ -23,7 +23,7 @@ archives the component directory, so a component rooted here could never ship
 Either add the dependency:
 
 ```bash
-idf.py add-dependency "osdp-dev/libosdp"
+idf.py add-dependency "sidcha/libosdp"
 ```
 
 or vendor it as a submodule, in which case it is picked up automatically:
@@ -84,7 +84,7 @@ compiles in, but `--gc-sections` removes most of it from a PD-only link.
 ## Publishing
 
 ```bash
-compote component upload --namespace osdp-dev --name libosdp
+compote component upload --namespace sidcha --name libosdp
 ```
 
 Run it from a `--recursive` clone. The packer walks the working tree, so a

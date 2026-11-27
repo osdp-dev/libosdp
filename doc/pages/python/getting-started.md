@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-10-29
+lastUpdated: 2026-11-26
 description: "Get started with the LibOSDP Python bindings — install the package and build a minimal OSDP control panel or peripheral device in a few lines of Python."
 ---
 # Python Getting Started
@@ -66,8 +66,9 @@ cp.sc_wait_all()   # block until the secure channel is up
 
 # An LED command carries a temporary block, a permanent block, or both.
 # Counts are in units of 100ms; on_count and off_count cannot both be zero.
+# Reader 0 is the PD itself; attached readers, if it advertises any, are 1..N.
 led_cmd = commands.LED(
-    reader=1,
+    reader=0,
     led_number=0,
     permanent=commands.PermanentLEDParams(
         on_color=LEDColor.Red,
@@ -101,6 +102,8 @@ handler. Return `None` to accept a command, return a command to answer it
 inline, or raise [`NakError`](/python/api#errors) to decline it.
 
 ```python
+import time
+
 from osdp import (
     Capability, Command, NakCode, NakError, PDCapabilities, PDInfo,
     PeripheralDevice, SerialChannel, StatusReportType, commands, events,
@@ -128,18 +131,21 @@ def command_handler(cmd: Command) -> Command | None:
 
 pd = PeripheralDevice(pd_info, pd_cap, command_handler=command_handler)
 pd.start()
-pd.sc_wait()
 
-# For the raw card formats the length is in BITS; this one is ASCII, so bytes.
+# A 26-bit Wiegand card read on the PD's own reader (reader 0). For the raw
+# card formats `bits` is the card length in BITS; `data` holds them padded
+# out to whole bytes.
 card_event = events.CardRead(
-    reader_no=1,
-    direction=1,
-    format=CardFormat.ASCII,
-    data=bytes([9, 1, 9, 2, 6, 3, 1, 7, 7, 0]),
+    reader_no=0,
+    format=CardFormat.Wiegand,
+    data=bytes([0x01, 0x02, 0x03, 0x40]),
+    bits=26,
 )
 
 while True:
-    pd.submit_event(card_event)
+    if pd.is_online():
+        pd.submit_event(card_event)
+    time.sleep(1)
 ```
 
 The full PD surface and the command-handler contract are on the

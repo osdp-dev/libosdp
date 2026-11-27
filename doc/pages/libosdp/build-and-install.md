@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-06-24
+lastUpdated: 2026-11-26
 description: "Build and install LibOSDP from source with CMake or the lean Make build — produces static and shared libraries for Linux, macOS, and Windows."
 ---
 # Build and Install
@@ -118,8 +118,8 @@ See `./configure.sh --help` for all flags.
 
 ## Crypto Backend Selection
 
-LibOSDP's [Secure Channel](/libosdp/secure-channel) needs an AES implementation. Three backends are
-supported; the default `auto` mode probes for OpenSSL, then MbedTLS, and
+LibOSDP's [Secure Channel](/libosdp/secure-channel) needs an AES implementation. The CMake
+and lean Make builds support three backends; the default `auto` mode probes for OpenSSL, then MbedTLS, and
 falls back to the bundled TinyAES if neither is found (with a warning,
 since TinyAES is not hardened to the same degree as OpenSSL/MbedTLS).
 
@@ -129,6 +129,20 @@ since TinyAES is not hardened to the same degree as OpenSSL/MbedTLS).
 | `-DOPT_OSDP_CRYPTO_BACKEND=openssl`         | `--crypto openssl`   | Require OpenSSL; hard fail if absent                           |
 | `-DOPT_OSDP_CRYPTO_BACKEND=mbedtls`         | `--crypto mbedtls`   | Require MbedTLS; hard fail if absent                           |
 | `-DOPT_OSDP_CRYPTO_BACKEND=tinyaes`         | `--crypto tinyaes`   | Force the bundled implementation; no probe, no warning         |
+
+These choices apply to the CMake and lean Make builds. The embedded
+integrations pick a backend of their own (see
+[Platform Integrations](#platform-integrations)):
+
+- **Zephyr** selects it in Kconfig: `CONFIG_LIBOSDP_CRYPTO_PSA` (the default;
+  the PSA Crypto API, which needs Zephyr 4.3 or later),
+  `CONFIG_LIBOSDP_CRYPTO_MBEDTLS` or `CONFIG_LIBOSDP_CRYPTO_TINYAES`.
+- **ESP-IDF** selects it in Kconfig too: `CONFIG_LIBOSDP_CRYPTO_PSA` (the
+  default; the PSA Crypto API of the SDK's mbedtls component, which routes
+  AES through the hardware accelerator where the chip has one),
+  `CONFIG_LIBOSDP_CRYPTO_MBEDTLS` (ESP-IDF 5.x only, since Mbed TLS 4 in
+  ESP-IDF 6 drops its AES API) or `CONFIG_LIBOSDP_CRYPTO_TINYAES`.
+- **PlatformIO / Arduino** always builds the bundled TinyAES.
 
 ## Running the Test Suite
 
@@ -178,6 +192,97 @@ The same options are exposed by `configure.sh` flags for the lean build.
 > [debugging guide](/libosdp/debugging), including how to inspect the captured
 > `.pcap` files.
 
+## Tunables and Buffer Sizes
+
+Beyond the options above, two sets of `#ifndef`-guarded macros can be
+overridden at build time by defining them on the compiler command line.
+
+**Library tunables** live in `src/osdp_tunables.h`: protocol timings, retry
+counts and internal buffer sizes. Commonly changed ones:
+
+| Macro | Default | Meaning |
+|---|---|---|
+| `OSDP_PACKET_BUF_SIZE` | 256 | Largest packet this build sends or receives |
+| `OSDP_RESP_TOUT_MS` | 200 | How long a CP waits for a PD's reply |
+| `OSDP_PD_ONLINE_TOUT_MS` | 8000 | Silence after which the peer is reported offline |
+| `OSDP_PD_SC_TIMEOUT_MS` | 8000 | Idle time after which a PD drops its secure channel session |
+| `OSDP_PD_SC_RETRY_MS` | 600000 | Wait before a CP retries a failed secure channel handshake |
+| `OSDP_CMD_MAX_RETRIES` | 8 | Retries before a CP gives up on a command |
+| `OSDP_CP_MAX_PDS` | 8 | Most PDs one CP context can manage in an `OPT_OSDP_STATIC` build |
+| `OSDP_TRS_ANSWER_TOUT_MS` | 5000 | How long a TRS band waits for a slow card's answer |
+| `OSDP_TRS_IDLE_TOUT_MS` | 30000 | Idle time after which a TRS session is closed |
+
+These are private to the library, so only the library needs them:
+
+```sh
+cmake -B build -DCMAKE_C_FLAGS="-DOSDP_PACKET_BUF_SIZE=512"
+CCFLAGS="-DOSDP_PACKET_BUF_SIZE=512" ./configure.sh
+```
+
+On Zephyr and ESP-IDF these are Kconfig symbols with a `CONFIG_` prefix
+(`CONFIG_OSDP_PACKET_BUF_SIZE`, `CONFIG_OSDP_RESP_TOUT_MS`, ...), except
+`OSDP_CP_MAX_PDS`, which is set from `CONFIG_OSDP_PD_MAX`; see
+[Platform Integrations](#platform-integrations).
+
+**Payload limits** are the `*_MAX_LEN` / `*_MAX_DATALEN` macros in
+`include/osdp.h`, for example `OSDP_PIV_DATA_MAX_LEN`, `OSDP_TRS_APDU_MAX_LEN`
+and `OSDP_EVENT_BIOREADR_MAX_TEMPLATE_LEN`. They size the arrays embedded in
+`struct osdp_cmd` and `struct osdp_event`, so **changing one changes the
+layout of the public structures**. Define the same values for the library and
+for every translation unit of your application that includes `osdp.h`; a
+mismatch corrupts memory at the API boundary. Neither Kconfig integration has
+a symbol for them, so pass them as compile definitions there too.
+
+A binding or application that cannot see the library's build flags can ask
+the library what it was built with: `osdp_get_abi_info()` fills a
+`struct osdp_abi_info` with the sizes of `struct osdp_cmd`, `struct
+osdp_event`, `struct osdp_channel` and `osdp_pd_info_t`, and the options that
+change them (`OPT_OSDP_RX_ZERO_COPY`, `OPT_OSDP_LOG_MINIMAL`). See
+[Miscellaneous](/api/miscellaneous#build-information).
+
+## Platform Integrations
+
+The repository also carries ready-made integrations for embedded build systems
+and a .NET binding.
+
+**Zephyr.** The repository is a Zephyr module (`zephyr/module.yml`, Kconfig in
+`zephyr/Kconfig`). Enable it with `CONFIG_LIBOSDP=y`. Defaults worth knowing:
+
+| Symbol | Default |
+|---|---|
+| `CONFIG_LIBOSDP_CRYPTO_PSA` | y (the crypto backend choice) |
+| `CONFIG_LIBOSDP_STATIC` | y (no heap allocation) |
+| `CONFIG_LIBOSDP_RX_ZERO_COPY` | y (the channel supplies `recv_pkt`/`release_pkt`) |
+| `CONFIG_OSDP_PACKET_BUF_SIZE` | 1024 |
+
+Most of the protocol timing and sizing tunables have a `CONFIG_OSDP_*` symbol
+with the default of `src/osdp_tunables.h`. Two differ:
+`CONFIG_OSDP_PACKET_BUF_SIZE` (1024) and `CONFIG_OSDP_PD_MAX` (126), which
+sets `OSDP_CP_MAX_PDS`. The TRS, PIV, biometric and file-transfer timeouts
+have no symbol.
+
+**ESP-IDF.** The repository root is an ESP-IDF component (`idf_component.yml`,
+with the component definition in `esp-idf/`), published to the ESP Component
+Registry as `sidcha/libosdp`. Add it with
+`idf.py add-dependency "sidcha/libosdp"`, or add the
+repository under `components/` as a submodule, with its own `utils/`
+submodule initialised too. Its options are under *Component config → Open
+Supervised Device Protocol (OSDP)* in `menuconfig`, with the same symbol names
+as the Zephyr module. `CONFIG_LIBOSDP_STATIC` defaults to y,
+`CONFIG_LIBOSDP_RX_ZERO_COPY` to n and `CONFIG_OSDP_PACKET_BUF_SIZE` to 1024. The component supplies the tick source
+(`esp_timer`) and entropy (`esp_random()`) itself.
+
+**PlatformIO / Arduino.** `library.json` makes the repository a PlatformIO
+library, published to the PlatformIO Registry as `LibOSDP`; add it to
+`lib_deps` in `platformio.ini`. It builds as a bare-metal target with the
+bundled TinyAES backend. Sketches are in `examples/platformio/`.
+
+**.NET.** The `LibOSDP` NuGet package (`dotnet add package LibOSDP`) wraps the
+C library for .NET 10 and ships prebuilt native libraries for
+Windows, Linux and macOS. Its sources are in `dotnet/` and examples in
+`examples/dotnet/`. It compares its own structure layout with the native
+library's through `osdp_get_abi_info()` before using it.
+
 ## Add LibOSDP to Your CMake Project
 
 ### find_package (recommended)
@@ -217,7 +322,7 @@ whether LibOSDP is installed or vendored.
 include(FetchContent)
 FetchContent_Declare(libosdp
     GIT_REPOSITORY https://github.com/osdp-dev/libosdp.git
-    GIT_TAG        v3.2.0  # update to latest release
+    GIT_TAG        v4.0.0  # update to latest release
 )
 FetchContent_MakeAvailable(libosdp)
 target_link_libraries(my_app PRIVATE libosdp::libosdp)
@@ -257,3 +362,21 @@ cmake --build build
 ```
 
 > **Note:** vcpkg is the recommended method to consume LibOSDP on Windows.
+
+### Using OpenBSD packages
+
+LibOSDP is in the OpenBSD ports tree as
+[`devel/libosdp`](https://github.com/openbsd/ports/tree/master/devel/libosdp),
+built as a shared library against the base system's `libcrypto`. Install the
+binary package with:
+
+```sh
+doas pkg_add libosdp
+```
+
+or build it from a ports checkout with
+`cd /usr/ports/devel/libosdp && make install`. The package ships the CMake
+config and `libosdp.pc`, so both [find_package](#find-package-recommended) and
+[pkg-config](#using-pkg-config) work as described above. The packaged version
+follows the ports tree and can trail the latest LibOSDP release; check it with
+`pkg_info -Q libosdp`.

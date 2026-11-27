@@ -22,18 +22,25 @@ if LIBOSDP
 
 choice LIBOSDP_CRYPTO_BACKEND
 	prompt "LibOSDP crypto backend"
-	default LIBOSDP_CRYPTO_MBEDTLS
+	default LIBOSDP_CRYPTO_PSA
 	help
 	  Select which AES implementation LibOSDP uses for secure channel
-	  crypto. Prefer MbedTLS on ESP-IDF: it is part of the SDK, so it is
+	  crypto. Prefer PSA on ESP-IDF: the SDK provides it, so it is
 	  almost certainly linked already, and on targets with a crypto
 	  accelerator ESP-IDF's port routes AES through the hardware.
 
-config LIBOSDP_CRYPTO_MBEDTLS
-	bool "MbedTLS"
+config LIBOSDP_CRYPTO_PSA
+	bool "PSA Crypto API"
 	help
-	  Use ESP-IDF's bundled MbedTLS for AES. Shares code with the rest
-	  of the system if MbedTLS is already linked.
+	  Use the PSA Crypto API that ESP-IDF's mbedtls component provides.
+	  Works with every ESP-IDF release the component supports.
+
+config LIBOSDP_CRYPTO_MBEDTLS
+	bool "MbedTLS (ESP-IDF 5.x only)"
+	help
+	  Use ESP-IDF's bundled MbedTLS AES API directly. Mbed TLS 4, which
+	  ESP-IDF 6.0 ships, no longer provides that API, so this choice
+	  only builds on ESP-IDF 5.x.
 
 config LIBOSDP_CRYPTO_TINYAES
 	bool "TinyAES (in-tree)"

@@ -45,7 +45,7 @@ tags:
 # every ESP-IDF target provides. Omitting the key advertises all targets.
 
 dependencies:
-  idf: ">=5.0"
+  idf: ">=5.5"
 
 files:
   # The repo carries a full standalone CMake/Make build, a Zephyr module, a

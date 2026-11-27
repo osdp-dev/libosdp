@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-10-29
+lastUpdated: 2026-11-26
 description: "LibOSDP peripheral device (PD) C API — implement an OSDP PD, advertise capabilities, respond to control panel commands, and report events."
 ---
 # Peripheral Device
@@ -37,16 +37,21 @@ codes and compliance levels a PD can advertise.
 
 <!-- doxygen:typedef:pd_command_callback_t -->
 
+<!-- doxygen:define:OSDP_PD_CMD_BUSY -->
+
 <!-- doxygen:function:osdp_pd_set_command_callback -->
 
 Refer to the [command structure](/api/command-structure) document for more
 information on how the `cmd` structure is framed.
 
 ::: info
-For `CMD_MFG`, callback return values use normal ACK/NAK behavior (negative
-return → NAK, non-negative return → ACK). Any manufacturer-specific reply
-payload must be sent asynchronously by submitting an `OSDP_EVENT_MFGREP` event
-with `osdp_pd_submit_event`.
+For `CMD_MFG`, a manufacturer-specific reply is an `OSDP_EVENT_MFGREP`,
+`OSDP_EVENT_MFGSTATR` or `OSDP_EVENT_MFGERRR` event submitted with
+`osdp_pd_submit_event`. Submitted from within the command callback, it is sent
+as the reply to the command; submitted later, the command is ACKed (or NAKed,
+for a negative callback return) and the event goes out as a poll response.
+Like every event, it is queued by reference, so it must not live on the
+callback's stack.
 :::
 
 ## Events

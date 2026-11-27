@@ -1,15 +1,36 @@
 ---
-lastUpdated: 2026-06-16
-title: Create, Manage, Control OSDP Devices
-description: osdpctl is a CLI built on LibOSDP to set up, manage, and control OSDP CP and PD devices from configuration files.
+lastUpdated: 2026-11-27
+title: "osdpctl (Historical)"
+description: Historical documentation of osdpctl, a retired LibOSDP CLI for OSDP devices, superseded by Osprio Mini and Osprio View.
 ---
 
-# Create, Manage, Control OSDP Devices
+# osdpctl (Historical)
 
-:::warning Deprecated
-This tool has been deprecated. The future plan is to rewrite it in Rust, but
-there is no ETA for it.
+:::warning Historical
+osdpctl is no longer maintained and there are no plans to rewrite it. This
+page documents the tool as it last shipped, in LibOSDP v2.4.0. For new work,
+use Osprio Mini and Osprio View, described below.
 :::
+
+## What replaced osdpctl
+
+osdpctl was meant to grow into an OSDP device manager. We considered that
+direction and discarded it: a command-line tool driven by configuration files
+could not deliver all the features we had in mind for building and debugging
+OSDP devices.
+
+[Osprio Mini](https://osdp.dev/products/osprio-mini/) and
+[Osprio View](https://osdp.dev/products/osprio-view/) now cover everything
+osdpctl was intended for, and do it better:
+
+- **Osprio Mini** is a hardware OSDP companion. It acts as the ACU (control
+  panel) while you develop a PD, or as the PD while you develop an ACU, and
+  gives you a tested baseline for comparing devices across vendors.
+- It exposes every LibOSDP feature the way it is intended to be used, through
+  the **Osprio View** web app. View drives the OSDP transactions and gives you
+  extensive debugging tools while it does.
+
+The rest of this page describes osdpctl as it was.
 
 osdpctl is a tool that uses libosdp to setup/manage/control osdp devices. It
 also serves as a starting point for those who intend to consume this library.
@@ -32,7 +53,7 @@ PD. You can read more about the configuration file and the various keys it can
 contain in the [configuration section](/osdpctl/configuration).
 
 Some sample configuration files can be found inside the
-[`config/` directory](https://github.com/osdp-dev/libosdp/tree/master/osdpctl/config).
+[`config/` directory](https://github.com/osdp-dev/libosdp/tree/v2.4.0/osdpctl/config).
 
 ## Start / Stop a service
 

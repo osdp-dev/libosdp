@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-06-24
+lastUpdated: 2026-11-26
 description: "OSDP PD capabilities — how a peripheral device reports its supported functions so a control panel can discover features before driving the device."
 ---
 # PD Capabilities
@@ -76,7 +76,7 @@ generator).
 - `01` — PD supports on/off control only.
 - `02` — PD supports timed commands.
 
-**Number of Units:** Number of audible annunciators per reader.
+**Number of Units:** Ignored; v2.2 allows one audible output per PD.
 
 ## Function Code 6 — Reader Text Output
 
@@ -87,20 +87,24 @@ Indicates that the PD supports a character-based text display.
 - `01` — PD supports 1 row of 16 characters.
 - `02` — PD supports 2 rows of 16 characters.
 - `03` — PD supports 4 rows of 16 characters.
-- `04` — TBD.
+- `04`–`7F` — Reserved for future use.
+- `80`–`FF` — Reserved for private use.
 
 **Number of Units:** Number of textual displays per reader.
 
 ## Function Code 7 — Time Keeping
 
-Indicates date and time awareness or time-keeping ability.
+Indicates date and time awareness or time-keeping ability. OSDP v2.2
+deprecates this function.
 
 **Compliance Levels:**
 - `00` — PD does not support time/date functionality.
-- `01` — PD understands time/date settings via `osdp_TDSET`.
-- `02` — PD can locally update the time and date.
+- `01`–`FF` — Reserved for future use.
 
 **Number of Units:** N/A, set to 0.
+
+LibOSDP implements `osdp_TDSET` for legacy devices. A LibOSDP PD accepts it
+only when it advertises this capability with a non-zero compliance level.
 
 ## Function Code 8 — Check Character Support
 
@@ -117,13 +121,13 @@ Indicates CRC-16 capability. All PDs must support checksum mode.
 Indicates the extent of [Secure Channel](/libosdp/secure-channel) communication
 support.
 
-**Compliance Levels** (bit map):
+**Compliance Levels** (bit map of supported encryption algorithms):
 - `0x01` — (Bit 0) AES128 support.
-- `0x02` — (Bit 1) to be defined.
+- Bits 1–7 must be zero.
 
-**Number of Units** (bit map):
-- `0x01` — (Bit 0) Default AES128 key, as defined in APPENDIX D.
-- `0x02` — (Bit 1) to be defined.
+**Number of Units** (bit map of key exchange capabilities):
+- `0x01` — (Bit 0) Default AES128 key, as defined in Annex D.
+- Bits 1–7 must be zero.
 
 ## Function Code 10 — Receive Buffer Size
 
@@ -143,20 +147,25 @@ Indicates the maximum size of a multi-part message the PD can handle.
 
 ## Function Code 12 — Smart Card Support
 
-Indicates whether the PD supports transparent mode for communicating directly
-with a smart card.
+Indicates what kind of support the PD has for communicating directly with a
+smart card.
 
-**Compliance Levels:**
-- `0` — PD does not support transparent reader mode.
-- `1` — PD supports transparent reader mode.
+**Compliance Levels** (bit map; either or both may be set):
+- `0x01` — (Bit 0) PD supports transparent reader mode.
+- `0x02` — (Bit 1) PD supports extended packet mode.
 
 **Number of Units:** Unused, send `0x00`.
+
+LibOSDP implements transparent reader mode
+([Transparent Reader Support](/libosdp/smartcard#transparent-reader-support-trs))
+and the PIV, GENAUTH and CRAUTH commands; a LibOSDP PD accepts any of them only
+when this compliance level is non-zero.
 
 ## Function Code 13 — Readers
 
 Indicates the number of credential reader devices present.
 
-**Compliance Levels** (bit fields): `0x01` (Bit 0), `0x02` (Bit 1).
+**Compliance Level:** Must be zero.
 
 **Number of Units:** Number of attached downstream readers.
 
@@ -196,3 +205,28 @@ Indicates the ability of the reader to handle biometric input.
 - `3` — Iris, Template 1.
 
 **Number of Units:** Number of readers.
+
+## Function Code 15 — Secure PIN Entry
+
+Indicates whether the reader supports Secure PIN Entry (SPE) for ISO 7816
+smart cards. An ordinary keypad is read with `osdp_KEYPAD` instead.
+
+**Compliance Levels:**
+- `0` — Does not support SPE.
+- `1` — Supports SPE.
+
+LibOSDP's secure PIN entry is the `OSDP_TRS_CMD_ENTER_PIN` command of
+[Transparent Reader Support](/libosdp/smartcard#secure-pin-entry).
+
+## Function Code 16 — OSDP Version
+
+Indicates the version of OSDP the PD supports.
+
+**Compliance Levels:**
+- `0` — Unspecified (also used by implementations that predate IEC 60839-11-5).
+- `1` — IEC 60839-11-5.
+- `2` — SIA OSDP 2.2.
+- `3`–`0x7F` — Reserved for future use.
+- `0x80`–`0xFF` — Reserved for private use.
+
+A LibOSDP PD reports `2`.

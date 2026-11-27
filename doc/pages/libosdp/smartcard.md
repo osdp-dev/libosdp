@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-10-29
+lastUpdated: 2026-11-26
 description: "Use the OSDP smartcard commands in LibOSDP — retrieve PIV objects, run GENAUTH/CRAUTH challenges, and drive a card directly with Transparent Reader Support (TRS): APDU sessions, presence scan and secure PIN entry."
 ---
 # Smartcard Commands
@@ -26,10 +26,12 @@ payloads.
 ## CP side
 
 Submit the command like any other; the reassembled reply arrives as an event
-on the CP event callback once the PD has answered:
+on the CP event callback once the PD has answered. The command is queued by
+reference and must stay alive until its completion callback fires, which for
+a smartcard operation is when the whole exchange ends — hence the `static`:
 
 ```c
-struct osdp_cmd cmd = {
+static struct osdp_cmd cmd = {
     .id = OSDP_CMD_PIVDATA,
     .pivdata = {
         .oid = { 0x5f, 0xc1, 0x02 },  /* NIST SP 800-73-4 object id */
@@ -70,11 +72,12 @@ by submitting the matching reply event:
 ```c
 int command_callback(void *arg, struct osdp_cmd *cmd)
 {
+    static struct osdp_event ev;  /* queued by reference: must outlive us */
+
     if (cmd->id == OSDP_CMD_GENAUTH) {
-        struct osdp_event ev = {
-            .type = OSDP_EVENT_GENAUTHR,
-            .piv_reply = { .length = resp_len },
-        };
+        memset(&ev, 0, sizeof(ev));
+        ev.type = OSDP_EVENT_GENAUTHR;
+        ev.piv_reply.length = resp_len;
         memcpy(ev.piv_reply.data, resp, resp_len);
         osdp_pd_submit_event(ctx, &ev);  /* inline reply */
     }
@@ -105,7 +108,7 @@ message family (`OSDP_MP_MSG_PIV`, `OSDP_MP_MSG_GENAUTH` or
 outcome — including for operations that abort (PD refusal, timeout,
 `CMD_ABORT`, or the link going down). File transfers and multi-part biometric
 replies report through the same notifications. See
-[Multi-part Messages](/protocol/multipart#transfer-lifecycle-and-notifications)
+[Multi-part Messages](/protocol/multipart#the-notification-path)
 for the full lifecycle and outcome codes.
 
 ## Transparent Reader Support (TRS)
