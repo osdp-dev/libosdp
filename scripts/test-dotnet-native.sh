@@ -54,11 +54,11 @@ linux-arm)
 		rc=0
 		timeout -k 30s 30m docker run --rm --init --platform linux/arm/v7 \
 			--user "$(id -u):$(id -g)" -e HOME=/tmp -e DOTNET_CLI_HOME=/tmp \
-			-v "${work}:/src" -w /src/dotnet/artifacts/bin/LibOSDP.Tests/release_net10.0 \
+			-v "${work}:/src" -w /src/dotnet/artifacts/bin/LibOSDP.Tests/release \
 			-e DOTNET_EnableWriteXorExecute=0 -e DOTNET_TieredCompilation=0 \
 			-e DOTNET_ReadyToRun=0 \
 			-e LIBOSDP_TEST_TIMEOUT_S=60 mcr.microsoft.com/dotnet/runtime:10.0 \
-			dotnet LibOSDP.Tests.dll -parallel none 2>&1 | tee "${log}" || rc=$?
+			dotnet LibOSDP.Tests.dll -parallelMode none 2>&1 | tee "${log}" || rc=$?
 		[ "${rc}" = 0 ] && break
 		grep -q 'thumb_tr_translate_insn' "${log}" || exit "${rc}"
 		echo "::warning::QEMU crashed on linux-arm (attempt ${attempt}/3)"
@@ -77,7 +77,6 @@ osx-x64)
 	x64="${tmp}/dotnet-x64"
 	curl -fsSL --retry 5 --retry-all-errors https://dot.net/v1/dotnet-install.sh -o "${x64}.sh"
 	bash "${x64}.sh" --channel 10.0 --architecture x64 --install-dir "${x64}" >/dev/null
-	bash "${x64}.sh" --channel 8.0 --runtime dotnet --architecture x64 --install-dir "${x64}" >/dev/null
 	cd "${work}/dotnet"
 	DOTNET_ROOT="${x64}" arch -x86_64 "${x64}/dotnet" test --solution LibOSDP.slnx
 	;;
