@@ -1,14 +1,16 @@
 ---
-lastUpdated: 2026-06-16
-title: osdpctl Configuration
-description: Reference for the osdpctl INI configuration file — global and PD keys used to set up an OSDP CP or PD.
+lastUpdated: 2026-11-27
+title: "osdpctl Configuration (Historical)"
+description: Historical reference for the INI configuration file of osdpctl, a retired LibOSDP CLI superseded by Osprio Mini and Osprio View.
 ---
 
-# Configuration
+# osdpctl Configuration (Historical)
 
-:::warning Deprecated
-This tool has been deprecated. The future plan is to rewrite it in Rust, but
-there is no ETA for it.
+:::warning Historical
+osdpctl is no longer maintained and there are no plans to rewrite it. This
+page documents its configuration file as it last shipped, in LibOSDP v2.4.0.
+See [What replaced osdpctl](/osdpctl/introduction#what-replaced-osdpctl) for
+what to use instead.
 :::
 
 OSDP devices need many static configuration information to be passed to libOSDP
@@ -25,7 +27,7 @@ table.
 
 Read more about [INI file format](https://en.wikipedia.org/wiki/INI_file) and
 you can see some sample configuration files
-[here](https://github.com/osdp-dev/libosdp/tree/master/osdpctl/config).
+[here](https://github.com/osdp-dev/libosdp/tree/v2.4.0/osdpctl/config).
 
 ## Global Configuration Keys
 

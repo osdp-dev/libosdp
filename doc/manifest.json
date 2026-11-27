@@ -73,9 +73,9 @@
     {
       "text": "osdpctl",
       "href": "/osdpctl/",
-      "indexTitle": "osdpctl Tool",
-      "summary": "Deprecated CLI built on LibOSDP to set up and control OSDP devices from config files.",
-      "intro": "osdpctl is a command-line tool built on LibOSDP for setting up and controlling OSDP devices directly from configuration files — and a useful starting point for those learning to consume the library. It is deprecated and kept here for reference. The introduction covers running services and sending control commands; the configuration page documents every INI key.",
+      "indexTitle": "osdpctl Tool (historical)",
+      "summary": "Historical: a retired LibOSDP CLI, superseded by Osprio Mini and Osprio View.",
+      "intro": "osdpctl was a command-line tool built on LibOSDP for setting up and controlling OSDP devices from configuration files. It is no longer maintained and will not be rewritten; Osprio Mini and Osprio View cover everything it was intended for. These pages document it as it last shipped, in LibOSDP v2.4.0.",
       "items": [
         { "text": "Introduction", "href": "/osdpctl/introduction", "source": "osdpctl/introduction.md" },
         { "text": "Configuration", "href": "/osdpctl/configuration", "source": "osdpctl/configuration.md" }
