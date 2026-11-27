@@ -1,3 +1,15 @@
+v ## TODO
+------
+
+27 November 2026
+
+Release to retain existing CHLNG behaviour
+
+Fixes:
+  - doc: Mark the osdpctl pages historical
+  - pd: Answer a CHLNG for an unset SCBK on a throwaway key
+
+
 v3.2.11
 -------
 
